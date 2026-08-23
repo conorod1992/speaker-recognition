@@ -60,9 +60,7 @@ async def _build_voice_samples_schema(
                 CONF_SAMPLES: {
                     "required": True,
                     "selector": selector.MediaSelector(
-                        selector.MediaSelectorConfig(
-                            multiple=True, accept=["audio/wav"]
-                        )
+                        selector.MediaSelectorConfig(multiple=True)
                     ),
                 },
             },
