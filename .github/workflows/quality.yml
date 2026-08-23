@@ -168,8 +168,6 @@ jobs:
           load: ${{ matrix.arch == 'amd64' }}
           push: false
           tags: speaker-recognition-addon:test
-          cache-from: type=gha,scope=addon-${{ matrix.arch }}
-          cache-to: type=gha,mode=max,scope=addon-${{ matrix.arch }}
 
       - name: Prepare smoke-test volumes
         if: matrix.arch == 'amd64'
