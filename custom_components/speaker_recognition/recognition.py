@@ -5,10 +5,10 @@ from __future__ import annotations
 import base64
 import logging
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from aiohttp import ClientError, ClientTimeout
+from homeassistant.components import media_source
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .audio import decode_wav
@@ -73,6 +73,15 @@ class SpeakerRecognition:
             raise ValueError("Unexpected response from Speaker Recognition app")
         return data
 
+    async def _async_read_media(self, media_content_id: str) -> bytes:
+        """Resolve and read a locally selected media-source item."""
+        resolved_media = await media_source.async_resolve_media(
+            self.hass, media_content_id, None
+        )
+        if resolved_media.path is None:
+            raise ValueError("Selected media source does not provide a local file")
+        return await self.hass.async_add_executor_job(resolved_media.path.read_bytes)
+
     async def async_train(self) -> None:
         """Train the speaker recognition model with configured voice samples."""
         _LOGGER.debug(
@@ -89,23 +98,31 @@ class SpeakerRecognition:
             voice_sample_models = []
             for sample in self.voice_samples:
                 user_id = sample["user"]
-                media_id = sample["samples"].get("media_content_id", "")
+                selected_media = sample["samples"]
+                media_items = (
+                    selected_media
+                    if isinstance(selected_media, list)
+                    else [selected_media]
+                )
 
-                if media_id.startswith("media-source://media_source/local/"):
-                    relative_path = media_id.replace(
-                        "media-source://media_source/local/", ""
-                    )
-                    full_path = Path(self.hass.config.path("media")) / relative_path
+                for media_item in media_items:
+                    if not isinstance(media_item, dict):
+                        _LOGGER.warning("Invalid media selection for user: %s", user_id)
+                        continue
+                    media_id = media_item.get("media_content_id", "")
+                    if not isinstance(media_id, str) or not media_id.startswith(
+                        "media-source://"
+                    ):
+                        _LOGGER.warning(
+                            "Unsupported media_content_id format: %s", media_id
+                        )
+                        continue
 
-                    # Read the audio file
-                    audio_data = await self.hass.async_add_executor_job(
-                        full_path.read_bytes
-                    )
+                    audio_data = await self._async_read_media(media_id)
                     pcm_data, sample_rate = await self.hass.async_add_executor_job(
                         decode_wav, audio_data
                     )
                     audio_base64 = base64.b64encode(pcm_data).decode("utf-8")
-
                     voice_sample_models.append(
                         {
                             "user": user_id,
@@ -115,9 +132,6 @@ class SpeakerRecognition:
                             },
                         }
                     )
-                else:
-                    _LOGGER.warning("Unsupported media_content_id format: %s", media_id)
-                    continue
 
             if not voice_sample_models:
                 _LOGGER.warning("No valid training samples prepared")

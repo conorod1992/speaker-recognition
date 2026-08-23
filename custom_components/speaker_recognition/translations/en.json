@@ -1,6 +1,13 @@
 {
   "config": {
     "step": {
+      "menu": {
+        "title": "Add speaker recognition helper",
+        "menu_options": {
+          "add_stt": "Add STT proxy",
+          "add_conversation": "Add Conversation proxy"
+        }
+      },
       "user": {
         "title": "Choose helper type",
         "description": "Select the type of speaker recognition helper to create.",
