@@ -9,9 +9,9 @@ import wave
 
 import numpy as np
 import pytest
+import resemblyzer
 
 from speaker_recognition.models import AudioInput, Config, RecognitionRequest, TrainingRequest, VoiceSample
-import speaker_recognition.recognizer as recognizer_module
 
 
 def _load_integration_audio_module():
@@ -82,9 +82,15 @@ class _DummyEncoder:
 
 @pytest.fixture
 def recognizer_factory(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
-    monkeypatch.setattr(recognizer_module, "VoiceEncoder", _DummyEncoder)
+    """Load the recognizer with a dummy encoder without initializing Torch globally."""
+    monkeypatch.setattr(resemblyzer, "VoiceEncoder", _DummyEncoder)
+    module_path = Path(__file__).parents[1] / "speaker_recognition" / "recognizer.py"
+    spec = importlib.util.spec_from_file_location("test_recognizer_module", module_path)
+    assert spec and spec.loader
+    recognizer_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(recognizer_module)
 
-    def factory() -> recognizer_module.SpeakerRecognizer:
+    def factory():
         return recognizer_module.SpeakerRecognizer(
             Config(embeddings_directory=str(tmp_path / "embeddings"))
         )
