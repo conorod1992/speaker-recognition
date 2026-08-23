@@ -1,10 +1,11 @@
 name: Speaker Recognition
-version: "0.0.0-dev"
+version: "1.1.0"
 slug: speaker_recognition
 description: Speaker recognition service using voice embeddings for identification
-url: https://github.com/eulemitkeule/speaker-recognition/tree/master/speaker_recognition_addon
+url: https://github.com/conorod1992/speaker-recognition/tree/master/speaker_recognition_addon
 arch:
   - amd64
+  - aarch64
 init: false
 startup: services
 ports:
@@ -12,7 +13,8 @@ ports:
 ports_description:
   8099/tcp: Speaker Recognition API
 map:
-  - share:rw
+  - type: share
+    read_only: false
 options:
   host: "0.0.0.0"
   port: 8099

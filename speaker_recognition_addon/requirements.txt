@@ -1,0 +1,13 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+# Keep NumPy 1.x until Resemblyzer's older dependency chain officially supports 2.x.
+numpy>=1.26.0,<2.0.0
+torch==2.8.0+cpu
+resemblyzer==0.1.4
+
+fastapi>=0.115.0,<1.0.0
+pydantic>=2.0.0,<3.0.0
+python-dotenv>=1.0.0,<2.0.0
+setuptools>=70.0.0,<81.0.0
+typer>=0.15.0,<1.0.0
+uvicorn>=0.34.0,<1.0.0

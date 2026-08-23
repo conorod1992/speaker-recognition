@@ -1,0 +1,2 @@
+speaker_recognition_addon/Dockerfile text eol=lf
+speaker_recognition_addon/rootfs/** text eol=lf
