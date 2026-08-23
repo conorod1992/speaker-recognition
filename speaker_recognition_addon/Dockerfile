@@ -41,12 +41,7 @@ RUN apt-get update \
 COPY --from=builder /opt/speaker-recognition /opt/speaker-recognition
 COPY speaker_recognition ./speaker_recognition
 
-ENV HOST=0.0.0.0 \
-    PORT=8099 \
-    LOG_LEVEL=INFO \
-    ACCESS_LOG=true \
-    EMBEDDINGS_DIR=/share/speaker_recognition/embeddings \
-    PATH="/opt/speaker-recognition/bin:${PATH}"
+ENV PATH="/opt/speaker-recognition/bin:${PATH}"
 
 COPY rootfs /
 
