@@ -24,6 +24,9 @@ jobs:
         uses: hacs/action@main
         with:
           category: integration
+          # Repository topics and Issues are GitHub settings; they do not affect
+          # installation of this custom integration.
+          ignore: issues topics
 
   cache:
     runs-on: ubuntu-latest
