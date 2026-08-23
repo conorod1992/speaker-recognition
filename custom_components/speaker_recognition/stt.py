@@ -25,6 +25,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_state_change_event
 
 from .const import CONF_ENTRY_TYPE, CONF_STT_ENTITY, DOMAIN, ENTRY_TYPE_MAIN
+from .audio import decode_wav
 from .recognition import SpeakerRecognition
 
 _LOGGER = logging.getLogger(__name__)
@@ -227,13 +228,28 @@ class SpeakerRecognitionSTTEntity(SpeechToTextEntity):
         # Perform speaker recognition on the collected audio
         if audio_buffer:
             try:
+                if (
+                    metadata.format != AudioFormats.WAV
+                    or metadata.codec != AudioCodecs.PCM
+                    or metadata.bit_rate != AudioBitRates.BITRATE_16
+                ):
+                    _LOGGER.warning(
+                        "Skipping speaker recognition for unsupported STT audio: "
+                        "format=%s codec=%s bit_rate=%s",
+                        metadata.format,
+                        metadata.codec,
+                        metadata.bit_rate,
+                    )
+                    return result
+                pcm_audio, sample_rate = await self.hass.async_add_executor_job(
+                    decode_wav, bytes(audio_buffer)
+                )
                 recognition_result = await self.recognition.async_recognize(
-                    bytes(audio_buffer), sample_rate=metadata.sample_rate
+                    pcm_audio, sample_rate=sample_rate
                 )
 
                 if recognition_result:
-                    # Log the recognition result as error for now
-                    _LOGGER.error(
+                    _LOGGER.info(
                         "Speaker Recognition Result - User: %s, Confidence: %.3f, All scores: %s",
                         recognition_result.user_id,
                         recognition_result.confidence,
@@ -263,7 +279,7 @@ class SpeakerRecognitionSTTEntity(SpeechToTextEntity):
                         "timestamp": self.hass.loop.time(),
                     }
                 else:
-                    _LOGGER.error("Speaker recognition returned no result")
+                    _LOGGER.warning("Speaker recognition returned no result")
             except (OSError, ValueError, TypeError) as error:
                 _LOGGER.error("Error during speaker recognition: %s", error)
 

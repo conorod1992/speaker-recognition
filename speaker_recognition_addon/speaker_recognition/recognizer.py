@@ -35,6 +35,7 @@ class SpeakerRecognizer:
         self._is_trained = False
         self._config = config
         self._embeddings_directory = Path(config.embeddings_directory)
+        self._load_embeddings()
 
     @property
     def is_trained(self) -> bool:
@@ -55,6 +56,41 @@ class SpeakerRecognizer:
         """
         self._config.embeddings_directory = value
         self._embeddings_directory = Path(value)
+        self._load_embeddings()
+
+    def _load_embeddings(self) -> None:
+        """Load valid persisted embeddings into the in-memory model."""
+        self._reference_embeddings = {}
+        if not self._embeddings_directory.is_dir():
+            self._is_trained = False
+            return
+
+        for embedding_path in self._embeddings_directory.glob("*_embedding.npy"):
+            user_id = embedding_path.name[: -len("_embedding.npy")]
+            if not user_id:
+                continue
+            try:
+                embedding = np.asarray(np.load(embedding_path, allow_pickle=False))
+                if (
+                    embedding.ndim != 1
+                    or embedding.size == 0
+                    or not np.issubdtype(embedding.dtype, np.number)
+                    or not np.isfinite(embedding).all()
+                ):
+                    raise ValueError("embedding must be a finite, one-dimensional array")
+                self._reference_embeddings[user_id] = embedding.astype(
+                    np.float32, copy=False
+                )
+            except (OSError, ValueError):
+                _LOGGER.warning("Ignoring invalid saved embedding: %s", embedding_path)
+
+        self._is_trained = bool(self._reference_embeddings)
+        if self._is_trained:
+            _LOGGER.info(
+                "Loaded saved embeddings for %d users from %s",
+                len(self._reference_embeddings),
+                self._embeddings_directory,
+            )
 
     def process_audio_input(self, audio_input: AudioInput) -> NDArray[np.float32]:
         """Process audio input from base64 encoded data.
@@ -104,17 +140,12 @@ class SpeakerRecognizer:
                 embedding: NDArray[np.float32]
                 embedding_path = self._embeddings_directory / f"{user_id}_embedding.npy"
 
-                if embedding_path.exists():
-                    _LOGGER.debug(f"Loading cached embedding from {embedding_path}")
-                    loaded_data = np.load(embedding_path, allow_pickle=False)
-                    embedding = np.asarray(loaded_data)
-                else:
-                    _LOGGER.debug("Creating embedding from audio input")
-                    wav = self.process_audio_input(audio_input)
-                    embedding = np.asarray(self._encoder.embed_utterance(wav))
+                _LOGGER.debug("Creating embedding from audio input")
+                wav = self.process_audio_input(audio_input)
+                embedding = np.asarray(self._encoder.embed_utterance(wav))
 
-                    np.save(embedding_path, embedding)
-                    _LOGGER.debug(f"Embedding cached to {embedding_path}")
+                np.save(embedding_path, embedding)
+                _LOGGER.debug(f"Embedding cached to {embedding_path}")
 
                 self._reference_embeddings[user_id] = embedding
                 _LOGGER.info(f"Successfully trained voice sample for user: {user_id}")
