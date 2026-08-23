@@ -5,23 +5,26 @@ from __future__ import annotations
 from io import BytesIO
 import wave
 
+UNSUPPORTED_WAV_MESSAGE = (
+    "Only uncompressed 16-bit PCM WAV files are currently supported."
+)
+
 
 def decode_wav(audio_data: bytes) -> tuple[bytes, int]:
     """Decode a PCM WAV file to signed 16-bit mono PCM."""
     try:
         with wave.open(BytesIO(audio_data), "rb") as wav_file:
             if wav_file.getcomptype() != "NONE":
-                raise ValueError("Only uncompressed PCM WAV files are supported")
+                raise ValueError(UNSUPPORTED_WAV_MESSAGE)
             if wav_file.getsampwidth() != 2:
-                raise ValueError("Only 16-bit PCM WAV audio is supported")
+                raise ValueError(UNSUPPORTED_WAV_MESSAGE)
 
             sample_rate = wav_file.getframerate()
             channels = wav_file.getnchannels()
             pcm_data = wav_file.readframes(wav_file.getnframes())
-    except (EOFError, wave.Error) as error:
-        raise ValueError("Invalid WAV audio") from error
-
-    return pcm_to_mono(pcm_data, channels), sample_rate
+        return pcm_to_mono(pcm_data, channels), sample_rate
+    except (EOFError, ValueError, wave.Error) as error:
+        raise ValueError(UNSUPPORTED_WAV_MESSAGE) from error
 
 
 def pcm_to_mono(pcm_data: bytes, channels: int) -> bytes:

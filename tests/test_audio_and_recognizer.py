@@ -68,7 +68,7 @@ def test_non_wav_training_audio_is_rejected() -> None:
     """MP3 is not advertised because no reliable decoder is bundled with HA."""
     audio = _load_integration_audio_module()
 
-    with pytest.raises(ValueError, match="Invalid WAV"):
+    with pytest.raises(ValueError, match="Only uncompressed 16-bit PCM WAV"):
         audio.decode_wav(b"ID3 not a wav file")
 
 
