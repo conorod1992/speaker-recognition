@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import filecmp
 import shutil
 import sys
 from pathlib import Path
@@ -13,6 +12,7 @@ REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
 SOURCE = REPOSITORY_ROOT / "speaker_recognition"
 DESTINATION = REPOSITORY_ROOT / "speaker_recognition_addon" / "speaker_recognition"
 IGNORED_NAMES = {"__pycache__"}
+TEXT_SUFFIXES = {".py", ".typed"}
 
 
 def source_files(root: Path) -> set[Path]:
@@ -35,9 +35,21 @@ def differences() -> list[str]:
     result.extend(
         f"changed: {path}"
         for path in sorted(expected & actual)
-        if not filecmp.cmp(SOURCE / path, DESTINATION / path, shallow=False)
+        if not files_match(path)
     )
     return result
+
+
+def files_match(relative_path: Path) -> bool:
+    """Compare source files while ignoring platform newline conversion."""
+    source_data = (SOURCE / relative_path).read_bytes()
+    destination_data = (DESTINATION / relative_path).read_bytes()
+    if relative_path.suffix in TEXT_SUFFIXES:
+        source_data = source_data.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+        destination_data = destination_data.replace(b"\r\n", b"\n").replace(
+            b"\r", b"\n"
+        )
+    return source_data == destination_data
 
 
 def synchronize() -> None:
