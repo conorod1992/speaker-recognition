@@ -60,9 +60,15 @@ async def _build_voice_samples_schema(
                 CONF_SAMPLES: {
                     "required": True,
                     "selector": selector.MediaSelector(
-                        # An explicit empty list keeps the media picker unfiltered.
-                        # Omitting ``accept`` makes Home Assistant require an entity.
-                        selector.MediaSelectorConfig(multiple=True, accept=[])
+                        selector.MediaSelectorConfig(
+                            multiple=True,
+                            accept=[
+                                "audio/wav",
+                                "audio/x-wav",
+                                "audio/wave",
+                                "audio/vnd.wave",
+                            ],
+                        )
                     ),
                 },
             },
