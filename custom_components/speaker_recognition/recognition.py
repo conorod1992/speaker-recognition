@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING, Any
 from aiohttp import ClientError, ClientTimeout
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
+from .audio import decode_wav
+
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
@@ -99,14 +101,17 @@ class SpeakerRecognition:
                     audio_data = await self.hass.async_add_executor_job(
                         full_path.read_bytes
                     )
-                    audio_base64 = base64.b64encode(audio_data).decode("utf-8")
+                    pcm_data, sample_rate = await self.hass.async_add_executor_job(
+                        decode_wav, audio_data
+                    )
+                    audio_base64 = base64.b64encode(pcm_data).decode("utf-8")
 
                     voice_sample_models.append(
                         {
                             "user": user_id,
                             "audio": {
                                 "audio_data": audio_base64,
-                                "sample_rate": 16000,
+                                "sample_rate": sample_rate,
                             },
                         }
                     )
@@ -127,16 +132,21 @@ class SpeakerRecognition:
                 isinstance(user, str) for user in trained_users
             ):
                 raise ValueError("Invalid training response from Speaker Recognition app")
+            if not trained_users:
+                raise ValueError("Speaker Recognition app did not train any users")
             result = TrainingResult(users_trained=trained_users)
 
         except (ClientError, OSError, ValueError, TypeError) as error:
-            _LOGGER.error("Error during training: %s", error)
+            _LOGGER.error(
+                "Speaker recognition training failed; recognition will be skipped: %s",
+                error,
+            )
             self._trained = False
         else:
             self._trained = True
             _LOGGER.info(
                 "Speaker recognition training completed: %d users trained",
-                result.users_trained,
+                len(result.users_trained),
             )
 
     async def async_recognize(
@@ -152,7 +162,9 @@ class SpeakerRecognition:
             RecognitionResult if a speaker is recognized, None otherwise
         """
         if not self._trained:
-            _LOGGER.debug("Speaker recognition not trained yet")
+            _LOGGER.warning(
+                "Speaker recognition is not trained; skipping recognition request"
+            )
             return None
 
         try:
