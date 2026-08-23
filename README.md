@@ -37,17 +37,28 @@
 
 ### Home Assistant Addon
 
-The easiest way to use speaker recognition in Home Assistant:
+The easiest way to run the backend on Home Assistant OS or a Supervised
+installation:
 
-1. Add this repository to your Home Assistant addon store
-2. Install the **Speaker Recognition** addon
-3. Configure the addon settings:
+1. Open **Settings > Apps > Install app** (called **Add-on Store** on older
+   Home Assistant versions).
+2. From the three-dot **Repositories** dialog, add
+   `https://github.com/conorod1992/speaker-recognition`.
+3. Install the **Speaker Recognition** app.
+4. Configure the app settings:
    - **Host**: `0.0.0.0` (default)
    - **Port**: `8099` (default)
    - **Embeddings Directory**: `/share/speaker_recognition/embeddings`
    - **Log Level**: `info`
-4. Start the addon
-5. Install the **Speaker Recognition** integration via the UI
+5. Start the app and verify `http://HOME_ASSISTANT_IP:8099/health` returns
+   `{"status":"healthy"}`.
+6. Install the custom integration from this repository, restart Home Assistant,
+   and add **Speaker Recognition** from **Settings > Devices & services**.
+7. Configure its backend URL as `http://HOME_ASSISTANT_IP:8099`.
+
+The app supports `amd64` and `aarch64`. Installation builds a CPU-only PyTorch
+image locally and can take several minutes. Speaker embeddings persist in the
+mapped `/share/speaker_recognition/embeddings` directory.
 
 ### Python Package
 
@@ -71,7 +82,7 @@ Run the standalone service:
 docker run -d \
   -p 8099:8099 \
   -v ./embeddings:/app/embeddings \
-  ghcr.io/eulemitkeule/speaker-recognition:latest
+  ghcr.io/conorod1992/speaker-recognition:latest
 ```
 
 ## 📖 Usage
@@ -254,7 +265,7 @@ embeddings_dir: "/share/speaker_recognition/embeddings"
 
 ```bash
 # Clone the repository
-git clone https://github.com/eulemitkeule/speaker-recognition.git
+git clone https://github.com/conorod1992/speaker-recognition.git
 cd speaker-recognition
 
 # Install dependencies
@@ -268,6 +279,14 @@ uv run ruff check .
 
 # Run type checking
 uv run mypy --strict speaker_recognition
+```
+
+After changing files in `speaker_recognition/`, update the committed copy used
+as the Supervisor Docker build context and verify it has not drifted:
+
+```bash
+python scripts/sync_addon_sources.py
+python scripts/sync_addon_sources.py --check
 ```
 
 ### Running Locally
@@ -328,9 +347,9 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 📞 Support
 
-- 🐛 [Report bugs](https://github.com/eulemitkeule/speaker-recognition/issues)
-- 💡 [Request features](https://github.com/eulemitkeule/speaker-recognition/issues)
-- 📖 [Documentation](https://github.com/eulemitkeule/speaker-recognition)
+- 🐛 [Report bugs](https://github.com/conorod1992/speaker-recognition/issues)
+- 💡 [Request features](https://github.com/conorod1992/speaker-recognition/issues)
+- 📖 [Documentation](https://github.com/conorod1992/speaker-recognition)
 
 ---
 
