@@ -1,6 +1,7 @@
 """Integration tests for speaker recognition API and client."""
 
 import base64
+import socket
 import wave
 from multiprocessing import Process
 from pathlib import Path
@@ -18,15 +19,13 @@ from speaker_recognition.models import (
 
 EXAMPLE_DATA_DIR = Path(__file__).parent.parent / "example_data"
 API_HOST = "127.0.0.1"
-API_PORT = 8765
-API_BASE_URL = f"http://{API_HOST}:{API_PORT}"
 
 
-def start_api_server():
+def start_api_server(port: int) -> None:
     """Start the API server in a subprocess."""
     from speaker_recognition.api import app
 
-    uvicorn.run(app, host=API_HOST, port=API_PORT, log_level="error")
+    uvicorn.run(app, host=API_HOST, port=port, log_level="error")
 
 
 def read_audio_file_as_base64(file_path: Path) -> tuple[str, int]:
@@ -45,20 +44,25 @@ def read_audio_file_as_base64(file_path: Path) -> tuple[str, int]:
 
 
 @pytest.fixture(scope="module")
-def api_server():
+def api_server() -> str:
     """Start API server for testing."""
     import time
 
     import httpx
 
-    server_process = Process(target=start_api_server)
+    with socket.socket() as server_socket:
+        server_socket.bind((API_HOST, 0))
+        port = server_socket.getsockname()[1]
+
+    api_base_url = f"http://{API_HOST}:{port}"
+    server_process = Process(target=start_api_server, args=(port,))
     server_process.start()
 
     # Wait for server to be ready with health checks
     max_attempts = 30
     for attempt in range(max_attempts):
         try:
-            response = httpx.get(f"{API_BASE_URL}/health", timeout=1.0)
+            response = httpx.get(f"{api_base_url}/health", timeout=1.0)
             if response.status_code == 200:
                 break
         except (httpx.ConnectError, httpx.TimeoutException):
@@ -68,7 +72,7 @@ def api_server():
                 raise RuntimeError("Server failed to start within timeout")
             time.sleep(0.5)
 
-    yield
+    yield api_base_url
 
     # Cleanup
     server_process.terminate()
@@ -78,7 +82,7 @@ def api_server():
 
 
 @pytest.mark.asyncio
-async def test_train_and_recognize_speakers(api_server: None):
+async def test_train_and_recognize_speakers(api_server: str):
     """Test training with two speakers and recognizing them with different samples."""
     # Read training audio files
     speaker1_training_file = EXAMPLE_DATA_DIR / "speaker1_1.wav"
@@ -94,7 +98,7 @@ async def test_train_and_recognize_speakers(api_server: None):
     assert speaker1_recognition_file.exists(), f"Missing {speaker1_recognition_file}"
     assert speaker2_recognition_file.exists(), f"Missing {speaker2_recognition_file}"
 
-    async with SpeakerRecognitionClient(API_BASE_URL, timeout=60.0) as client:
+    async with SpeakerRecognitionClient(api_server, timeout=60.0) as client:
         # Health check
         health = await client.health_check()
         assert health.status == "healthy"

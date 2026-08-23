@@ -121,3 +121,110 @@ jobs:
         uses: frenck/action-addon-linter@v2
         with:
           path: "./${{ matrix.path }}"
+
+  addon-sources:
+    name: Verify add-on source copy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code from GitHub
+        uses: actions/checkout@v6
+
+      - name: Check committed backend copy
+        run: python scripts/sync_addon_sources.py --check
+
+  build-addon:
+    name: Build ${{ matrix.arch }} add-on
+    if: github.event_name != 'schedule'
+    needs:
+      - addon-sources
+      - lint-addon
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+          - arch: aarch64
+            platform: linux/arm64
+    steps:
+      - name: Check out code from GitHub
+        uses: actions/checkout@v6
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build add-on from Supervisor context
+        uses: docker/build-push-action@v6
+        with:
+          context: ./speaker_recognition_addon
+          platforms: ${{ matrix.platform }}
+          build-args: |
+            BUILD_ARCH=${{ matrix.arch }}
+            BUILD_VERSION=1.1.0
+          load: ${{ matrix.arch == 'amd64' }}
+          push: false
+          tags: speaker-recognition-addon:test
+
+      - name: Prepare smoke-test volumes
+        if: matrix.arch == 'amd64'
+        run: |
+          mkdir -p \
+            "${RUNNER_TEMP}/speaker-recognition/data" \
+            "${RUNNER_TEMP}/speaker-recognition/share" \
+            "${RUNNER_TEMP}/speaker-recognition/supervisor/addons/self/options"
+          printf '%s\n' '{"host":"0.0.0.0","port":8099,"log_level":"info","access_log":true,"embeddings_dir":"/share/speaker_recognition/embeddings"}' > "${RUNNER_TEMP}/speaker-recognition/data/options.json"
+          printf '%s\n' '{"result":"ok","data":{"host":"0.0.0.0","port":8099,"log_level":"info","access_log":true,"embeddings_dir":"/share/speaker_recognition/embeddings"}}' > "${RUNNER_TEMP}/speaker-recognition/supervisor/addons/self/options/config"
+
+      - name: Start mock Supervisor API
+        if: matrix.arch == 'amd64'
+        run: |
+          docker network create speaker-recognition-smoke
+          docker run --detach \
+            --name supervisor \
+            --network speaker-recognition-smoke \
+            --volume "${RUNNER_TEMP}/speaker-recognition/supervisor:/mock:ro" \
+            python:3.13-alpine \
+            python -m http.server 80 --directory /mock
+
+      - name: Start add-on container
+        if: matrix.arch == 'amd64'
+        run: |
+          docker run --detach \
+            --name speaker-recognition-smoke \
+            --network speaker-recognition-smoke \
+            --env SUPERVISOR_TOKEN=smoke-test-token \
+            --publish 18099:8099 \
+            --volume "${RUNNER_TEMP}/speaker-recognition/data:/data" \
+            --volume "${RUNNER_TEMP}/speaker-recognition/share:/share" \
+            speaker-recognition-addon:test
+
+      - name: Wait for healthy API
+        if: matrix.arch == 'amd64'
+        run: |
+          for attempt in {1..90}; do
+            if curl --fail --silent http://127.0.0.1:18099/health | grep --quiet '"status":"healthy"'; then
+              exit 0
+            fi
+            if ! docker inspect --format '{{.State.Running}}' speaker-recognition-smoke | grep --quiet true; then
+              docker logs speaker-recognition-smoke
+              exit 1
+            fi
+            sleep 2
+          done
+          docker logs speaker-recognition-smoke
+          exit 1
+
+      - name: Show add-on logs
+        if: always() && matrix.arch == 'amd64'
+        run: docker logs speaker-recognition-smoke || true
+
+      - name: Stop smoke-test container
+        if: always() && matrix.arch == 'amd64'
+        run: |
+          docker rm --force speaker-recognition-smoke || true
+          docker rm --force supervisor || true
+          docker network rm speaker-recognition-smoke || true

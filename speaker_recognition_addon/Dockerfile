@@ -1,41 +1,50 @@
-ARG BUILD_FROM
-FROM ${BUILD_FROM}
-
-ARG TEMPIO_VERSION BUILD_ARCH
-RUN \
-    curl -sSLf -o /usr/bin/tempio \
-    "https://github.com/home-assistant/tempio/releases/download/${TEMPIO_VERSION}/tempio_${BUILD_ARCH}" && \
-    chmod +x /usr/bin/tempio
+FROM ghcr.io/home-assistant/base-debian:bookworm AS builder
 
 WORKDIR /app
 
-RUN apk add --no-cache \
-    python3 \
-    py3-pip \
-    gcc \
-    g++ \
-    musl-dev \
-    python3-dev \
-    cmake \
-    ninja \
-    llvm-dev \
-    llvm-static
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y \
+        build-essential \
+        python3 \
+        python3-dev \
+        python3-venv \
+    && python3 -m venv /opt/speaker-recognition \
+    && /opt/speaker-recognition/bin/pip install --no-cache-dir --upgrade pip \
+    && rm -rf /var/lib/apt/lists/*
 
-COPY pyproject.toml ./
+COPY requirements.txt ./
+RUN /opt/speaker-recognition/bin/pip install --no-cache-dir -r requirements.txt
+
+
+FROM ghcr.io/home-assistant/base-debian:bookworm
+
+ARG BUILD_ARCH="unknown"
+ARG BUILD_VERSION="1.1.0"
+
+LABEL \
+    io.hass.type="app" \
+    io.hass.version="${BUILD_VERSION}" \
+    io.hass.arch="${BUILD_ARCH}" \
+    org.opencontainers.image.title="Home Assistant App: Speaker Recognition" \
+    org.opencontainers.image.description="Speaker recognition service using voice embeddings for identification." \
+    org.opencontainers.image.source="https://github.com/conorod1992/speaker-recognition" \
+    org.opencontainers.image.licenses="MIT"
+
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y \
+        libsndfile1 \
+        python3 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /opt/speaker-recognition /opt/speaker-recognition
 COPY speaker_recognition ./speaker_recognition
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
-
-RUN uv pip install --system --no-cache --index-strategy unsafe-best-match --break-system-packages -e ".[server]"
-
-ENV HOST=0.0.0.0 \
-    PORT=8099 \
-    LOG_LEVEL=INFO \
-    ACCESS_LOG=true \
-    EMBEDDINGS_DIR=/share/speaker_recognition/embeddings
+ENV PATH="/opt/speaker-recognition/bin:${PATH}"
 
 COPY rootfs /
 
-RUN chmod a+x /etc/s6-overlay/s6-rc.d/speaker-recognition/run
-
-CMD ["/init"]
+RUN chmod a+x /etc/s6-overlay/s6-rc.d/speaker-recognition/run \
+    && /opt/speaker-recognition/bin/python -c \
+        "from speaker_recognition.api import app; assert app.title"
