@@ -64,6 +64,28 @@ def test_wav_training_audio_is_decoded_to_mono_pcm() -> None:
     assert pcm == b"\x00\x00\xd0\x07"
 
 
+def test_raw_pcm_live_audio_is_downmixed_using_metadata() -> None:
+    """Live PCM frames do not need a WAV container to be recognized."""
+    audio = _load_integration_audio_module()
+    raw_stereo_pcm = b"\xe8\x03\x18\xfc\xb8\x0b\xe8\x03"
+
+    pcm, sample_rate = audio.prepare_live_pcm(raw_stereo_pcm, 22050, 2)
+
+    assert sample_rate == 22050
+    assert pcm == b"\x00\x00\xd0\x07"
+
+
+def test_wav_container_live_audio_is_decoded() -> None:
+    """A live WAV container is decoded when its header is present."""
+    audio = _load_integration_audio_module()
+    wav_data = _wav_bytes(b"\xe8\x03\x18\xfc", sample_rate=16000, channels=2)
+
+    pcm, sample_rate = audio.prepare_live_pcm(wav_data, 22050, 2)
+
+    assert sample_rate == 16000
+    assert pcm == b"\x00\x00"
+
+
 def test_non_wav_training_audio_is_rejected() -> None:
     """MP3 is not advertised because no reliable decoder is bundled with HA."""
     audio = _load_integration_audio_module()
