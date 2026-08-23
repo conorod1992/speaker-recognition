@@ -2,16 +2,15 @@
   "domain": "speaker_recognition",
   "name": "Speaker Recognition",
   "codeowners": [
-    "@EuleMitKeule"
+    "@conorod1992"
   ],
   "config_flow": true,
   "dependencies": [
     "stt"
   ],
+  "documentation": "https://github.com/conorod1992/speaker-recognition#home-assistant-integration",
   "integration_type": "service",
   "iot_class": "calculated",
-  "requirements": [
-    "hass-speaker-recognition>=0.0.0-dev"
-  ],
-  "version": "0.0.0-dev"
+  "issue_tracker": "https://github.com/conorod1992/speaker-recognition/issues",
+  "version": "1.1.0"
 }

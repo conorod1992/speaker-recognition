@@ -82,13 +82,29 @@ jobs:
       - name: Install dependecies
         run: uv sync
 
-      - name: Set all versions
+      - name: Set release versions
+        env:
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
         run: |
-          $version = "${{ needs.version.outputs.version }}"
-          Get-ChildItem -Recurse -File | ForEach-Object {
-            (Get-Content $_.FullName -Raw) -replace '0\.0\.0-dev', $version | Set-Content $_.FullName -NoNewline
+          from pathlib import Path
+          import os
+          import re
+
+          version = os.environ["RELEASE_VERSION"].removeprefix("v")
+          replacements = {
+              Path("pyproject.toml"): (r'(?m)^version = ".*"$', f'version = "{version}"'),
+              Path("speaker_recognition/api.py"): (r'(?m)^    version=".*",$', f'    version="{version}",'),
+              Path("custom_components/speaker_recognition/manifest.json"): (r'(?m)^  "version": ".*"$', f'  "version": "{version}"'),
+              Path("speaker_recognition_addon/config.yaml"): (r'(?m)^version: ".*"$', f'version: "{version}"'),
           }
-        shell: pwsh
+
+          for path, (pattern, replacement) in replacements.items():
+              content = path.read_text(encoding="utf-8")
+              updated, count = re.subn(pattern, replacement, content)
+              if count != 1:
+                  raise RuntimeError(f"Expected one version in {path}, found {count}")
+              path.write_text(updated, encoding="utf-8")
+        shell: python
 
       - name: Build package
         run: |

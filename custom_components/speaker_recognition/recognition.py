@@ -4,17 +4,12 @@ from __future__ import annotations
 
 import base64
 import logging
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from speaker_recognition import SpeakerRecognitionClient
-from speaker_recognition.models import (
-    AudioInput,
-    RecognitionRequest,
-    RecognitionResult,
-    TrainingRequest,
-    VoiceSample,
-)
+from aiohttp import ClientError, ClientTimeout
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -22,6 +17,22 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 DEFAULT_ADDON_URL = "http://localhost:8099"
+
+
+@dataclass(frozen=True)
+class TrainingResult:
+    """Training response returned by the Speaker Recognition app."""
+
+    users_trained: list[str]
+
+
+@dataclass(frozen=True)
+class RecognitionResult:
+    """Recognition response returned by the Speaker Recognition app."""
+
+    user_id: str
+    confidence: float
+    all_scores: dict[str, float]
 
 
 class SpeakerRecognition:
@@ -43,7 +54,22 @@ class SpeakerRecognition:
         self.hass = hass
         self.voice_samples = voice_samples
         self._trained = False
-        self._client = SpeakerRecognitionClient(base_url=base_url, timeout=300.0)
+        self._base_url = base_url.rstrip("/")
+
+    async def _async_post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """Call the local Speaker Recognition app without external dependencies."""
+        session = async_get_clientsession(self.hass)
+        async with session.post(
+            f"{self._base_url}{path}",
+            json=payload,
+            timeout=ClientTimeout(total=300),
+        ) as response:
+            response.raise_for_status()
+            data = await response.json()
+
+        if not isinstance(data, dict):
+            raise ValueError("Unexpected response from Speaker Recognition app")
+        return data
 
     async def async_train(self) -> None:
         """Train the speaker recognition model with configured voice samples."""
@@ -76,13 +102,13 @@ class SpeakerRecognition:
                     audio_base64 = base64.b64encode(audio_data).decode("utf-8")
 
                     voice_sample_models.append(
-                        VoiceSample(
-                            user=user_id,
-                            audio=AudioInput(
-                                audio_data=audio_base64,
-                                sample_rate=16000,
-                            ),
-                        )
+                        {
+                            "user": user_id,
+                            "audio": {
+                                "audio_data": audio_base64,
+                                "sample_rate": 16000,
+                            },
+                        }
                     )
                 else:
                     _LOGGER.warning("Unsupported media_content_id format: %s", media_id)
@@ -93,10 +119,17 @@ class SpeakerRecognition:
                 self._trained = False
                 return
 
-            request = TrainingRequest(voice_samples=voice_sample_models)
-            result = await self._client.train(request)
+            response = await self._async_post(
+                "/train", {"voice_samples": voice_sample_models}
+            )
+            trained_users = response.get("trained_users")
+            if not isinstance(trained_users, list) or not all(
+                isinstance(user, str) for user in trained_users
+            ):
+                raise ValueError("Invalid training response from Speaker Recognition app")
+            result = TrainingResult(users_trained=trained_users)
 
-        except (OSError, ValueError, TypeError) as error:
+        except (ClientError, OSError, ValueError, TypeError) as error:
             _LOGGER.error("Error during training: %s", error)
             self._trained = False
         else:
@@ -125,16 +158,37 @@ class SpeakerRecognition:
         try:
             audio_base64 = base64.b64encode(audio_data).decode("utf-8")
 
-            request = RecognitionRequest(
-                audio=AudioInput(
-                    audio_data=audio_base64,
-                    sample_rate=sample_rate,
+            response = await self._async_post(
+                "/recognize",
+                {
+                    "audio": {
+                        "audio_data": audio_base64,
+                        "sample_rate": sample_rate,
+                    }
+                },
+            )
+            user_id = response.get("user_id")
+            confidence = response.get("confidence")
+            all_scores = response.get("all_scores")
+            if (
+                not isinstance(user_id, str)
+                or not isinstance(confidence, (int, float))
+                or not isinstance(all_scores, dict)
+                or not all(
+                    isinstance(user, str) and isinstance(score, (int, float))
+                    for user, score in all_scores.items()
                 )
+            ):
+                raise ValueError(
+                    "Invalid recognition response from Speaker Recognition app"
+                )
+            result = RecognitionResult(
+                user_id=user_id,
+                confidence=float(confidence),
+                all_scores={user: float(score) for user, score in all_scores.items()},
             )
 
-            result = await self._client.recognize(request)
-
-        except (OSError, ValueError, TypeError) as error:
+        except (ClientError, OSError, ValueError, TypeError) as error:
             _LOGGER.error("Error during recognition: %s", error)
             return None
         else:

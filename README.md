@@ -21,6 +21,7 @@
 
 - [Installation](#installation)
   - [Home Assistant Addon](#home-assistant-addon)
+  - [Home Assistant Integration (HACS)](#home-assistant-integration-hacs)
   - [Python Package](#python-package)
   - [Docker](#docker)
 - [Usage](#usage)
@@ -52,13 +53,30 @@ installation:
    - **Log Level**: `info`
 5. Start the app and verify `http://HOME_ASSISTANT_IP:8099/health` returns
    `{"status":"healthy"}`.
-6. Install the custom integration from this repository, restart Home Assistant,
-   and add **Speaker Recognition** from **Settings > Devices & services**.
+6. Install the **Speaker Recognition integration through HACS** using the
+   instructions below, restart Home Assistant, and add **Speaker Recognition**
+   from **Settings > Devices & services**.
 7. Configure its backend URL as `http://HOME_ASSISTANT_IP:8099`.
 
 The app supports `amd64` and `aarch64`. Installation builds a CPU-only PyTorch
 image locally and can take several minutes. Speaker embeddings persist in the
 mapped `/share/speaker_recognition/embeddings` directory.
+
+### Home Assistant Integration (HACS)
+
+The app provides the recognition service; the integration adds the Home
+Assistant config flow, STT, and conversation features. Install both.
+
+1. In **HACS**, open **Integrations** and select the three-dot menu.
+2. Choose **Custom repositories**, add
+   `https://github.com/conorod1992/speaker-recognition`, and select the
+   **Integration** category.
+3. Find **Speaker Recognition** in HACS and select **Download**.
+4. Restart Home Assistant. HACS installs the integration into
+   `custom_components/speaker_recognition`; do not copy that directory
+   manually.
+5. Open **Settings > Devices & services > Add integration**, select **Speaker
+   Recognition**, and enter the URL of the app from the preceding section.
 
 ### Python Package
 
