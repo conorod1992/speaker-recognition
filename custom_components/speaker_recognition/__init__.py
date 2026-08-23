@@ -16,7 +16,7 @@ from .const import (
 )
 from .recognition import SpeakerRecognition
 
-type SpeakerRecognitionConfigEntry = ConfigEntry[SpeakerRecognition]
+SpeakerRecognitionConfigEntry = ConfigEntry[SpeakerRecognition]
 
 
 def _get_main_entry(hass: HomeAssistant) -> ConfigEntry | None:

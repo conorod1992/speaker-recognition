@@ -14,6 +14,17 @@ on:
     - cron: "0 0 * * *"
 
 jobs:
+  hacs:
+    name: Validate HACS integration
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: HACS validation
+        uses: hacs/action@main
+        with:
+          category: integration
+
   cache:
     runs-on: ubuntu-latest
     steps:
