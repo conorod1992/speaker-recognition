@@ -25,7 +25,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_state_change_event
 
 from .const import CONF_ENTRY_TYPE, CONF_STT_ENTITY, DOMAIN, ENTRY_TYPE_MAIN
-from .audio import decode_wav
+from .audio import prepare_live_pcm
 from .recognition import SpeakerRecognition
 
 _LOGGER = logging.getLogger(__name__)
@@ -242,7 +242,10 @@ class SpeakerRecognitionSTTEntity(SpeechToTextEntity):
                     )
                     return result
                 pcm_audio, sample_rate = await self.hass.async_add_executor_job(
-                    decode_wav, bytes(audio_buffer)
+                    prepare_live_pcm,
+                    bytes(audio_buffer),
+                    int(metadata.sample_rate),
+                    int(metadata.channel),
                 )
                 recognition_result = await self.recognition.async_recognize(
                     pcm_audio, sample_rate=sample_rate
