@@ -172,14 +172,31 @@ jobs:
       - name: Prepare smoke-test volumes
         if: matrix.arch == 'amd64'
         run: |
-          mkdir -p "${RUNNER_TEMP}/speaker-recognition/data" "${RUNNER_TEMP}/speaker-recognition/share"
+          mkdir -p \
+            "${RUNNER_TEMP}/speaker-recognition/data" \
+            "${RUNNER_TEMP}/speaker-recognition/share" \
+            "${RUNNER_TEMP}/speaker-recognition/supervisor/addons/self/options"
           printf '%s\n' '{"host":"0.0.0.0","port":8099,"log_level":"info","access_log":true,"embeddings_dir":"/share/speaker_recognition/embeddings"}' > "${RUNNER_TEMP}/speaker-recognition/data/options.json"
+          printf '%s\n' '{"result":"ok","data":{"host":"0.0.0.0","port":8099,"log_level":"info","access_log":true,"embeddings_dir":"/share/speaker_recognition/embeddings"}}' > "${RUNNER_TEMP}/speaker-recognition/supervisor/addons/self/options/config"
+
+      - name: Start mock Supervisor API
+        if: matrix.arch == 'amd64'
+        run: |
+          docker network create speaker-recognition-smoke
+          docker run --detach \
+            --name supervisor \
+            --network speaker-recognition-smoke \
+            --volume "${RUNNER_TEMP}/speaker-recognition/supervisor:/mock:ro" \
+            python:3.13-alpine \
+            python -m http.server 80 --directory /mock
 
       - name: Start add-on container
         if: matrix.arch == 'amd64'
         run: |
           docker run --detach \
             --name speaker-recognition-smoke \
+            --network speaker-recognition-smoke \
+            --env SUPERVISOR_TOKEN=smoke-test-token \
             --publish 18099:8099 \
             --volume "${RUNNER_TEMP}/speaker-recognition/data:/data" \
             --volume "${RUNNER_TEMP}/speaker-recognition/share:/share" \
@@ -207,4 +224,7 @@ jobs:
 
       - name: Stop smoke-test container
         if: always() && matrix.arch == 'amd64'
-        run: docker rm --force speaker-recognition-smoke || true
+        run: |
+          docker rm --force speaker-recognition-smoke || true
+          docker rm --force supervisor || true
+          docker network rm speaker-recognition-smoke || true
