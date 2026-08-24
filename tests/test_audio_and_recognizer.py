@@ -152,6 +152,7 @@ def test_train_then_recognize_and_load_persisted_embeddings(recognizer_factory) 
 
     restarted_recognizer = recognizer_factory()
     assert restarted_recognizer.is_trained
+    assert restarted_recognizer.enrolled_users == ["alice"]
     assert (
         restarted_recognizer.recognize(RecognitionRequest(audio=sample)).user_id
         == "alice"
@@ -227,6 +228,16 @@ def test_retraining_one_user_preserves_unrelated_profiles(recognizer_factory) ->
     restarted = recognizer_factory()
     assert set(restarted._reference_embeddings) == {"alice", "bob"}
     np.testing.assert_allclose(restarted._reference_embeddings["bob"], [0.0, 1.0])
+
+    invalid = AudioInput(
+        audio_data=base64.b64encode(b"\x00").decode(), sample_rate=16000
+    )
+    with pytest.raises(ValueError, match="No valid"):
+        recognizer.train(
+            TrainingRequest(voice_samples=[VoiceSample(user="alice", audio=invalid)])
+        )
+    recognizer._encoder = _SequenceEncoder([[0.0, 1.0]])
+    assert recognizer.recognize(RecognitionRequest(audio=sample)).user_id == "bob"
 
 
 def test_invalid_sample_is_rejected_without_discarding_valid_sample(

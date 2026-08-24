@@ -70,7 +70,9 @@ Directory where voice embeddings are stored.
 The service exposes `/health`, `/train`, and `/recognize` on the configured
 port. From a device on the same network, open
 `http://HOME_ASSISTANT_IP:8099/health`; a healthy service returns
-`{"status":"healthy"}`.
+`{"status":"healthy","trained":false,"enrolled_users":[]}`. The profile fields
+let the integration restore recognition availability without retraining on each
+Home Assistant restart.
 
 ## Data persistence
 

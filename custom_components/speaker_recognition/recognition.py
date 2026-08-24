@@ -74,6 +74,19 @@ class SpeakerRecognition:
             raise ValueError("Unexpected response from Speaker Recognition app")
         return data
 
+    async def _async_get(self, path: str) -> dict[str, Any]:
+        """Read lightweight status from the local Speaker Recognition app."""
+        session = async_get_clientsession(self.hass)
+        async with session.get(
+            f"{self._base_url}{path}", timeout=ClientTimeout(total=10)
+        ) as response:
+            response.raise_for_status()
+            data = await response.json()
+
+        if not isinstance(data, dict):
+            raise ValueError("Unexpected response from Speaker Recognition app")
+        return data
+
     async def _async_read_media(self, media_content_id: str) -> bytes:
         """Resolve and read a locally selected media-source item."""
         resolved_media = await media_source.async_resolve_media(
@@ -83,21 +96,47 @@ class SpeakerRecognition:
             raise ValueError("Selected media source does not provide a local file")
         return await self.hass.async_add_executor_job(resolved_media.path.read_bytes)
 
-    async def async_train(self) -> None:
-        """Train the speaker recognition model with configured voice samples."""
+    async def async_refresh_status(self) -> bool:
+        """Refresh recognition availability from persisted backend profiles."""
+        try:
+            response = await self._async_get("/health")
+            trained = response.get("trained")
+            enrolled_users = response.get("enrolled_users")
+            if not isinstance(trained, bool) or not isinstance(enrolled_users, list):
+                raise ValueError("Invalid profile status from Speaker Recognition app")
+            if not all(isinstance(user, str) for user in enrolled_users):
+                raise ValueError(
+                    "Invalid enrolled user list from Speaker Recognition app"
+                )
+        except (ClientError, OSError, ValueError, TypeError) as error:
+            _LOGGER.error("Unable to read speaker recognition status: %s", error)
+        else:
+            self._trained = trained and bool(enrolled_users)
+            _LOGGER.info(
+                "Speaker recognition backend has %d persisted profiles",
+                len(enrolled_users),
+            )
+        return self._trained
+
+    async def async_train(self, user_ids: set[str] | None = None) -> bool:
+        """Train configured samples for selected newly enrolled users."""
+        selected_samples = [
+            sample
+            for sample in self.voice_samples
+            if user_ids is None or sample.get("user") in user_ids
+        ]
         _LOGGER.debug(
             "Training speaker recognition with %d voice samples",
-            len(self.voice_samples),
+            len(selected_samples),
         )
 
-        if not self.voice_samples:
-            _LOGGER.warning("No voice samples configured for training")
-            self._trained = False
-            return
+        if not selected_samples:
+            _LOGGER.warning("No changed voice samples available for training")
+            return False
 
         try:
             voice_sample_models = []
-            for sample in self.voice_samples:
+            for sample in selected_samples:
                 user_id = sample["user"]
                 selected_media = sample["samples"]
                 media_items = (
@@ -136,8 +175,7 @@ class SpeakerRecognition:
 
             if not voice_sample_models:
                 _LOGGER.warning("No valid training samples prepared")
-                self._trained = False
-                return
+                return False
 
             response = await self._async_post(
                 "/train", {"voice_samples": voice_sample_models}
@@ -155,16 +193,17 @@ class SpeakerRecognition:
 
         except (ClientError, OSError, ValueError, TypeError) as error:
             _LOGGER.error(
-                "Speaker recognition training failed; recognition will be skipped: %s",
+                "Speaker recognition training failed; existing profiles remain usable: %s",
                 error,
             )
-            self._trained = False
+            return False
         else:
             self._trained = True
             _LOGGER.info(
                 "Speaker recognition training completed: %d users trained",
                 len(result.users_trained),
             )
+            return True
 
     async def async_recognize(
         self, audio_data: bytes, sample_rate: int = 16000
@@ -237,11 +276,10 @@ class SpeakerRecognition:
             return result
 
     def update_voice_samples(self, voice_samples: list[dict]) -> None:
-        """Update voice samples and mark as needing retraining.
+        """Update configured voice sample media references.
 
         Args:
             voice_samples: New list of voice samples
         """
         self.voice_samples = voice_samples
-        self._trained = False
-        _LOGGER.info("Voice samples updated, retraining required")
+        _LOGGER.debug("Configured voice sample references updated")

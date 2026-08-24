@@ -135,6 +135,10 @@ async def test_train_and_recognize_speakers(api_server: str):
         assert "speaker1" in training_result.trained_users
         assert "speaker2" in training_result.trained_users
 
+        persisted_status = await client.health_check()
+        assert persisted_status.trained
+        assert {"speaker1", "speaker2"} <= set(persisted_status.enrolled_users)
+
         # Test recognition for speaker1
         speaker1_recognition_audio, speaker1_rec_rate = read_audio_file_as_base64(
             speaker1_recognition_file

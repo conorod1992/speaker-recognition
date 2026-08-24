@@ -74,6 +74,8 @@ class HealthResponse(BaseModel):
     """Health check response data model."""
 
     status: str
+    trained: bool = False
+    enrolled_users: list[str] = Field(default_factory=list)
 
 
 class ErrorResponse(BaseModel):

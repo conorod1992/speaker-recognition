@@ -215,9 +215,14 @@ Health check endpoint.
 **Response:**
 ```json
 {
-  "status": "healthy"
+  "status": "healthy",
+  "trained": true,
+  "enrolled_users": ["Alice", "Bob"]
 }
 ```
+
+Home Assistant uses this persisted-profile status during setup. Ordinary HA
+restart/reload does not reread enrollment WAV files or call `/train`.
 
 #### `POST /train`
 Train the model with voice samples.

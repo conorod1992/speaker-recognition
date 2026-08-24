@@ -46,6 +46,11 @@ class SpeakerRecognizer:
         return self._is_trained
 
     @property
+    def enrolled_users(self) -> list[str]:
+        """Return user IDs with usable persisted reference profiles."""
+        return sorted(self._reference_embeddings)
+
+    @property
     def embeddings_directory(self) -> Path:
         """Get the embeddings directory."""
         return self._embeddings_directory

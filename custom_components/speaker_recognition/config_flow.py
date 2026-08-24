@@ -24,6 +24,7 @@ from .const import (
     CONF_ENROLLMENT_ACTION,
     CONF_FINISH_ENROLLMENT,
     CONF_MIN_CONFIDENCE,
+    CONF_PENDING_ENROLLMENT,
     CONF_SAMPLE,
     CONF_SAMPLES,
     CONF_STT_ENTITY,
@@ -35,6 +36,7 @@ from .const import (
     ENTRY_TYPE_CONVERSATION,
     ENTRY_TYPE_MAIN,
     ENTRY_TYPE_STT,
+    effective_backend_url,
 )
 
 from .audio import decode_wav
@@ -324,13 +326,16 @@ class SpeakerRecognitionConfigFlow(EnrollmentFlowMixin, ConfigFlow, domain=DOMAI
     def _async_create_main_entry(
         self, voice_samples: list[dict[str, Any]]
     ) -> ConfigFlowResult:
+        options: dict[str, Any] = {CONF_VOICE_SAMPLES: voice_samples}
+        if voice_samples:
+            options[CONF_PENDING_ENROLLMENT] = voice_samples[0][CONF_USER]
         return self.async_create_entry(
             title="Speaker Recognition",
             data={
                 CONF_ENTRY_TYPE: ENTRY_TYPE_MAIN,
                 CONF_BACKEND_URL: self._pending_backend_url,
             },
-            options={CONF_VOICE_SAMPLES: voice_samples},
+            options=options,
         )
 
     async def async_step_add_stt(
@@ -459,7 +464,9 @@ class SpeakerRecognitionOptionsFlow(EnrollmentFlowMixin, OptionsFlow):
                 },
             )
 
-        current_url = self.config_entry.data.get(CONF_BACKEND_URL, DEFAULT_BACKEND_URL)
+        current_url = effective_backend_url(
+            self.config_entry.data, self.config_entry.options
+        )
         return self.async_show_form(
             step_id="main_options",
             data_schema=vol.Schema(
@@ -473,9 +480,8 @@ class SpeakerRecognitionOptionsFlow(EnrollmentFlowMixin, OptionsFlow):
 
     async def _async_save_enrollment(self) -> ConfigFlowResult:
         current_voice_samples = self.config_entry.options.get(CONF_VOICE_SAMPLES, [])
-        current_url = self.config_entry.options.get(
-            CONF_BACKEND_URL,
-            self.config_entry.data.get(CONF_BACKEND_URL, DEFAULT_BACKEND_URL),
+        current_url = effective_backend_url(
+            self.config_entry.data, self.config_entry.options
         )
         return self.async_create_entry(
             title="",
