@@ -7,12 +7,16 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 
 from .const import (
-    CONF_BACKEND_URL,
     CONF_ENTRY_TYPE,
+    CONF_PENDING_ENROLLMENT,
     CONF_VOICE_SAMPLES,
-    DEFAULT_BACKEND_URL,
     ENTRY_TYPE_MAIN,
     ENTRY_TYPE_STT,
+    effective_backend_url,
+)
+from .lifecycle import (
+    async_apply_enrollment_update,
+    async_initialize_recognition,
 )
 from .recognition import SpeakerRecognition
 
@@ -43,13 +47,19 @@ async def async_setup_main_entry(
     hass: HomeAssistant, entry: SpeakerRecognitionConfigEntry
 ) -> bool:
     """Set up main config entry."""
-    backend_url = entry.data.get(CONF_BACKEND_URL, DEFAULT_BACKEND_URL)
+    backend_url = effective_backend_url(entry.data, entry.options)
     voice_samples = entry.options.get(CONF_VOICE_SAMPLES, [])
 
     recognition = SpeakerRecognition(hass, voice_samples, backend_url)
 
-    if voice_samples:
-        await recognition.async_train()
+    pending_user_value = entry.options.get(CONF_PENDING_ENROLLMENT)
+    pending_user = pending_user_value if isinstance(pending_user_value, str) else None
+    await async_initialize_recognition(recognition, pending_user)
+
+    if CONF_PENDING_ENROLLMENT in entry.options:
+        updated_options = dict(entry.options)
+        updated_options.pop(CONF_PENDING_ENROLLMENT)
+        hass.config_entries.async_update_entry(entry, options=updated_options)
 
     entry.runtime_data = recognition
     entry.async_on_unload(entry.add_update_listener(async_update_main_listener))
@@ -101,11 +111,7 @@ async def async_update_main_listener(
 ) -> None:
     """Handle main config options update."""
     voice_samples = entry.options.get(CONF_VOICE_SAMPLES, [])
-    entry.runtime_data.update_voice_samples(voice_samples)
-
-    if voice_samples:
-        await entry.runtime_data.async_train()
-
+    await async_apply_enrollment_update(entry.runtime_data, voice_samples)
     await hass.config_entries.async_reload(entry.entry_id)
 
 

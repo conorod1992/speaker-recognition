@@ -107,7 +107,10 @@ docker run -d \
 
 ### Training
 
-Train the system with voice samples for each speaker:
+Train with one or more voice samples for each speaker. Samples are embedded
+separately, averaged, and L2-normalized into a per-user reference. Training is an
+upsert: retraining one user rebuilds only that profile and preserves unrelated
+users. Individual sample embeddings are retained for future calibration work.
 
 #### Using Python Client
 
@@ -184,11 +187,23 @@ async with SpeakerRecognitionClient("http://localhost:8099") as client:
 Once the integration is configured:
 
 1. **Configure the backend** in the main integration entry
-2. **Map voices to users** in the integration settings
+2. **Enroll a Home Assistant user** through the guided five-to-six phrase flow
 3. **Add STT entity** as a sub-entry for speech-to-text with speaker ID
 4. **Add Conversation Agent** as a sub-entry for voice commands with speaker context
 
-The integration will automatically identify speakers and make the information available to your automations.
+Each recording is validated as a local, uncompressed 16-bit PCM WAV. You can
+retry an individual recording, and retraining replaces only that user's samples.
+
+Home Assistant custom-integration config flows expose media selectors but no
+supported microphone-capture selector. The flow therefore prompts one phrase at
+a time and lets you upload/select a recording through Home Assistant media after
+recording it on your device or in the companion app. Existing media-file sample
+configuration remains readable for migration.
+
+For voice commands, audio chunks reach the wrapped STT provider immediately.
+Speaker recognition starts at incoming-stream EOF and overlaps with the
+provider's remaining transcription work. Both complete before the proxy returns;
+a recognition failure never replaces or invalidates the original STT result.
 
 ## 🔌 API Documentation
 
@@ -200,9 +215,14 @@ Health check endpoint.
 **Response:**
 ```json
 {
-  "status": "healthy"
+  "status": "healthy",
+  "trained": true,
+  "enrolled_users": ["Alice", "Bob"]
 }
 ```
+
+Home Assistant uses this persisted-profile status during setup. Ordinary HA
+restart/reload does not reread enrollment WAV files or call `/train`.
 
 #### `POST /train`
 Train the model with voice samples.
@@ -225,8 +245,11 @@ Train the model with voice samples.
 **Response:**
 ```json
 {
-  "speakers_count": 2,
-  "message": "Training completed successfully"
+  "status": "success",
+  "trained_users": ["Alice"],
+  "count": 2,
+  "accepted_samples": {"Alice": 6},
+  "rejected_samples": {"Alice": 0}
 }
 ```
 

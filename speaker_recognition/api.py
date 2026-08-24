@@ -26,7 +26,11 @@ app = FastAPI(
 @app.get("/health", response_model=HealthResponse, tags=["Health"])
 async def health_check() -> HealthResponse:
     """Health check endpoint."""
-    return HealthResponse(status="healthy")
+    return HealthResponse(
+        status="healthy",
+        trained=recognizer.is_trained,
+        enrolled_users=recognizer.enrolled_users,
+    )
 
 
 @app.post(

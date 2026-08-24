@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterable
 import logging
+from time import perf_counter
 
 from homeassistant.components.stt import (
     AudioBitRates,
@@ -24,9 +25,10 @@ from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_state_change_event
 
-from .const import CONF_ENTRY_TYPE, CONF_STT_ENTITY, DOMAIN, ENTRY_TYPE_MAIN
 from .audio import prepare_live_pcm
+from .const import CONF_ENTRY_TYPE, CONF_STT_ENTITY, DOMAIN, ENTRY_TYPE_MAIN
 from .recognition import SpeakerRecognition
+from .stream import async_process_buffered_stream
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -211,22 +213,25 @@ class SpeakerRecognitionSTTEntity(SpeechToTextEntity):
             # Entity not found - return error
             return SpeechResult(None, SpeechResultState.ERROR)
 
-        # Collect audio data for speaker recognition
-        audio_buffer = bytearray()
+        domain_data = self.hass.data.setdefault(DOMAIN, {})
+        utterance_sequence = int(domain_data.get("utterance_sequence", 0)) + 1
+        domain_data["utterance_sequence"] = utterance_sequence
 
-        async def buffered_stream() -> AsyncIterable[bytes]:
-            """Buffer the stream while passing it through."""
-            async for chunk in stream:
-                audio_buffer.extend(chunk)
-                yield chunk
+        async def process_stt(buffered_stream: AsyncIterable[bytes]) -> SpeechResult:
+            stt_started = perf_counter()
+            try:
+                return await source_entity.async_process_audio_stream(
+                    metadata, buffered_stream
+                )
+            finally:
+                _LOGGER.debug(
+                    "Wrapped STT completed in %.3fs for utterance %d",
+                    perf_counter() - stt_started,
+                    utterance_sequence,
+                )
 
-        # Forward the buffered stream to the source entity
-        result = await source_entity.async_process_audio_stream(
-            metadata, buffered_stream()
-        )
-
-        # Perform speaker recognition on the collected audio
-        if audio_buffer:
+        async def recognize_speaker(audio_data: bytes):
+            recognition_started = perf_counter()
             try:
                 if (
                     metadata.format != AudioFormats.WAV
@@ -240,50 +245,71 @@ class SpeakerRecognitionSTTEntity(SpeechToTextEntity):
                         metadata.codec,
                         metadata.bit_rate,
                     )
-                    return result
+                    return None
+
+                preparation_started = perf_counter()
                 pcm_audio, sample_rate = await self.hass.async_add_executor_job(
                     prepare_live_pcm,
-                    bytes(audio_buffer),
+                    audio_data,
                     int(metadata.sample_rate),
                     int(metadata.channel),
                 )
-                recognition_result = await self.recognition.async_recognize(
+                _LOGGER.debug(
+                    "Prepared recognition audio in %.3fs for utterance %d",
+                    perf_counter() - preparation_started,
+                    utterance_sequence,
+                )
+                return await self.recognition.async_recognize(
                     pcm_audio, sample_rate=sample_rate
                 )
+            finally:
+                _LOGGER.debug(
+                    "Total speaker recognition took %.3fs for utterance %d",
+                    perf_counter() - recognition_started,
+                    utterance_sequence,
+                )
 
-                if recognition_result:
-                    _LOGGER.info(
-                        "Speaker Recognition Result - User: %s, Confidence: %.3f, All scores: %s",
-                        recognition_result.user_id,
-                        recognition_result.confidence,
-                        {
-                            user: f"{score:.3f}"
-                            for user, score in recognition_result.all_scores.items()
-                        },
-                    )
+        result, recognition_result = await async_process_buffered_stream(
+            stream, process_stt, recognize_speaker
+        )
 
-                    # Fire an event with the recognition result
-                    self.hass.bus.async_fire(
-                        "speaker_recognition_detected",
-                        {
-                            "user_id": recognition_result.user_id,
-                            "confidence": recognition_result.confidence,
-                            "all_scores": recognition_result.all_scores,
-                            "entity_id": self.entity_id,
-                        },
-                    )
+        if recognition_result is None:
+            _LOGGER.debug(
+                "Speaker recognition produced no result for utterance %d",
+                utterance_sequence,
+            )
+            return result
 
-                    # Store the most recent recognition result for potential conversation use
-                    if "speaker_recognition" not in self.hass.data:
-                        self.hass.data["speaker_recognition"] = {}
-                    self.hass.data["speaker_recognition"]["last_result"] = {
-                        "user_id": recognition_result.user_id,
-                        "confidence": recognition_result.confidence,
-                        "timestamp": self.hass.loop.time(),
-                    }
-                else:
-                    _LOGGER.warning("Speaker recognition returned no result")
-            except (OSError, ValueError, TypeError) as error:
-                _LOGGER.error("Error during speaker recognition: %s", error)
+        _LOGGER.info(
+            "Speaker recognition result - User: %s, Confidence: %.3f, All scores: %s",
+            recognition_result.user_id,
+            recognition_result.confidence,
+            {
+                user: f"{score:.3f}"
+                for user, score in recognition_result.all_scores.items()
+            },
+        )
+        self.hass.bus.async_fire(
+            "speaker_recognition_detected",
+            {
+                "user_id": recognition_result.user_id,
+                "confidence": recognition_result.confidence,
+                "all_scores": recognition_result.all_scores,
+                "entity_id": self.entity_id,
+                "utterance_sequence": utterance_sequence,
+            },
+        )
+
+        # Concurrent utterances may finish out of order. Only the newest-started
+        # completed utterance is eligible to become the shared conversation result.
+        last_sequence = int(domain_data.get("last_result_sequence", 0))
+        if utterance_sequence >= last_sequence:
+            domain_data["last_result_sequence"] = utterance_sequence
+            domain_data["last_result"] = {
+                "user_id": recognition_result.user_id,
+                "confidence": recognition_result.confidence,
+                "timestamp": self.hass.loop.time(),
+                "utterance_sequence": utterance_sequence,
+            }
 
         return result
