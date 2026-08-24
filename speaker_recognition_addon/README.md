@@ -79,6 +79,11 @@ Because `/share` is mapped read/write by Supervisor, embeddings survive app
 container rebuilds and upgrades. Uninstalling the app does not remove files in
 the shared folder automatically.
 
+Multi-sample enrollment stores a normalized reference centroid per user together
+with all accepted sample embeddings. Retraining one user rebuilds only that
+profile. Legacy single-embedding `.npy` files are loaded for compatibility and
+migrated when that user is retrained.
+
 ## Integration setup
 
 Install the custom integration from this repository separately, restart Home

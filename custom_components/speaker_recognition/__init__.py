@@ -43,7 +43,10 @@ async def async_setup_main_entry(
     hass: HomeAssistant, entry: SpeakerRecognitionConfigEntry
 ) -> bool:
     """Set up main config entry."""
-    backend_url = entry.data.get(CONF_BACKEND_URL, DEFAULT_BACKEND_URL)
+    backend_url = entry.options.get(
+        CONF_BACKEND_URL,
+        entry.data.get(CONF_BACKEND_URL, DEFAULT_BACKEND_URL),
+    )
     voice_samples = entry.options.get(CONF_VOICE_SAMPLES, [])
 
     recognition = SpeakerRecognition(hass, voice_samples, backend_url)
@@ -100,12 +103,6 @@ async def async_update_main_listener(
     hass: HomeAssistant, entry: SpeakerRecognitionConfigEntry
 ) -> None:
     """Handle main config options update."""
-    voice_samples = entry.options.get(CONF_VOICE_SAMPLES, [])
-    entry.runtime_data.update_voice_samples(voice_samples)
-
-    if voice_samples:
-        await entry.runtime_data.async_train()
-
     await hass.config_entries.async_reload(entry.entry_id)
 
 

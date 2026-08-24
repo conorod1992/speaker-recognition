@@ -1,88 +1,29 @@
 {
   "config": {
     "step": {
-      "menu": {
-        "title": "Add speaker recognition helper",
-        "menu_options": {
-          "add_stt": "Add STT proxy",
-          "add_conversation": "Add Conversation proxy"
-        }
-      },
-      "user": {
-        "title": "Choose helper type",
-        "description": "Select the type of speaker recognition helper to create.",
-        "data": {
-          "helper_type": "Helper type"
-        }
-      },
-      "stt": {
-        "title": "Set up STT proxy",
-        "description": "Configure the STT entity and voice samples for speaker recognition.",
-        "data": {
-          "stt_entity": "Speech-to-text entity",
-          "voice_samples": "Voice samples"
-        },
-        "data_description": {
-          "stt_entity": "Select the STT entity to use for speaker recognition",
-          "voice_samples": "Configure voice samples for each user to enable speaker recognition"
-        }
-      },
-      "conversation": {
-        "title": "Set up Conversation proxy",
-        "description": "Configure the conversation agent and minimum confidence threshold.",
-        "data": {
-          "conversation_entity": "Conversation agent",
-          "min_confidence": "Minimum confidence"
-        },
-        "data_description": {
-          "conversation_entity": "Select the conversation agent to wrap",
-          "min_confidence": "Minimum recognition confidence required to set user ID (0.0-1.0)"
-        }
-      }
+      "menu": {"title": "Add speaker recognition helper", "menu_options": {"add_stt": "Add STT proxy", "add_conversation": "Add Conversation proxy"}},
+      "main": {"title": "Set up Speaker Recognition", "description": "Connect Home Assistant to the local Speaker Recognition app. You can enroll a voice next.", "data": {"backend_url": "Backend URL"}},
+      "enrollment_menu": {"title": "Enroll a speaker", "description": "Guided enrollment builds a stronger reference from several recordings.", "menu_options": {"enrollment_user": "Start guided enrollment", "finish_setup": "Finish without enrollment"}},
+      "enrollment_user": {"title": "Choose a Home Assistant user", "description": "New samples rebuild only this user's voiceprint. Other enrolled users are preserved.", "data": {"user": "User"}},
+      "enrollment_sample": {"title": "Voice sample {sample_number} of {sample_total}", "description": "Read this naturally: “{phrase}”\n\nRecord audio using a device or the Home Assistant companion app, then upload or select the WAV file from Home Assistant media. {accepted} samples have been accepted.", "data": {"sample": "WAV recording", "finish_enrollment": "Finish after this sample"}, "data_description": {"finish_enrollment": "At least five samples are enough; leave off to record the final suggested phrase."}},
+      "enrollment_review": {"title": "Review voice samples", "description": "{accepted} valid samples are ready. Finish to build the reference voiceprint, or replace any individual recording.", "data": {"enrollment_action": "Next action"}},
+      "enrollment_complete": {"title": "Enrollment ready", "description": "{accepted} samples were accepted. Submit to save them and build the user's normalized reference voiceprint."},
+      "add_stt": {"title": "Set up STT proxy", "description": "Select the STT provider to augment with speaker recognition.", "data": {"stt_entity": "Speech-to-text entity"}},
+      "add_conversation": {"title": "Set up Conversation proxy", "description": "Configure the conversation agent and minimum confidence threshold.", "data": {"conversation_entity": "Conversation agent", "min_confidence": "Minimum confidence"}}
     },
-    "error": {
-      "not_stt_entity": "The selected entity is not a speech-to-text entity",
-      "not_conversation_entity": "The selected entity is not a conversation agent",
-      "user_already_configured": "Voice samples for this user have already been configured"
-    }
+    "error": {"not_stt_entity": "The selected entity is not a speech-to-text entity", "not_conversation_entity": "The selected entity is not a conversation agent", "invalid_enrollment_sample": "Select a local, uncompressed 16-bit PCM WAV recording containing at least 0.5 seconds of audio"}
   },
   "options": {
     "step": {
-      "stt_options": {
-        "title": "Configure STT proxy",
-        "description": "Update the STT entity and voice samples.",
-        "data": {
-          "stt_entity": "Speech-to-text entity",
-          "voice_samples": "Voice samples"
-        },
-        "data_description": {
-          "stt_entity": "Select the STT entity to use for speaker recognition",
-          "voice_samples": "Add or modify voice samples for speaker recognition"
-        }
-      },
-      "conversation_options": {
-        "title": "Configure Conversation proxy",
-        "description": "Update the conversation agent and minimum confidence threshold.",
-        "data": {
-          "conversation_entity": "Conversation agent",
-          "min_confidence": "Minimum confidence"
-        },
-        "data_description": {
-          "conversation_entity": "Select the conversation agent to wrap",
-          "min_confidence": "Minimum recognition confidence required to set user ID (0.0-1.0)"
-        }
-      }
+      "init": {"title": "Speaker Recognition options", "menu_options": {"main_options": "Connection settings", "enrollment_user": "Enroll or retrain a user"}},
+      "main_options": {"title": "Connection settings", "data": {"backend_url": "Backend URL"}},
+      "enrollment_user": {"title": "Choose a Home Assistant user", "description": "New samples rebuild only this user's voiceprint. Other enrolled users are preserved.", "data": {"user": "User"}},
+      "enrollment_sample": {"title": "Voice sample {sample_number} of {sample_total}", "description": "Read this naturally: “{phrase}”\n\nRecord audio using a device or the Home Assistant companion app, then upload or select the WAV file from Home Assistant media. {accepted} samples have been accepted.", "data": {"sample": "WAV recording", "finish_enrollment": "Finish after this sample"}, "data_description": {"finish_enrollment": "At least five samples are enough; leave off to record the final suggested phrase."}},
+      "enrollment_review": {"title": "Review voice samples", "description": "{accepted} valid samples are ready. Finish to build the reference voiceprint, or replace any individual recording.", "data": {"enrollment_action": "Next action"}},
+      "enrollment_complete": {"title": "Enrollment ready", "description": "{accepted} samples were accepted. Submit to save them and rebuild the user's normalized reference voiceprint."},
+      "stt_options": {"title": "Configure STT proxy", "data": {"stt_entity": "Speech-to-text entity"}},
+      "conversation_options": {"title": "Configure Conversation proxy", "data": {"conversation_entity": "Conversation agent", "min_confidence": "Minimum confidence"}}
     },
-    "error": {
-      "not_stt_entity": "The selected entity is not a speech-to-text entity",
-      "not_conversation_entity": "The selected entity is not a conversation agent",
-      "user_already_configured": "Voice samples for this user have already been configured"
-    }
-  },
-  "selector": {
-    "voice_samples": {
-      "user": "User",
-      "samples": "Audio file"
-    }
+    "error": {"not_stt_entity": "The selected entity is not a speech-to-text entity", "not_conversation_entity": "The selected entity is not a conversation agent", "invalid_enrollment_sample": "Select a local, uncompressed 16-bit PCM WAV recording containing at least 0.5 seconds of audio"}
   }
 }

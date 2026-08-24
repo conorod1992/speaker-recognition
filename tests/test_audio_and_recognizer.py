@@ -11,7 +11,13 @@ import numpy as np
 import pytest
 import resemblyzer
 
-from speaker_recognition.models import AudioInput, Config, RecognitionRequest, TrainingRequest, VoiceSample
+from speaker_recognition.models import (
+    AudioInput,
+    Config,
+    RecognitionRequest,
+    TrainingRequest,
+    VoiceSample,
+)
 
 
 def _load_integration_audio_module():
@@ -21,7 +27,9 @@ def _load_integration_audio_module():
         / "speaker_recognition"
         / "audio.py"
     )
-    spec = importlib.util.spec_from_file_location("speaker_recognition_integration_audio", module_path)
+    spec = importlib.util.spec_from_file_location(
+        "speaker_recognition_integration_audio", module_path
+    )
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -102,6 +110,17 @@ class _DummyEncoder:
         return np.array([1.0, 0.0], dtype=np.float32)
 
 
+class _SequenceEncoder:
+    """Return predetermined embeddings for aggregation tests."""
+
+    def __init__(self, embeddings: list[list[float]]) -> None:
+        self._embeddings = iter(embeddings)
+
+    def embed_utterance(self, wav: np.ndarray) -> np.ndarray:
+        del wav
+        return np.asarray(next(self._embeddings), dtype=np.float32)
+
+
 @pytest.fixture
 def recognizer_factory(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """Load the recognizer with a dummy encoder without initializing Torch globally."""
@@ -133,7 +152,104 @@ def test_train_then_recognize_and_load_persisted_embeddings(recognizer_factory) 
 
     restarted_recognizer = recognizer_factory()
     assert restarted_recognizer.is_trained
-    assert restarted_recognizer.recognize(RecognitionRequest(audio=sample)).user_id == "alice"
+    assert (
+        restarted_recognizer.recognize(RecognitionRequest(audio=sample)).user_id
+        == "alice"
+    )
+
+
+def test_legacy_single_embedding_is_loaded(recognizer_factory) -> None:
+    """Version 1 reference files remain usable until the user is retrained."""
+    recognizer = recognizer_factory()
+    recognizer.embeddings_directory.mkdir(parents=True)
+    np.save(
+        recognizer.embeddings_directory / "legacy_embedding.npy",
+        np.array([3.0, 4.0], dtype=np.float32),
+    )
+
+    restarted = recognizer_factory()
+
+    assert restarted.is_trained
+    np.testing.assert_allclose(restarted._reference_embeddings["legacy"], [0.6, 0.8])
+
+
+def test_multiple_samples_are_averaged_and_centroid_is_normalized(
+    recognizer_factory,
+) -> None:
+    """Every sample remains available while recognition uses a normalized mean."""
+    recognizer = recognizer_factory()
+    recognizer._encoder = _SequenceEncoder([[3.0, 0.0], [0.0, 1.0]])
+    first = _audio_input([100, 200])
+    second = _audio_input([300, 400])
+
+    result = recognizer.train(
+        TrainingRequest(
+            voice_samples=[
+                VoiceSample(user="alice", audio=first),
+                VoiceSample(user="alice", audio=second),
+            ]
+        )
+    )
+
+    assert result.accepted_samples == {"alice": 2}
+    profile_path = next(recognizer.embeddings_directory.glob("*_profile.npz"))
+    with np.load(profile_path, allow_pickle=False) as profile:
+        np.testing.assert_allclose(
+            profile["sample_embeddings"], [[3.0, 0.0], [0.0, 1.0]]
+        )
+        np.testing.assert_allclose(
+            profile["centroid"], np.array([3.0, 1.0]) / np.sqrt(10.0)
+        )
+        assert np.linalg.norm(profile["centroid"]) == pytest.approx(1.0)
+
+
+def test_retraining_one_user_preserves_unrelated_profiles(recognizer_factory) -> None:
+    """The training API upserts requested users rather than clearing the model."""
+    recognizer = recognizer_factory()
+    sample = _audio_input([100, 200])
+    recognizer._encoder = _SequenceEncoder([[1.0, 0.0], [0.0, 1.0]])
+    recognizer.train(
+        TrainingRequest(
+            voice_samples=[
+                VoiceSample(user="alice", audio=sample),
+                VoiceSample(user="bob", audio=sample),
+            ]
+        )
+    )
+
+    recognizer._encoder = _SequenceEncoder([[1.0, 1.0]])
+    result = recognizer.train(
+        TrainingRequest(voice_samples=[VoiceSample(user="alice", audio=sample)])
+    )
+
+    assert result.trained_users == ["alice"]
+    assert result.count == 2
+    restarted = recognizer_factory()
+    assert set(restarted._reference_embeddings) == {"alice", "bob"}
+    np.testing.assert_allclose(restarted._reference_embeddings["bob"], [0.0, 1.0])
+
+
+def test_invalid_sample_is_rejected_without_discarding_valid_sample(
+    recognizer_factory,
+) -> None:
+    """An invalid recording is counted and skipped within a multi-sample profile."""
+    recognizer = recognizer_factory()
+    recognizer._encoder = _SequenceEncoder([[1.0, 0.0]])
+    invalid = _audio_input([0, 0, 0, 0])
+    valid = _audio_input([100, 200])
+
+    result = recognizer.train(
+        TrainingRequest(
+            voice_samples=[
+                VoiceSample(user="alice", audio=invalid),
+                VoiceSample(user="alice", audio=valid),
+            ]
+        )
+    )
+
+    assert result.accepted_samples == {"alice": 1}
+    assert result.rejected_samples == {"alice": 1}
+    assert recognizer.is_trained
 
 
 def test_failed_training_logs_error_and_leaves_model_untrained(
@@ -141,7 +257,9 @@ def test_failed_training_logs_error_and_leaves_model_untrained(
 ) -> None:
     """A failed sample is visible and cannot leave stale trained state behind."""
     recognizer = recognizer_factory()
-    invalid = AudioInput(audio_data=base64.b64encode(b"\x00").decode(), sample_rate=16000)
+    invalid = AudioInput(
+        audio_data=base64.b64encode(b"\x00").decode(), sample_rate=16000
+    )
 
     with caplog.at_level(logging.ERROR), pytest.raises(ValueError, match="No valid"):
         recognizer.train(
@@ -149,4 +267,4 @@ def test_failed_training_logs_error_and_leaves_model_untrained(
         )
 
     assert not recognizer.is_trained
-    assert "Error processing voice sample for user alice" in caplog.text
+    assert "Error processing voice sample 1 for user alice" in caplog.text

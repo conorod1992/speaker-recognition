@@ -6,6 +6,7 @@
   ],
   "config_flow": true,
   "dependencies": [
+    "media_source",
     "stt"
   ],
   "documentation": "https://github.com/conorod1992/speaker-recognition#home-assistant-integration",

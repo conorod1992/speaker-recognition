@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import logging
 from dataclasses import dataclass
+from time import perf_counter
 from typing import TYPE_CHECKING, Any
 
 from aiohttp import ClientError, ClientTimeout
@@ -145,7 +146,9 @@ class SpeakerRecognition:
             if not isinstance(trained_users, list) or not all(
                 isinstance(user, str) for user in trained_users
             ):
-                raise ValueError("Invalid training response from Speaker Recognition app")
+                raise ValueError(
+                    "Invalid training response from Speaker Recognition app"
+                )
             if not trained_users:
                 raise ValueError("Speaker Recognition app did not train any users")
             result = TrainingResult(users_trained=trained_users)
@@ -184,15 +187,22 @@ class SpeakerRecognition:
         try:
             audio_base64 = base64.b64encode(audio_data).decode("utf-8")
 
-            response = await self._async_post(
-                "/recognize",
-                {
-                    "audio": {
-                        "audio_data": audio_base64,
-                        "sample_rate": sample_rate,
-                    }
-                },
-            )
+            request_started = perf_counter()
+            try:
+                response = await self._async_post(
+                    "/recognize",
+                    {
+                        "audio": {
+                            "audio_data": audio_base64,
+                            "sample_rate": sample_rate,
+                        }
+                    },
+                )
+            finally:
+                _LOGGER.debug(
+                    "Speaker recognition backend request completed in %.3fs",
+                    perf_counter() - request_started,
+                )
             user_id = response.get("user_id")
             confidence = response.get("confidence")
             all_scores = response.get("all_scores")

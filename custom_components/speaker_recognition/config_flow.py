@@ -6,6 +6,7 @@ from typing import Any
 
 import voluptuous as vol
 
+from homeassistant.components import media_source
 from homeassistant.config_entries import (
     ConfigEntry,
     ConfigFlow,
@@ -20,7 +21,10 @@ from .const import (
     CONF_BACKEND_URL,
     CONF_CONVERSATION_ENTITY,
     CONF_ENTRY_TYPE,
+    CONF_ENROLLMENT_ACTION,
+    CONF_FINISH_ENROLLMENT,
     CONF_MIN_CONFIDENCE,
+    CONF_SAMPLE,
     CONF_SAMPLES,
     CONF_STT_ENTITY,
     CONF_USER,
@@ -33,49 +37,205 @@ from .const import (
     ENTRY_TYPE_STT,
 )
 
+from .audio import decode_wav
 
-async def _build_voice_samples_schema(
-    hass: HomeAssistant, default_samples: list | None = None
-) -> selector.ObjectSelector:
-    """Build the voice samples selector schema."""
+ENROLLMENT_PHRASES = (
+    "The morning light is warm across the kitchen table.",
+    "Please turn on the hallway lamp before it gets dark.",
+    "My favorite music sounds best on a quiet afternoon.",
+    "A small bird landed beside the open garden gate.",
+    "Tomorrow I will remember to water all the plants.",
+    "Home should feel comfortable, calm, and welcoming.",
+)
+MIN_ENROLLMENT_SAMPLES = 5
+
+
+async def _build_user_selector(hass: HomeAssistant) -> selector.SelectSelector:
+    """Build a Home Assistant user selector for guided enrollment."""
     users = await hass.auth.async_get_users()
-    user_options = [
-        selector.SelectOptionDict(value=user.id, label=user.name or user.id)
-        for user in users
-        if not user.system_generated
-    ]
-
-    return selector.ObjectSelector(
-        selector.ObjectSelectorConfig(
-            fields={
-                CONF_USER: {
-                    "required": True,
-                    "selector": selector.SelectSelector(
-                        selector.SelectSelectorConfig(
-                            options=user_options,
-                            mode=selector.SelectSelectorMode.DROPDOWN,
-                        )
-                    ),
-                },
-                CONF_SAMPLES: {
-                    "required": True,
-                    "selector": selector.MediaSelector(
-                        selector.MediaSelectorConfig(
-                            multiple=True,
-                            accept=[
-                                "audio/wav",
-                                "audio/x-wav",
-                                "audio/wave",
-                                "audio/vnd.wave",
-                            ],
-                        )
-                    ),
-                },
-            },
-            multiple=True,
-            label_field=CONF_USER,
+    return selector.SelectSelector(
+        selector.SelectSelectorConfig(
+            options=[
+                selector.SelectOptionDict(value=user.id, label=user.name or user.id)
+                for user in users
+                if not user.system_generated
+            ],
+            mode=selector.SelectSelectorMode.DROPDOWN,
         )
     )
+
+
+async def _async_validate_enrollment_sample(
+    hass: HomeAssistant, media_item: object
+) -> None:
+    """Reject unsupported, empty, or implausibly short enrollment media."""
+    if not isinstance(media_item, dict):
+        raise ValueError("Invalid media selection")
+    media_id = media_item.get("media_content_id")
+    if not isinstance(media_id, str) or not media_id.startswith("media-source://"):
+        raise ValueError("Invalid media selection")
+    resolved_media = await media_source.async_resolve_media(hass, media_id, None)
+    if resolved_media.path is None:
+        raise ValueError("Selected media must be a local Home Assistant media file")
+    audio_data = await hass.async_add_executor_job(resolved_media.path.read_bytes)
+    pcm_data, sample_rate = await hass.async_add_executor_job(decode_wav, audio_data)
+    if sample_rate <= 0 or len(pcm_data) < sample_rate:
+        raise ValueError("Enrollment sample must contain at least 0.5 seconds of audio")
+
+
+def _replace_enrolled_user(
+    voice_samples: list[dict[str, Any]],
+    user_id: str,
+    media_items: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Replace one user's enrollment without changing unrelated users."""
+    retained = [sample for sample in voice_samples if sample.get(CONF_USER) != user_id]
+    retained.append(
+        {
+            CONF_USER: user_id,
+            CONF_SAMPLES: media_items,
+            "sample_metadata": [
+                {"phrase": phrase} for phrase in ENROLLMENT_PHRASES[: len(media_items)]
+            ],
+        }
+    )
+    return retained
+
+
+class EnrollmentFlowMixin:
+    """Shared phrase-by-phrase enrollment steps for config and options flows."""
+
+    hass: HomeAssistant
+    _enrollment_user_id: str
+    _enrollment_samples: list[dict[str, Any]]
+    _retry_sample_index: int | None
+
+    async def async_step_enrollment_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Select the Home Assistant user to enroll or retrain."""
+        if user_input is not None:
+            self._enrollment_user_id = user_input[CONF_USER]
+            self._enrollment_samples = []
+            self._retry_sample_index = None
+            return await self.async_step_enrollment_sample()
+
+        return self.async_show_form(
+            step_id="enrollment_user",
+            data_schema=vol.Schema(
+                {vol.Required(CONF_USER): await _build_user_selector(self.hass)}
+            ),
+        )
+
+    async def async_step_enrollment_sample(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Collect and validate one prompted WAV sample."""
+        errors: dict[str, str] = {}
+        sample_index = (
+            self._retry_sample_index
+            if self._retry_sample_index is not None
+            else len(self._enrollment_samples)
+        )
+
+        if user_input is not None:
+            try:
+                await _async_validate_enrollment_sample(
+                    self.hass, user_input[CONF_SAMPLE]
+                )
+            except Exception:
+                # Media sources can raise provider-specific Home Assistant errors.
+                # Keep the user on this sample so they can choose or upload again.
+                errors[CONF_SAMPLE] = "invalid_enrollment_sample"
+            else:
+                media_item = user_input[CONF_SAMPLE]
+                if self._retry_sample_index is None:
+                    self._enrollment_samples.append(media_item)
+                else:
+                    self._enrollment_samples[self._retry_sample_index] = media_item
+                    self._retry_sample_index = None
+                    return await self.async_step_enrollment_review()
+
+                accepted = len(self._enrollment_samples)
+                if accepted == len(ENROLLMENT_PHRASES) or (
+                    accepted >= MIN_ENROLLMENT_SAMPLES
+                    and user_input.get(CONF_FINISH_ENROLLMENT, False)
+                ):
+                    return await self.async_step_enrollment_review()
+                sample_index = accepted
+
+        schema: dict[vol.Marker, object] = {
+            vol.Required(CONF_SAMPLE): selector.MediaSelector(
+                selector.MediaSelectorConfig(
+                    accept=["audio/wav", "audio/x-wav", "audio/wave"]
+                )
+            )
+        }
+        if sample_index + 1 >= MIN_ENROLLMENT_SAMPLES:
+            schema[vol.Optional(CONF_FINISH_ENROLLMENT, default=False)] = bool
+
+        return self.async_show_form(
+            step_id="enrollment_sample",
+            data_schema=vol.Schema(schema),
+            errors=errors,
+            description_placeholders={
+                "phrase": ENROLLMENT_PHRASES[sample_index],
+                "sample_number": str(sample_index + 1),
+                "sample_total": str(len(ENROLLMENT_PHRASES)),
+                "accepted": str(len(self._enrollment_samples)),
+            },
+        )
+
+    async def async_step_enrollment_review(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Finish enrollment or retry any accepted sample."""
+        if user_input is not None:
+            action = user_input[CONF_ENROLLMENT_ACTION]
+            if action == "finish":
+                return await self.async_step_enrollment_complete()
+            self._retry_sample_index = int(action[len("retry_") :])
+            return await self.async_step_enrollment_sample()
+
+        options = [selector.SelectOptionDict(value="finish", label="Finish enrollment")]
+        options.extend(
+            selector.SelectOptionDict(
+                value=f"retry_{index}", label=f"Retry sample {index + 1}"
+            )
+            for index in range(len(self._enrollment_samples))
+        )
+        return self.async_show_form(
+            step_id="enrollment_review",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_ENROLLMENT_ACTION, default="finish"
+                    ): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=options,
+                            mode=selector.SelectSelectorMode.DROPDOWN,
+                        )
+                    )
+                }
+            ),
+            description_placeholders={"accepted": str(len(self._enrollment_samples))},
+        )
+
+    async def async_step_enrollment_complete(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Show accepted count before rebuilding the user's reference."""
+        if user_input is not None:
+            return await self._async_save_enrollment()
+        return self.async_show_form(
+            step_id="enrollment_complete",
+            data_schema=vol.Schema({}),
+            description_placeholders={"accepted": str(len(self._enrollment_samples))},
+        )
+
+    async def _async_save_enrollment(self) -> ConfigFlowResult:
+        """Persist collected enrollment configuration in the concrete flow."""
+        raise NotImplementedError
 
 
 def _get_main_config_entry(hass: HomeAssistant) -> ConfigEntry | None:
@@ -87,11 +247,13 @@ def _get_main_config_entry(hass: HomeAssistant) -> ConfigEntry | None:
     return None
 
 
-class SpeakerRecognitionConfigFlow(ConfigFlow, domain=DOMAIN):
+class SpeakerRecognitionConfigFlow(EnrollmentFlowMixin, ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Speaker Recognition."""
 
     VERSION = 2
     MINOR_VERSION = 0
+
+    _pending_backend_url: str
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -122,19 +284,8 @@ class SpeakerRecognitionConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             await self.async_set_unique_id(ENTRY_TYPE_MAIN)
             self._abort_if_unique_id_configured()
-
-            return self.async_create_entry(
-                title="Speaker Recognition",
-                data={
-                    CONF_ENTRY_TYPE: ENTRY_TYPE_MAIN,
-                    CONF_BACKEND_URL: user_input[CONF_BACKEND_URL],
-                },
-                options={
-                    CONF_VOICE_SAMPLES: user_input.get(CONF_VOICE_SAMPLES, []),
-                },
-            )
-
-        voice_samples_selector = await _build_voice_samples_schema(self.hass)
+            self._pending_backend_url = user_input[CONF_BACKEND_URL]
+            return await self.async_step_enrollment_menu()
 
         return self.async_show_form(
             step_id="main",
@@ -143,12 +294,43 @@ class SpeakerRecognitionConfigFlow(ConfigFlow, domain=DOMAIN):
                     vol.Required(
                         CONF_BACKEND_URL, default=DEFAULT_BACKEND_URL
                     ): selector.TextSelector(),
-                    vol.Optional(
-                        CONF_VOICE_SAMPLES, default=[]
-                    ): voice_samples_selector,
                 }
             ),
             errors=errors,
+        )
+
+    async def async_step_enrollment_menu(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Offer guided enrollment during initial setup."""
+        return self.async_show_menu(
+            step_id="enrollment_menu",
+            menu_options=["enrollment_user", "finish_setup"],
+        )
+
+    async def async_step_finish_setup(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Finish initial setup without enrolling a speaker."""
+        return self._async_create_main_entry([])
+
+    async def _async_save_enrollment(self) -> ConfigFlowResult:
+        return self._async_create_main_entry(
+            _replace_enrolled_user(
+                [], self._enrollment_user_id, self._enrollment_samples
+            )
+        )
+
+    def _async_create_main_entry(
+        self, voice_samples: list[dict[str, Any]]
+    ) -> ConfigFlowResult:
+        return self.async_create_entry(
+            title="Speaker Recognition",
+            data={
+                CONF_ENTRY_TYPE: ENTRY_TYPE_MAIN,
+                CONF_BACKEND_URL: self._pending_backend_url,
+            },
+            options={CONF_VOICE_SAMPLES: voice_samples},
         )
 
     async def async_step_add_stt(
@@ -245,7 +427,7 @@ class SpeakerRecognitionConfigFlow(ConfigFlow, domain=DOMAIN):
         return SpeakerRecognitionOptionsFlow()
 
 
-class SpeakerRecognitionOptionsFlow(OptionsFlow):
+class SpeakerRecognitionOptionsFlow(EnrollmentFlowMixin, OptionsFlow):
     """Handle options flow for Speaker Recognition."""
 
     async def async_step_init(
@@ -255,7 +437,9 @@ class SpeakerRecognitionOptionsFlow(OptionsFlow):
         entry_type = self.config_entry.data.get(CONF_ENTRY_TYPE, ENTRY_TYPE_MAIN)
 
         if entry_type == ENTRY_TYPE_MAIN:
-            return await self.async_step_main_options(user_input)
+            return self.async_show_menu(
+                step_id="init", menu_options=["main_options", "enrollment_user"]
+            )
         if entry_type == ENTRY_TYPE_STT:
             return await self.async_step_stt_options(user_input)
         return await self.async_step_conversation_options(user_input)
@@ -269,17 +453,13 @@ class SpeakerRecognitionOptionsFlow(OptionsFlow):
                 title="",
                 data={
                     CONF_BACKEND_URL: user_input[CONF_BACKEND_URL],
-                    CONF_VOICE_SAMPLES: user_input.get(CONF_VOICE_SAMPLES, []),
+                    CONF_VOICE_SAMPLES: self.config_entry.options.get(
+                        CONF_VOICE_SAMPLES, []
+                    ),
                 },
             )
 
         current_url = self.config_entry.data.get(CONF_BACKEND_URL, DEFAULT_BACKEND_URL)
-        current_voice_samples = self.config_entry.options.get(CONF_VOICE_SAMPLES, [])
-
-        voice_samples_selector = await _build_voice_samples_schema(
-            self.hass, current_voice_samples
-        )
-
         return self.async_show_form(
             step_id="main_options",
             data_schema=vol.Schema(
@@ -287,11 +467,26 @@ class SpeakerRecognitionOptionsFlow(OptionsFlow):
                     vol.Required(
                         CONF_BACKEND_URL, default=current_url
                     ): selector.TextSelector(),
-                    vol.Optional(
-                        CONF_VOICE_SAMPLES, default=current_voice_samples
-                    ): voice_samples_selector,
                 }
             ),
+        )
+
+    async def _async_save_enrollment(self) -> ConfigFlowResult:
+        current_voice_samples = self.config_entry.options.get(CONF_VOICE_SAMPLES, [])
+        current_url = self.config_entry.options.get(
+            CONF_BACKEND_URL,
+            self.config_entry.data.get(CONF_BACKEND_URL, DEFAULT_BACKEND_URL),
+        )
+        return self.async_create_entry(
+            title="",
+            data={
+                CONF_BACKEND_URL: current_url,
+                CONF_VOICE_SAMPLES: _replace_enrolled_user(
+                    current_voice_samples,
+                    self._enrollment_user_id,
+                    self._enrollment_samples,
+                ),
+            },
         )
 
     async def async_step_stt_options(

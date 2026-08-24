@@ -52,6 +52,8 @@ class TrainingResult(BaseModel):
     status: str
     trained_users: list[str]
     count: int
+    accepted_samples: dict[str, int] = Field(default_factory=dict)
+    rejected_samples: dict[str, int] = Field(default_factory=dict)
 
 
 class RecognitionRequest(BaseModel):

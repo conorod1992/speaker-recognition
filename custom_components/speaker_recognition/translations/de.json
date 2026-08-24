@@ -1,81 +1,29 @@
 {
   "config": {
     "step": {
-      "user": {
-        "title": "Helfertyp wählen",
-        "description": "Wählen Sie den Typ des Sprechererkennungshelfers aus.",
-        "data": {
-          "helper_type": "Helfertyp"
-        }
-      },
-      "stt": {
-        "title": "STT-Proxy einrichten",
-        "description": "Konfigurieren Sie die STT-Entität und Sprachproben für die Sprechererkennung.",
-        "data": {
-          "stt_entity": "Sprache-zu-Text-Entität",
-          "voice_samples": "Sprachproben"
-        },
-        "data_description": {
-          "stt_entity": "Wählen Sie die STT-Entität für die Sprechererkennung aus",
-          "voice_samples": "Konfigurieren Sie Sprachproben für jeden Benutzer, um die Sprechererkennung zu aktivieren"
-        }
-      },
-      "conversation": {
-        "title": "Konversations-Proxy einrichten",
-        "description": "Konfigurieren Sie den Konversationsagenten und die Mindestkonfidenz.",
-        "data": {
-          "conversation_entity": "Konversationsagent",
-          "min_confidence": "Mindestkonfidenz"
-        },
-        "data_description": {
-          "conversation_entity": "Wählen Sie den zu umschließenden Konversationsagenten aus",
-          "min_confidence": "Erforderliche Mindesterkennungskonfidenz zum Setzen der Benutzer-ID (0.0-1.0)"
-        }
-      }
+      "menu": {"title": "Sprecherkennungshelfer hinzufügen", "menu_options": {"add_stt": "STT-Proxy hinzufügen", "add_conversation": "Konversations-Proxy hinzufügen"}},
+      "main": {"title": "Sprecherkennung einrichten", "description": "Verbinden Sie Home Assistant mit der lokalen Sprecherkennungs-App. Danach können Sie eine Stimme einlernen.", "data": {"backend_url": "Backend-URL"}},
+      "enrollment_menu": {"title": "Sprecher einlernen", "description": "Die geführte Einrichtung erstellt aus mehreren Aufnahmen eine robustere Referenz.", "menu_options": {"enrollment_user": "Geführte Einrichtung starten", "finish_setup": "Ohne Einrichtung abschließen"}},
+      "enrollment_user": {"title": "Home-Assistant-Benutzer auswählen", "description": "Neue Proben ersetzen nur das Stimmprofil dieses Benutzers. Andere Benutzer bleiben erhalten.", "data": {"user": "Benutzer"}},
+      "enrollment_sample": {"title": "Stimmprobe {sample_number} von {sample_total}", "description": "Lesen Sie natürlich vor: „{phrase}“\n\nNehmen Sie den Ton mit einem Gerät oder der Home-Assistant-Begleit-App auf und laden Sie die WAV-Datei anschließend in Home-Assistant-Medien hoch. {accepted} Proben wurden akzeptiert.", "data": {"sample": "WAV-Aufnahme", "finish_enrollment": "Nach dieser Probe abschließen"}},
+      "enrollment_review": {"title": "Stimmproben prüfen", "description": "{accepted} gültige Proben sind bereit. Schließen Sie ab oder ersetzen Sie eine einzelne Aufnahme.", "data": {"enrollment_action": "Nächste Aktion"}},
+      "enrollment_complete": {"title": "Einrichtung bereit", "description": "{accepted} Proben wurden akzeptiert. Senden Sie das Formular ab, um das normalisierte Stimmprofil zu erstellen."},
+      "add_stt": {"title": "STT-Proxy einrichten", "data": {"stt_entity": "Sprache-zu-Text-Entität"}},
+      "add_conversation": {"title": "Konversations-Proxy einrichten", "data": {"conversation_entity": "Konversationsagent", "min_confidence": "Mindestkonfidenz"}}
     },
-    "error": {
-      "not_stt_entity": "Die ausgewählte Entität ist keine Sprache-zu-Text-Entität",
-      "not_conversation_entity": "Die ausgewählte Entität ist kein Konversationsagent",
-      "user_already_configured": "Für diesen Benutzer wurden bereits Sprachproben konfiguriert"
-    }
+    "error": {"not_stt_entity": "Die ausgewählte Entität ist keine Sprache-zu-Text-Entität", "not_conversation_entity": "Die ausgewählte Entität ist kein Konversationsagent", "invalid_enrollment_sample": "Wählen Sie eine lokale, unkomprimierte 16-Bit-PCM-WAV-Aufnahme mit mindestens 0,5 Sekunden Ton"}
   },
   "options": {
     "step": {
-      "stt_options": {
-        "title": "STT-Proxy konfigurieren",
-        "description": "Aktualisieren Sie die STT-Entität und Sprachproben.",
-        "data": {
-          "stt_entity": "Sprache-zu-Text-Entität",
-          "voice_samples": "Sprachproben"
-        },
-        "data_description": {
-          "stt_entity": "Wählen Sie die STT-Entität für die Sprechererkennung aus",
-          "voice_samples": "Fügen Sie Sprachproben für die Sprechererkennung hinzu oder ändern Sie diese"
-        }
-      },
-      "conversation_options": {
-        "title": "Konversations-Proxy konfigurieren",
-        "description": "Aktualisieren Sie den Konversationsagenten und die Mindestkonfidenz.",
-        "data": {
-          "conversation_entity": "Konversationsagent",
-          "min_confidence": "Mindestkonfidenz"
-        },
-        "data_description": {
-          "conversation_entity": "Wählen Sie den zu umschließenden Konversationsagenten aus",
-          "min_confidence": "Erforderliche Mindesterkennungskonfidenz zum Setzen der Benutzer-ID (0.0-1.0)"
-        }
-      }
+      "init": {"title": "Sprecherkennungsoptionen", "menu_options": {"main_options": "Verbindungseinstellungen", "enrollment_user": "Benutzer einlernen oder neu trainieren"}},
+      "main_options": {"title": "Verbindungseinstellungen", "data": {"backend_url": "Backend-URL"}},
+      "enrollment_user": {"title": "Home-Assistant-Benutzer auswählen", "description": "Neue Proben ersetzen nur das Stimmprofil dieses Benutzers. Andere Benutzer bleiben erhalten.", "data": {"user": "Benutzer"}},
+      "enrollment_sample": {"title": "Stimmprobe {sample_number} von {sample_total}", "description": "Lesen Sie natürlich vor: „{phrase}“\n\nNehmen Sie den Ton mit einem Gerät oder der Home-Assistant-Begleit-App auf und laden Sie die WAV-Datei anschließend in Home-Assistant-Medien hoch. {accepted} Proben wurden akzeptiert.", "data": {"sample": "WAV-Aufnahme", "finish_enrollment": "Nach dieser Probe abschließen"}},
+      "enrollment_review": {"title": "Stimmproben prüfen", "description": "{accepted} gültige Proben sind bereit. Schließen Sie ab oder ersetzen Sie eine einzelne Aufnahme.", "data": {"enrollment_action": "Nächste Aktion"}},
+      "enrollment_complete": {"title": "Einrichtung bereit", "description": "{accepted} Proben wurden akzeptiert. Senden Sie das Formular ab, um das normalisierte Stimmprofil neu zu erstellen."},
+      "stt_options": {"title": "STT-Proxy konfigurieren", "data": {"stt_entity": "Sprache-zu-Text-Entität"}},
+      "conversation_options": {"title": "Konversations-Proxy konfigurieren", "data": {"conversation_entity": "Konversationsagent", "min_confidence": "Mindestkonfidenz"}}
     },
-    "error": {
-      "not_stt_entity": "Die ausgewählte Entität ist keine Sprache-zu-Text-Entität",
-      "not_conversation_entity": "Die ausgewählte Entität ist kein Konversationsagent",
-      "user_already_configured": "Für diesen Benutzer wurden bereits Sprachproben konfiguriert"
-    }
-  },
-  "selector": {
-    "voice_samples": {
-      "user": "Benutzer",
-      "samples": "Audiodatei"
-    }
+    "error": {"not_stt_entity": "Die ausgewählte Entität ist keine Sprache-zu-Text-Entität", "not_conversation_entity": "Die ausgewählte Entität ist kein Konversationsagent", "invalid_enrollment_sample": "Wählen Sie eine lokale, unkomprimierte 16-Bit-PCM-WAV-Aufnahme mit mindestens 0,5 Sekunden Ton"}
   }
 }

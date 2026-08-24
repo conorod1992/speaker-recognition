@@ -7,6 +7,9 @@ CONF_BACKEND_URL = "backend_url"
 CONF_VOICE_SAMPLES = "voice_samples"
 CONF_USER = "user"
 CONF_SAMPLES = "samples"
+CONF_SAMPLE = "sample"
+CONF_FINISH_ENROLLMENT = "finish_enrollment"
+CONF_ENROLLMENT_ACTION = "enrollment_action"
 
 # Sub-entry types
 CONF_ENTRY_TYPE = "entry_type"
