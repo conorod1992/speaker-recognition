@@ -4,7 +4,9 @@ class SpeakerRecognitionPanel extends HTMLElement {
     this.attachShadow({ mode: "open" });
     this._hass = null;
     this._status = null;
+    this._history = null;
     this._userId = "";
+    this._feedbackUserId = "";
     this._sampleIndex = 0;
     this._satelliteId = "";
     this._liveSatelliteId = "";
@@ -13,6 +15,7 @@ class SpeakerRecognitionPanel extends HTMLElement {
     this._lastWav = null;
     this._message = "";
     this._liveMessage = "";
+    this._historyMessage = "";
     this._busy = false;
     this._liveBusy = false;
     this._pollTimer = null;
@@ -44,6 +47,7 @@ class SpeakerRecognitionPanel extends HTMLElement {
     try {
       this._status = await this._call({ type: "speaker_recognition/status" });
       if (!this._userId && this._status.users.length) this._userId = this._status.users[0].id;
+      if (!this._feedbackUserId && this._status.users.length) this._feedbackUserId = this._status.users[0].id;
       const enrollmentSatellites = this._status.enrollment_satellites || this._status.satellites || [];
       if (!this._satelliteId && enrollmentSatellites.length) {
         this._satelliteId = enrollmentSatellites[0].entity_id;
@@ -56,9 +60,23 @@ class SpeakerRecognitionPanel extends HTMLElement {
         const next = Math.min(staged.length, this._status.phrases.length - 1);
         this._sampleIndex = next;
       }
-      if (!silent) this._message = "";
+      if (!silent) {
+        this._message = "";
+        await this._refreshHistory(true);
+      }
     } catch (err) {
       this._message = this._errorText(err);
+    }
+    this._render();
+  }
+
+  async _refreshHistory(silent = false) {
+    if (!this._hass) return;
+    try {
+      this._history = await this._call({ type: "speaker_recognition/decision_history" });
+      if (!silent) this._historyMessage = "";
+    } catch (err) {
+      this._historyMessage = this._errorText(err);
     }
     this._render();
   }
@@ -324,6 +342,7 @@ class SpeakerRecognitionPanel extends HTMLElement {
       if (result && result.session_id === sessionId) {
         this._liveBusy = false;
         this._liveMessage = "Live test completed.";
+        await this._refreshHistory(true);
         this._render();
         return;
       }
@@ -336,6 +355,23 @@ class SpeakerRecognitionPanel extends HTMLElement {
       this._livePollTimer = setTimeout(poll, 1000);
     };
     this._livePollTimer = setTimeout(poll, 1000);
+  }
+
+  async _submitFeedback(decisionId, feedback) {
+    const message = {
+      type: "speaker_recognition/decision_feedback",
+      decision_id: decisionId,
+      feedback,
+    };
+    if (feedback !== "correct") message.actual_user_id = this._feedbackUserId;
+    try {
+      await this._call(message);
+      this._historyMessage = "Feedback saved.";
+      await this._refreshHistory(true);
+    } catch (err) {
+      this._historyMessage = this._errorText(err);
+    }
+    this._render();
   }
 
   _userName(userId) {
@@ -378,6 +414,36 @@ class SpeakerRecognitionPanel extends HTMLElement {
     </div>`;
   }
 
+  _renderHistory() {
+    const decisions = this._history && this._history.decisions ? this._history.decisions : [];
+    if (!decisions.length) return `<p class="muted">No normal Assist recognition decisions have been recorded yet.</p>`;
+    return decisions.slice(0, 10).map(item => {
+      const candidate = this._escape(this._userName(item.candidate_user_id));
+      const outcome = item.identity_eligible && item.user_id
+        ? `Recognised as ${this._escape(this._userName(item.user_id))}`
+        : "Identity not applied";
+      const margin = item.margin == null ? "n/a" : Number(item.margin).toFixed(3);
+      const when = new Date(item.created_at).toLocaleString();
+      let feedback = "";
+      if (item.feedback) {
+        const labels = { correct: "Correct", wrong_speaker: "Wrong speaker", missed_speaker: "Should have recognised speaker" };
+        const actual = item.actual_user_id ? ` · actual: ${this._escape(this._userName(item.actual_user_id))}` : "";
+        feedback = `<span class="feedback-saved">Feedback: ${labels[item.feedback] || this._escape(item.feedback)}${actual}</span>`;
+      } else {
+        feedback = `<div class="feedback-actions">
+          <button class="secondary" data-feedback="correct" data-decision="${item.decision_id}">Correct</button>
+          <button class="secondary" data-feedback="wrong_speaker" data-decision="${item.decision_id}">Wrong speaker</button>
+          <button class="secondary" data-feedback="missed_speaker" data-decision="${item.decision_id}">Should have recognised me</button>
+        </div>`;
+      }
+      return `<div class="decision">
+        <div><strong>${outcome}</strong> · candidate ${candidate}</div>
+        <div class="muted">${this._escape(when)} · similarity ${Number(item.similarity || 0).toFixed(3)} · margin ${margin} · recognition ${this._formatMs(item.recognition_seconds)} · added latency ${this._formatMs(item.added_latency_seconds)}</div>
+        ${feedback}
+      </div>`;
+    }).join("");
+  }
+
   _render() {
     if (!this.shadowRoot) return;
     const s = this._status;
@@ -413,6 +479,11 @@ class SpeakerRecognitionPanel extends HTMLElement {
         .result.success { border-left:4px solid var(--success-color, #43a047); }
         .metrics { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-top:14px; }
         .metrics span { padding:10px; background:var(--card-background-color); border-radius:6px; }
+        .decision { padding:14px 0; border-top:1px solid var(--divider-color); }
+        .decision:first-of-type { border-top:0; }
+        .feedback-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
+        .feedback-actions button { padding:7px 10px; }
+        .feedback-saved { display:inline-block; margin-top:8px; font-weight:600; }
       </style>
       <div class="wrap">
         <h1>Speaker Recognition</h1>
@@ -447,6 +518,17 @@ class SpeakerRecognitionPanel extends HTMLElement {
             ${this._liveMessage ? `<div class="message">${this._escape(this._liveMessage)}</div>` : ""}
             ${this._renderLiveResult(liveResult)}
           </div>
+          <div class="card">
+            <h2>Recognition calibration</h2>
+            <p class="muted">Recent normal Assist decisions are stored without audio or transcripts. Marking a few real results gives future threshold tuning reliable ground truth.</p>
+            <div class="row">
+              <label for="feedbackUserSelect">Actual speaker for corrections</label>
+              <select id="feedbackUserSelect">${s.users.map(u => `<option value="${u.id}" ${u.id === this._feedbackUserId ? "selected" : ""}>${this._escape(u.name)}</option>`).join("")}</select>
+              <button id="refreshHistoryBtn" class="secondary">Refresh</button>
+            </div>
+            ${this._historyMessage ? `<div class="message">${this._escape(this._historyMessage)}</div>` : ""}
+            ${this._renderHistory()}
+          </div>
         `}
       </div>`;
     this._bindEvents();
@@ -459,6 +541,7 @@ class SpeakerRecognitionPanel extends HTMLElement {
   _bindEvents() {
     const $ = (id) => this.shadowRoot.getElementById(id);
     if ($("userSelect")) $("userSelect").onchange = (e) => { this._userId = e.target.value; this._sampleIndex = 0; this._render(); };
+    if ($("feedbackUserSelect")) $("feedbackUserSelect").onchange = (e) => { this._feedbackUserId = e.target.value; };
     if ($("satelliteSelect")) $("satelliteSelect").onchange = (e) => { this._satelliteId = e.target.value; };
     if ($("liveSatelliteSelect")) $("liveSatelliteSelect").onchange = (e) => { this._liveSatelliteId = e.target.value; };
     if ($("recordBtn")) $("recordBtn").onclick = () => this._startRecording();
@@ -469,8 +552,12 @@ class SpeakerRecognitionPanel extends HTMLElement {
     if ($("satelliteBtn")) $("satelliteBtn").onclick = () => this._startSatellite();
     if ($("commitBtn")) $("commitBtn").onclick = () => this._commitEnrollment();
     if ($("liveTestBtn")) $("liveTestBtn").onclick = () => this._startLiveTest();
+    if ($("refreshHistoryBtn")) $("refreshHistoryBtn").onclick = () => this._refreshHistory();
     for (const button of this.shadowRoot.querySelectorAll("[data-sample]")) {
       button.onclick = () => { this._sampleIndex = Number(button.dataset.sample); this._lastWav = null; this._render(); };
+    }
+    for (const button of this.shadowRoot.querySelectorAll("[data-feedback]")) {
+      button.onclick = () => this._submitFeedback(button.dataset.decision, button.dataset.feedback);
     }
   }
 }

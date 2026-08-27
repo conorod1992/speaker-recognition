@@ -24,6 +24,7 @@ from .lifecycle import (
     async_initialize_recognition,
 )
 from .recognition import RecognitionBackendUnavailable, SpeakerRecognition
+from .telemetry import async_setup_decision_history
 from .websocket import async_register_websocket_commands
 
 SpeakerRecognitionConfigEntry = ConfigEntry[SpeakerRecognition]
@@ -39,8 +40,9 @@ def _get_main_entry(hass: HomeAssistant) -> ConfigEntry | None:
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    """Set up shared frontend and WebSocket resources once per HA process."""
+    """Set up shared frontend, calibration storage and WebSocket resources."""
     await async_register_frontend(hass)
+    await async_setup_decision_history(hass)
     async_register_websocket_commands(hass)
     return True
 

@@ -37,6 +37,7 @@ from .correlation import take_correlated_recognition
 from .diagnostics import record_live_test_result
 from .enrollment import async_capture_satellite_sample
 from .recognition import SpeakerRecognition
+from .telemetry import get_decision_history
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -237,6 +238,15 @@ class SpeakerRecognitionConversationEntity(
                 threshold=min_confidence,
                 identity_eligible=identity_eligible,
             )
+
+            history = get_decision_history(self.hass)
+            if history is not None:
+                history.record(
+                    speaker_data,
+                    user_input.satellite_id,
+                    threshold=min_confidence,
+                    identity_eligible=identity_eligible,
+                )
 
             if identity_eligible:
                 if user_input.context.user_id is None:
