@@ -201,13 +201,13 @@ class SpeakerRecognitionPanel extends HTMLElement {
     this._message = "The selected satellite will read the phrase and listen for your reply…";
     this._render();
     try {
-      await this._call({
+      const started = await this._call({
         type: "speaker_recognition/start_satellite_sample",
         user_id: this._userId,
         satellite_id: this._satelliteId,
         sample_index: this._sampleIndex,
       });
-      this._pollForSatelliteCapture(this._sampleIndex);
+      this._pollForSatelliteCapture(this._sampleIndex, started.session_id);
     } catch (err) {
       this._busy = false;
       this._message = this._errorText(err);
@@ -215,12 +215,13 @@ class SpeakerRecognitionPanel extends HTMLElement {
     }
   }
 
-  _pollForSatelliteCapture(index) {
+  _pollForSatelliteCapture(index, sessionId) {
     if (this._pollTimer) clearTimeout(this._pollTimer);
     const started = Date.now();
     const poll = async () => {
       await this._refresh(true);
-      if (this._stagedIndexes().includes(index)) {
+      const completed = this._status.completed_satellite_captures || [];
+      if (completed.includes(sessionId)) {
         this._busy = false;
         this._message = `Sample ${index + 1} captured from the satellite.`;
         if (this._sampleIndex < this._status.phrases.length - 1) this._sampleIndex += 1;
