@@ -15,7 +15,6 @@ from homeassistant.core import HomeAssistant, callback
 from .audio import decode_wav
 from .const import (
     CONF_ENTRY_TYPE,
-    CONF_PENDING_ENROLLMENT,
     CONF_SAMPLES,
     CONF_USER,
     CONF_VOICE_SAMPLES,
@@ -26,6 +25,8 @@ from .enrollment import (
     ENROLLMENT_PHRASES,
     MIN_ENROLLMENT_SAMPLES,
     async_stage_pcm_sample,
+    cancel_satellite_session,
+    completed_satellite_capture_ids,
     staged_samples,
     start_satellite_session,
 )
@@ -107,6 +108,7 @@ async def websocket_status(
             "minimum_samples": MIN_ENROLLMENT_SAMPLES,
             "satellites": satellites,
             "staged": staged,
+            "completed_satellite_captures": completed_satellite_capture_ids(hass),
             "microphone_secure_context_required": True,
         },
     )
@@ -176,7 +178,9 @@ async def websocket_start_satellite_sample(
         return
 
     sample_index = msg["sample_index"]
-    start_satellite_session(hass, msg["user_id"], satellite_id, sample_index)
+    session_id = start_satellite_session(
+        hass, msg["user_id"], satellite_id, sample_index
+    )
     phrase = ENROLLMENT_PHRASES[sample_index]
     try:
         await hass.services.async_call(
@@ -194,10 +198,10 @@ async def websocket_start_satellite_sample(
             blocking=True,
         )
     except Exception as err:  # Home Assistant may surface platform-specific service errors.
-        hass.data.setdefault(DOMAIN, {}).pop("enrollment_satellite_session", None)
+        cancel_satellite_session(hass, satellite_id)
         connection.send_error(msg["id"], "satellite_error", str(err))
         return
-    connection.send_result(msg["id"], {"started": True})
+    connection.send_result(msg["id"], {"started": True, "session_id": session_id})
 
 
 @websocket_api.websocket_command(
@@ -213,7 +217,7 @@ def websocket_commit_enrollment(
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
 ) -> None:
-    """Commit staged samples through the existing transactional enrollment lifecycle."""
+    """Commit staged samples through the transactional config-entry update path."""
     entry = _main_entry(hass)
     if entry is None:
         connection.send_error(
@@ -235,7 +239,6 @@ def websocket_commit_enrollment(
     options[CONF_VOICE_SAMPLES] = _replace_user_samples(
         list(options.get(CONF_VOICE_SAMPLES, [])), msg["user_id"], ordered
     )
-    options[CONF_PENDING_ENROLLMENT] = msg["user_id"]
     hass.config_entries.async_update_entry(entry, options=options)
     connection.send_result(msg["id"], {"committed": True, "samples": len(ordered)})
 
