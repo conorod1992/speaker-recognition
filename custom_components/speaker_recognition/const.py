@@ -27,6 +27,21 @@ CONF_STT_ENTITY = "stt_entity"
 CONF_CONVERSATION_ENTITY = "conversation_entity"
 CONF_MIN_CONFIDENCE = "min_confidence"
 
+# Enrollment
+ENROLLMENT_PHRASES = (
+    "The morning light is warm across the kitchen table.",
+    "Please turn on the hallway lamp before it gets dark.",
+    "My favorite music sounds best on a quiet afternoon.",
+    "A small bird landed beside the open garden gate.",
+    "Tomorrow I will remember to water all the plants.",
+    "Home should feel comfortable, calm, and welcoming.",
+)
+MIN_ENROLLMENT_SAMPLES = 5
+MAX_ENROLLMENT_SAMPLES = len(ENROLLMENT_PHRASES)
+ENROLLMENT_SAMPLE_RATE = 16000
+MIN_ENROLLMENT_SECONDS = 0.5
+MAX_ENROLLMENT_SECONDS = 10.0
+
 # Defaults
 DEFAULT_BACKEND_URL = "http://localhost:8099"
 DEFAULT_MIN_CONFIDENCE = 0.0
