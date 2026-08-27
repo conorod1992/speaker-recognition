@@ -15,6 +15,7 @@ from .const import (
     ENTRY_TYPE_STT,
     effective_backend_url,
 )
+from .frontend import async_remove_frontend_panel, async_setup_frontend
 from .lifecycle import (
     EnrollmentUpdateFailed,
     async_apply_enrollment_update,
@@ -71,6 +72,7 @@ async def async_setup_main_entry(
         hass.config_entries.async_update_entry(entry, options=updated_options)
 
     entry.runtime_data = recognition
+    await async_setup_frontend(hass)
     entry.async_on_unload(entry.add_update_listener(async_update_main_listener))
 
     return True
@@ -107,6 +109,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     entry_type = entry.data.get(CONF_ENTRY_TYPE, ENTRY_TYPE_MAIN)
 
     if entry_type == ENTRY_TYPE_MAIN:
+        async_remove_frontend_panel(hass)
         return True
 
     platforms = (
