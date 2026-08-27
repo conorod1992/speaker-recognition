@@ -281,9 +281,17 @@ class SpeakerRecognitionSTTEntity(SpeechToTextEntity):
             return result
 
         _LOGGER.info(
-            "Speaker recognition result - User: %s, Confidence: %.3f, All scores: %s",
+            "Speaker recognition decision - User: %s, Candidate: %s, "
+            "Similarity: %.3f, Margin: %s, Accepted: %s, All scores: %s",
             recognition_result.user_id,
-            recognition_result.confidence,
+            recognition_result.candidate_user_id,
+            recognition_result.similarity,
+            (
+                f"{recognition_result.margin:.3f}"
+                if recognition_result.margin is not None
+                else "n/a"
+            ),
+            recognition_result.accepted,
             {
                 user: f"{score:.3f}"
                 for user, score in recognition_result.all_scores.items()
@@ -293,7 +301,11 @@ class SpeakerRecognitionSTTEntity(SpeechToTextEntity):
             "speaker_recognition_detected",
             {
                 "user_id": recognition_result.user_id,
+                "candidate_user_id": recognition_result.candidate_user_id,
                 "confidence": recognition_result.confidence,
+                "similarity": recognition_result.similarity,
+                "margin": recognition_result.margin,
+                "accepted": recognition_result.accepted,
                 "all_scores": recognition_result.all_scores,
                 "entity_id": self.entity_id,
                 "utterance_sequence": utterance_sequence,
@@ -307,7 +319,11 @@ class SpeakerRecognitionSTTEntity(SpeechToTextEntity):
             domain_data["last_result_sequence"] = utterance_sequence
             domain_data["last_result"] = {
                 "user_id": recognition_result.user_id,
+                "candidate_user_id": recognition_result.candidate_user_id,
                 "confidence": recognition_result.confidence,
+                "similarity": recognition_result.similarity,
+                "margin": recognition_result.margin,
+                "accepted": recognition_result.accepted,
                 "timestamp": self.hass.loop.time(),
                 "utterance_sequence": utterance_sequence,
             }
