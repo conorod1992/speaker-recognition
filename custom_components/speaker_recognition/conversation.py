@@ -34,6 +34,7 @@ from .const import (
     ENTRY_TYPE_MAIN,
 )
 from .correlation import take_correlated_recognition
+from .enrollment import async_capture_satellite_sample
 from .recognition import SpeakerRecognition
 
 _LOGGER = logging.getLogger(__name__)
@@ -199,6 +200,25 @@ class SpeakerRecognitionConversationEntity(
 
         speaker_data = take_correlated_recognition()
         if speaker_data is not None:
+            audio_cache = self.hass.data.setdefault(DOMAIN, {}).setdefault(
+                "utterance_audio", {}
+            )
+            cached_audio = audio_cache.pop(speaker_data.utterance_sequence, None)
+            if cached_audio is not None:
+                pcm_audio, sample_rate = cached_audio
+                if await async_capture_satellite_sample(
+                    self.hass,
+                    user_input.satellite_id,
+                    pcm_audio,
+                    sample_rate,
+                ):
+                    response = IntentResponse(language=user_input.language)
+                    response.async_set_speech("Voice sample recorded.")
+                    return ConversationResult(
+                        response=response,
+                        conversation_id=user_input.conversation_id,
+                    )
+
             min_confidence = self._config_entry.options.get(
                 CONF_MIN_CONFIDENCE,
                 self._config_entry.data.get(CONF_MIN_CONFIDENCE, 0.7),
