@@ -12,6 +12,7 @@ from .const import (
     CONF_ENTRY_TYPE,
     CONF_PENDING_ENROLLMENT,
     CONF_VOICE_SAMPLES,
+    DOMAIN,
     ENTRY_TYPE_MAIN,
     ENTRY_TYPE_STT,
     effective_backend_url,
@@ -131,12 +132,20 @@ async def async_update_main_listener(
     """Handle main config options update."""
     voice_samples = entry.options.get(CONF_VOICE_SAMPLES, [])
     try:
-        await async_apply_enrollment_update(entry.runtime_data, voice_samples)
+        changed_users = await async_apply_enrollment_update(
+            entry.runtime_data, voice_samples
+        )
     except EnrollmentUpdateFailed as error:
         updated_options = dict(entry.options)
         updated_options[CONF_VOICE_SAMPLES] = error.previous_samples
         hass.config_entries.async_update_entry(entry, options=updated_options)
         return
+
+    staged = hass.data.get(DOMAIN, {}).get("enrollment_staged")
+    if changed_users and isinstance(staged, dict):
+        for user_id in changed_users:
+            staged.pop(user_id, None)
+
     await hass.config_entries.async_reload(entry.entry_id)
 
 
