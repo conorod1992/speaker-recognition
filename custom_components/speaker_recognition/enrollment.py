@@ -5,6 +5,7 @@ from __future__ import annotations
 from array import array
 from dataclasses import dataclass
 from pathlib import Path
+import secrets
 import sys
 import time
 import wave
@@ -23,6 +24,7 @@ ENROLLMENT_PHRASES = (
 )
 MIN_ENROLLMENT_SAMPLES = 5
 _SESSION_TIMEOUT = 90.0
+_COMPLETION_TTL = 120.0
 _MEDIA_SUBDIR = "speaker_recognition_enrollment"
 
 
@@ -30,6 +32,7 @@ _MEDIA_SUBDIR = "speaker_recognition_enrollment"
 class SatelliteEnrollmentSession:
     """One expected satellite utterance for enrollment."""
 
+    session_id: str
     user_id: str
     satellite_id: str
     sample_index: int
@@ -105,16 +108,44 @@ async def async_stage_pcm_sample(
     }
 
 
+def _satellite_sessions(hass: HomeAssistant) -> dict[str, SatelliteEnrollmentSession]:
+    """Return active enrollment sessions indexed by satellite entity ID."""
+    return _domain_data(hass).setdefault("enrollment_satellite_sessions", {})
+
+
+def _completed_satellite_captures(hass: HomeAssistant) -> dict[str, float]:
+    """Return recent satellite capture completions and prune stale entries."""
+    completed = _domain_data(hass).setdefault("completed_satellite_captures", {})
+    cutoff = time.monotonic() - _COMPLETION_TTL
+    for session_id, completed_at in list(completed.items()):
+        if completed_at < cutoff:
+            completed.pop(session_id, None)
+    return completed
+
+
+def completed_satellite_capture_ids(hass: HomeAssistant) -> list[str]:
+    """Return IDs of recently completed satellite enrollment captures."""
+    return list(_completed_satellite_captures(hass))
+
+
 def start_satellite_session(
     hass: HomeAssistant, user_id: str, satellite_id: str, sample_index: int
-) -> None:
+) -> str:
     """Expect exactly one enrollment turn from a chosen satellite."""
-    _domain_data(hass)["enrollment_satellite_session"] = SatelliteEnrollmentSession(
+    session_id = secrets.token_urlsafe(12)
+    _satellite_sessions(hass)[satellite_id] = SatelliteEnrollmentSession(
+        session_id=session_id,
         user_id=user_id,
         satellite_id=satellite_id,
         sample_index=sample_index,
         expires_at=time.monotonic() + _SESSION_TIMEOUT,
     )
+    return session_id
+
+
+def cancel_satellite_session(hass: HomeAssistant, satellite_id: str) -> None:
+    """Cancel the pending enrollment session for one satellite."""
+    _satellite_sessions(hass).pop(satellite_id, None)
 
 
 async def async_capture_satellite_sample(
@@ -124,13 +155,14 @@ async def async_capture_satellite_sample(
     sample_rate: int,
 ) -> bool:
     """Capture audio only when it belongs to the explicitly selected satellite."""
-    session = _domain_data(hass).get("enrollment_satellite_session")
+    if satellite_id is None:
+        return False
+    sessions = _satellite_sessions(hass)
+    session = sessions.get(satellite_id)
     if not isinstance(session, SatelliteEnrollmentSession):
         return False
     if time.monotonic() > session.expires_at:
-        _domain_data(hass).pop("enrollment_satellite_session", None)
-        return False
-    if satellite_id != session.satellite_id:
+        sessions.pop(satellite_id, None)
         return False
 
     await async_stage_pcm_sample(
@@ -140,5 +172,6 @@ async def async_capture_satellite_sample(
         pcm_data,
         sample_rate,
     )
-    _domain_data(hass).pop("enrollment_satellite_session", None)
+    sessions.pop(satellite_id, None)
+    _completed_satellite_captures(hass)[session.session_id] = time.monotonic()
     return True
