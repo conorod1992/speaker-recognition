@@ -6,8 +6,12 @@
   ],
   "config_flow": true,
   "dependencies": [
+    "frontend",
+    "http",
     "media_source",
-    "stt"
+    "panel_custom",
+    "stt",
+    "websocket_api"
   ],
   "documentation": "https://github.com/conorod1992/speaker-recognition#home-assistant-integration",
   "integration_type": "service",
