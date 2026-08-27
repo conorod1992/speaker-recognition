@@ -1,5 +1,7 @@
 """Data models for speaker recognition."""
 
+from typing import Optional
+
 from pydantic import BaseModel, Field
 
 from speaker_recognition.const import (
@@ -54,6 +56,8 @@ class TrainingResult(BaseModel):
     count: int
     accepted_samples: dict[str, int] = Field(default_factory=dict)
     rejected_samples: dict[str, int] = Field(default_factory=dict)
+    profile_consistency: dict[str, float] = Field(default_factory=dict)
+    outlier_samples: dict[str, list[int]] = Field(default_factory=dict)
 
 
 class RecognitionRequest(BaseModel):
@@ -65,8 +69,12 @@ class RecognitionRequest(BaseModel):
 class RecognitionResult(BaseModel):
     """Result of recognition operation."""
 
-    user_id: str
+    user_id: Optional[str]
+    candidate_user_id: str
     confidence: float
+    similarity: float
+    margin: Optional[float] = None
+    accepted: bool
     all_scores: dict[str, float]
 
 

@@ -37,8 +37,12 @@ class TrainingResult:
 class RecognitionResult:
     """Recognition response returned by the Speaker Recognition app."""
 
-    user_id: str
+    user_id: str | None
+    candidate_user_id: str
     confidence: float
+    similarity: float
+    margin: float | None
+    accepted: bool
     all_scores: dict[str, float]
 
 
@@ -236,7 +240,7 @@ class SpeakerRecognition:
             sample_rate: Audio sample rate
 
         Returns:
-            RecognitionResult if a speaker is recognized, None otherwise
+            RecognitionResult if the backend returns a valid decision, None otherwise
         """
         if not self._trained:
             _LOGGER.warning(
@@ -263,12 +267,24 @@ class SpeakerRecognition:
                     "Speaker recognition backend request completed in %.3fs",
                     perf_counter() - request_started,
                 )
-            user_id = response.get("user_id")
+
+            raw_user_id = response.get("user_id")
             confidence = response.get("confidence")
             all_scores = response.get("all_scores")
+            candidate_user_id = response.get("candidate_user_id", raw_user_id)
+            similarity = response.get("similarity", confidence)
+            margin = response.get("margin")
+            accepted = response.get("accepted", isinstance(raw_user_id, str))
+
             if (
-                not isinstance(user_id, str)
+                raw_user_id is not None
+                and not isinstance(raw_user_id, str)
+                or not isinstance(candidate_user_id, str)
                 or not isinstance(confidence, (int, float))
+                or not isinstance(similarity, (int, float))
+                or margin is not None
+                and not isinstance(margin, (int, float))
+                or not isinstance(accepted, bool)
                 or not isinstance(all_scores, dict)
                 or not all(
                     isinstance(user, str) and isinstance(score, (int, float))
@@ -278,9 +294,18 @@ class SpeakerRecognition:
                 raise ValueError(
                     "Invalid recognition response from Speaker Recognition app"
                 )
+            if accepted and raw_user_id is None:
+                raise ValueError("Accepted recognition result has no user_id")
+            if not accepted and raw_user_id is not None:
+                raise ValueError("Rejected recognition result unexpectedly has a user_id")
+
             result = RecognitionResult(
-                user_id=user_id,
+                user_id=raw_user_id,
+                candidate_user_id=candidate_user_id,
                 confidence=float(confidence),
+                similarity=float(similarity),
+                margin=float(margin) if margin is not None else None,
+                accepted=accepted,
                 all_scores={user: float(score) for user, score in all_scores.items()},
             )
 
@@ -289,9 +314,11 @@ class SpeakerRecognition:
             return None
         else:
             _LOGGER.debug(
-                "Recognition result: user=%s, confidence=%.2f",
-                result.user_id,
-                result.confidence,
+                "Recognition result: candidate=%s similarity=%.3f margin=%s accepted=%s",
+                result.candidate_user_id,
+                result.similarity,
+                f"{result.margin:.3f}" if result.margin is not None else "n/a",
+                result.accepted,
             )
 
             return result

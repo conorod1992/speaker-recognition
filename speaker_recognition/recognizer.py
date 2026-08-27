@@ -23,6 +23,10 @@ from speaker_recognition.models import (
 
 _LOGGER = logging.getLogger(__name__)
 MIN_RETRAINING_SAMPLES = 3
+MIN_ACCEPTED_SIMILARITY = 0.55
+MIN_ACCEPTED_MARGIN = 0.05
+PROFILE_SAMPLE_WEIGHT = 0.5
+OUTLIER_MIN_GAP = 0.10
 
 
 class SpeakerRecognizer:
@@ -36,6 +40,7 @@ class SpeakerRecognizer:
         """
         self._encoder: VoiceEncoder = VoiceEncoder()
         self._reference_embeddings: dict[str, NDArray[np.float32]] = {}
+        self._sample_embeddings: dict[str, NDArray[np.float32]] = {}
         self._is_trained = False
         self._config = config
         self._embeddings_directory = Path(config.embeddings_directory)
@@ -70,6 +75,7 @@ class SpeakerRecognizer:
     def _load_embeddings(self) -> None:
         """Load persisted profiles and legacy single-embedding files."""
         self._reference_embeddings = {}
+        self._sample_embeddings = {}
         if not self._embeddings_directory.is_dir():
             self._is_trained = False
             return
@@ -88,7 +94,11 @@ class SpeakerRecognizer:
                         or not np.isfinite(sample_embeddings).all()
                     ):
                         raise ValueError("profile contains invalid sample embeddings")
+                    normalized_samples = np.stack(
+                        [self._normalize_embedding(sample) for sample in sample_embeddings]
+                    ).astype(np.float32, copy=False)
                     self._reference_embeddings[user_id] = embedding
+                    self._sample_embeddings[user_id] = normalized_samples
             except (KeyError, OSError, ValueError):
                 _LOGGER.warning("Ignoring invalid saved profile: %s", profile_path)
 
@@ -99,9 +109,11 @@ class SpeakerRecognizer:
             if not user_id or user_id in self._reference_embeddings:
                 continue
             try:
-                self._reference_embeddings[user_id] = self._normalize_embedding(
+                embedding = self._normalize_embedding(
                     np.load(embedding_path, allow_pickle=False)
                 )
+                self._reference_embeddings[user_id] = embedding
+                self._sample_embeddings[user_id] = embedding.reshape(1, -1)
             except (OSError, ValueError):
                 _LOGGER.warning("Ignoring invalid saved embedding: %s", embedding_path)
 
@@ -132,6 +144,53 @@ class SpeakerRecognizer:
         value = cls._validate_embedding(embedding)
         norm = float(np.linalg.norm(value))
         return value / norm
+
+    @classmethod
+    def _profile_diagnostics(
+        cls, sample_embeddings: NDArray[np.float32]
+    ) -> tuple[float, list[int]]:
+        """Return enrollment consistency and one-based outlier sample indexes."""
+        normalized = np.stack(
+            [cls._normalize_embedding(sample) for sample in sample_embeddings]
+        ).astype(np.float32, copy=False)
+        sample_count = normalized.shape[0]
+        if sample_count < 2:
+            return 1.0, []
+
+        similarities = normalized @ normalized.T
+        upper = similarities[np.triu_indices(sample_count, k=1)]
+        consistency = float(np.mean(upper))
+
+        peer_scores = (similarities.sum(axis=1) - 1.0) / (sample_count - 1)
+        median = float(np.median(peer_scores))
+        mad = float(np.median(np.abs(peer_scores - median)))
+        cutoff = median - max(OUTLIER_MIN_GAP, 2.0 * mad)
+        outliers = [
+            index + 1
+            for index, score in enumerate(peer_scores)
+            if float(score) < cutoff
+        ]
+        return consistency, outliers
+
+    @staticmethod
+    def _profile_score(
+        centroid: NDArray[np.float32],
+        sample_embeddings: NDArray[np.float32],
+        chunk_embedding: NDArray[np.float32],
+    ) -> float:
+        """Combine centroid similarity with the strongest enrollment examples."""
+        centroid_score = float(np.dot(centroid, chunk_embedding))
+        if sample_embeddings.shape[0] < 2:
+            return centroid_score
+
+        sample_scores = sample_embeddings @ chunk_embedding
+        strongest_count = min(2, sample_scores.size)
+        strongest = np.partition(sample_scores, -strongest_count)[-strongest_count:]
+        sample_score = float(np.mean(strongest))
+        return (
+            (1.0 - PROFILE_SAMPLE_WEIGHT) * centroid_score
+            + PROFILE_SAMPLE_WEIGHT * sample_score
+        )
 
     def _profile_path(self, user_id: str) -> Path:
         """Return a filesystem-safe stable profile path for a user."""
@@ -218,6 +277,8 @@ class SpeakerRecognizer:
 
         accepted_samples: dict[str, int] = {}
         rejected_samples: dict[str, int] = {}
+        profile_consistency: dict[str, float] = {}
+        outlier_samples: dict[str, list[int]] = {}
         updated_users: list[str] = []
 
         for user_id, audio_inputs in samples_by_user.items():
@@ -265,15 +326,25 @@ class SpeakerRecognizer:
                 continue
 
             sample_embeddings = np.stack(embeddings).astype(np.float32, copy=False)
+            normalized_samples = np.stack(
+                [self._normalize_embedding(sample) for sample in sample_embeddings]
+            ).astype(np.float32, copy=False)
             centroid = self._normalize_embedding(sample_embeddings.mean(axis=0))
+            consistency, outliers = self._profile_diagnostics(sample_embeddings)
             self._save_profile(user_id, centroid, sample_embeddings)
             self._reference_embeddings[user_id] = centroid
+            self._sample_embeddings[user_id] = normalized_samples
+            profile_consistency[user_id] = consistency
+            outlier_samples[user_id] = outliers
             updated_users.append(user_id)
             _LOGGER.info(
-                "Enrolled user %s with %d accepted samples (%d rejected)",
+                "Enrolled user %s with %d accepted samples (%d rejected), "
+                "consistency %.3f, outliers %s",
                 user_id,
                 accepted_samples[user_id],
                 rejected_samples[user_id],
+                consistency,
+                outliers,
             )
 
         if updated_users:
@@ -289,20 +360,15 @@ class SpeakerRecognizer:
                 count=len(self._reference_embeddings),
                 accepted_samples=accepted_samples,
                 rejected_samples=rejected_samples,
+                profile_consistency=profile_consistency,
+                outlier_samples=outlier_samples,
             )
 
         self._is_trained = bool(self._reference_embeddings)
         raise ValueError("No valid voice profiles updated")
 
     def recognize(self, request: RecognitionRequest) -> RecognitionResult:
-        """Recognize speaker from audio data.
-
-        Args:
-            request: Recognition request with audio input
-
-        Returns:
-            RecognitionResult with user_id, confidence, and all scores
-        """
+        """Recognize or reject a speaker from audio data."""
         if not self._is_trained or not self._reference_embeddings:
             raise RuntimeError("Model not trained")
 
@@ -313,19 +379,41 @@ class SpeakerRecognizer:
 
         scores: dict[str, float] = {}
         for user_id, reference_embedding in self._reference_embeddings.items():
-            similarity = float(np.dot(reference_embedding, chunk_embedding))
-            scores[user_id] = similarity
+            samples = self._sample_embeddings.get(user_id)
+            if samples is None:
+                samples = reference_embedding.reshape(1, -1)
+            scores[user_id] = self._profile_score(
+                reference_embedding, samples, chunk_embedding
+            )
 
         if not scores:
             raise RuntimeError("No scores calculated")
 
-        best_user = max(scores, key=lambda user: scores[user])
-        best_score = scores[best_user]
+        ranked = sorted(scores.items(), key=lambda item: item[1], reverse=True)
+        candidate_user_id, best_score = ranked[0]
+        margin = best_score - ranked[1][1] if len(ranked) > 1 else None
+        accepted = best_score >= MIN_ACCEPTED_SIMILARITY and (
+            margin is None or margin >= MIN_ACCEPTED_MARGIN
+        )
+        recognized_user_id = candidate_user_id if accepted else None
 
-        _LOGGER.debug(f"Recognition scores: {scores}")
+        _LOGGER.debug(
+            "Recognition candidate=%s similarity=%.3f margin=%s accepted=%s scores=%s",
+            candidate_user_id,
+            best_score,
+            f"{margin:.3f}" if margin is not None else "n/a",
+            accepted,
+            scores,
+        )
 
         return RecognitionResult(
-            user_id=best_user, confidence=best_score, all_scores=scores
+            user_id=recognized_user_id,
+            candidate_user_id=candidate_user_id,
+            confidence=best_score,
+            similarity=best_score,
+            margin=margin,
+            accepted=accepted,
+            all_scores=scores,
         )
 
 
