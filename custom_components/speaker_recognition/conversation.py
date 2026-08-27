@@ -33,6 +33,7 @@ from .const import (
     DOMAIN,
     ENTRY_TYPE_MAIN,
 )
+from .correlation import take_correlated_recognition
 from .recognition import SpeakerRecognition
 
 _LOGGER = logging.getLogger(__name__)
@@ -155,7 +156,6 @@ class SpeakerRecognitionConversationEntity(
             self._attr_available = False
         else:
             self._attr_available = True
-            # Update cached properties if not yet set
             if self._cached_languages is None:
                 self._async_update_properties()
 
@@ -176,8 +176,6 @@ class SpeakerRecognitionConversationEntity(
                 self.hass, [self._conversation_entity_id], _state_changed_listener
             )
         )
-
-        # Call once on adding to initialize
         _state_changed_listener()
 
     @property
@@ -187,7 +185,6 @@ class SpeakerRecognitionConversationEntity(
 
     async def async_process(self, user_input: ConversationInput) -> ConversationResult:
         """Process a conversation turn."""
-        # Get the source conversation agent
         source_agent = conversation.async_get_agent(
             self.hass, self._conversation_entity_id
         )
@@ -200,70 +197,61 @@ class SpeakerRecognitionConversationEntity(
             )
             return ConversationResult(response=response, conversation_id=None)
 
-        # Check if we should enrich the user_id with speaker recognition
-        # Check for speaker recognition data
-        speaker_data = self.hass.data.get("speaker_recognition", {}).get("last_result")
-
-        if speaker_data:
-            # Get minimum confidence from options or data
+        speaker_data = take_correlated_recognition()
+        if speaker_data is not None:
             min_confidence = self._config_entry.options.get(
                 CONF_MIN_CONFIDENCE,
                 self._config_entry.data.get(CONF_MIN_CONFIDENCE, 0.7),
             )
 
-            confidence = speaker_data.get("confidence", 0)
-            recognized_user_id = speaker_data.get("user_id")
+            if (
+                speaker_data.accepted
+                and speaker_data.confidence >= min_confidence
+                and speaker_data.user_id
+            ):
+                if user_input.context.user_id is None:
+                    _LOGGER.info(
+                        "Enriching correlated conversation turn: "
+                        "recognized_user_id=%s confidence=%.3f utterance=%d "
+                        "stt_entity_id=%s device_id=%s satellite_id=%s",
+                        speaker_data.user_id,
+                        speaker_data.confidence,
+                        speaker_data.utterance_sequence,
+                        speaker_data.stt_entity_id,
+                        user_input.device_id,
+                        user_input.satellite_id,
+                    )
 
-            # Check if confidence is above threshold
-            if confidence >= min_confidence and recognized_user_id:
-                # Check if result is recent (within last 5 seconds)
-                timestamp = speaker_data.get("timestamp", 0)
-                age = self.hass.loop.time() - timestamp
-
-                if age < 5.0:  # 5 second window
-                    # Speaker recognition supplements a missing identity; it must
-                    # not replace an identity Home Assistant already knows.
-                    if user_input.context.user_id is None:
-                        _LOGGER.info(
-                            "Enriching conversation with speaker recognition: "
-                            "recognized_user_id=%s, confidence=%.3f",
-                            recognized_user_id,
-                            confidence,
-                        )
-
-                        # Create new context with user_id
-                        enriched_context = Context(
-                            user_id=recognized_user_id,
-                            parent_id=user_input.context.parent_id,
-                            id=user_input.context.id,
-                        )
-
-                        # Create new input with enriched context
-                        user_input = ConversationInput(
-                            text=user_input.text,
-                            context=enriched_context,
-                            conversation_id=user_input.conversation_id,
-                            device_id=user_input.device_id,
-                            satellite_id=user_input.satellite_id,
-                            language=user_input.language,
-                            agent_id=user_input.agent_id,
-                            extra_system_prompt=user_input.extra_system_prompt,
-                        )
-                    elif user_input.context.user_id != recognized_user_id:
-                        _LOGGER.debug(
-                            "Keeping existing Home Assistant user_id=%s instead of "
-                            "speaker recognition user_id=%s",
-                            user_input.context.user_id,
-                            recognized_user_id,
-                        )
-                else:
-                    _LOGGER.debug("Speaker recognition data too old: %.1f seconds", age)
+                    enriched_context = Context(
+                        user_id=speaker_data.user_id,
+                        parent_id=user_input.context.parent_id,
+                        id=user_input.context.id,
+                    )
+                    user_input = ConversationInput(
+                        text=user_input.text,
+                        context=enriched_context,
+                        conversation_id=user_input.conversation_id,
+                        device_id=user_input.device_id,
+                        satellite_id=user_input.satellite_id,
+                        language=user_input.language,
+                        agent_id=user_input.agent_id,
+                        extra_system_prompt=user_input.extra_system_prompt,
+                    )
+                elif user_input.context.user_id != speaker_data.user_id:
+                    _LOGGER.debug(
+                        "Keeping existing Home Assistant user_id=%s instead of "
+                        "correlated speaker recognition user_id=%s",
+                        user_input.context.user_id,
+                        speaker_data.user_id,
+                    )
             else:
                 _LOGGER.debug(
-                    "Speaker recognition confidence %.3f below threshold %.3f",
-                    confidence,
+                    "Correlated speaker decision not eligible for identity: "
+                    "accepted=%s confidence=%.3f threshold=%.3f utterance=%d",
+                    speaker_data.accepted,
+                    speaker_data.confidence,
                     min_confidence,
+                    speaker_data.utterance_sequence,
                 )
 
-        # Forward to source agent
         return await source_agent.async_process(user_input)

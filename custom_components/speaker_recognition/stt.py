@@ -27,6 +27,11 @@ from homeassistant.helpers.event import async_track_state_change_event
 
 from .audio import prepare_live_pcm
 from .const import CONF_ENTRY_TYPE, CONF_STT_ENTITY, DOMAIN, ENTRY_TYPE_MAIN
+from .correlation import (
+    CorrelatedRecognition,
+    clear_correlated_recognition,
+    set_correlated_recognition,
+)
 from .recognition import SpeakerRecognition
 from .stream import async_process_buffered_stream
 
@@ -139,7 +144,6 @@ class SpeakerRecognitionSTTEntity(SpeechToTextEntity):
             self._attr_available = False
         else:
             self._attr_available = True
-            # Update cached properties if not yet set
             if self._cached_languages is None:
                 self._async_update_properties()
 
@@ -160,8 +164,6 @@ class SpeakerRecognitionSTTEntity(SpeechToTextEntity):
                 self.hass, [self._stt_entity_id], _state_changed_listener
             )
         )
-
-        # Call once on adding to initialize
         _state_changed_listener()
 
     @property
@@ -202,15 +204,11 @@ class SpeakerRecognitionSTTEntity(SpeechToTextEntity):
     async def async_process_audio_stream(
         self, metadata: SpeechMetadata, stream: AsyncIterable[bytes]
     ) -> SpeechResult:
-        """Process an audio stream to STT service.
+        """Process audio while keeping recognition bound to this Assist task."""
+        clear_correlated_recognition()
 
-        This collects audio, performs speaker recognition, and forwards to the source STT.
-        """
-        # Get the source entity - it should be available if we're being called
         source_entity = async_get_speech_to_text_entity(self.hass, self._stt_entity_id)
-
         if source_entity is None:
-            # Entity not found - return error
             return SpeechResult(None, SpeechResultState.ERROR)
 
         domain_data = self.hass.data.setdefault(DOMAIN, {})
@@ -280,6 +278,19 @@ class SpeakerRecognitionSTTEntity(SpeechToTextEntity):
             )
             return result
 
+        correlated = CorrelatedRecognition(
+            user_id=recognition_result.user_id,
+            candidate_user_id=recognition_result.candidate_user_id,
+            confidence=recognition_result.confidence,
+            similarity=recognition_result.similarity,
+            margin=recognition_result.margin,
+            accepted=recognition_result.accepted,
+            all_scores=recognition_result.all_scores,
+            stt_entity_id=self.entity_id,
+            utterance_sequence=utterance_sequence,
+        )
+        set_correlated_recognition(correlated)
+
         _LOGGER.info(
             "Speaker recognition decision - User: %s, Candidate: %s, "
             "Similarity: %.3f, Margin: %s, Accepted: %s, All scores: %s",
@@ -311,21 +322,5 @@ class SpeakerRecognitionSTTEntity(SpeechToTextEntity):
                 "utterance_sequence": utterance_sequence,
             },
         )
-
-        # Concurrent utterances may finish out of order. Only the newest-started
-        # completed utterance is eligible to become the shared conversation result.
-        last_sequence = int(domain_data.get("last_result_sequence", 0))
-        if utterance_sequence >= last_sequence:
-            domain_data["last_result_sequence"] = utterance_sequence
-            domain_data["last_result"] = {
-                "user_id": recognition_result.user_id,
-                "candidate_user_id": recognition_result.candidate_user_id,
-                "confidence": recognition_result.confidence,
-                "similarity": recognition_result.similarity,
-                "margin": recognition_result.margin,
-                "accepted": recognition_result.accepted,
-                "timestamp": self.hass.loop.time(),
-                "utterance_sequence": utterance_sequence,
-            }
 
         return result
