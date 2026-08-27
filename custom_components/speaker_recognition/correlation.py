@@ -19,6 +19,11 @@ class CorrelatedRecognition:
     all_scores: dict[str, float]
     stt_entity_id: str | None
     utterance_sequence: int
+    stt_seconds: float = 0.0
+    recognition_seconds: float = 0.0
+    preparation_seconds: float = 0.0
+    added_latency_seconds: float = 0.0
+    audio_seconds: float | None = None
 
 
 _current_recognition: ContextVar[CorrelatedRecognition | None] = ContextVar(

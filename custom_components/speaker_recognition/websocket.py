@@ -21,6 +21,7 @@ from .const import (
     DOMAIN,
     ENTRY_TYPE_MAIN,
 )
+from .diagnostics import live_test_status, start_live_test
 from .enrollment import (
     ENROLLMENT_PHRASES,
     MIN_ENROLLMENT_SAMPLES,
@@ -79,18 +80,20 @@ async def websocket_status(
         for user in auth_users
         if not user.system_generated
     ]
+
     satellites = []
-    feature = int(AssistSatelliteEntityFeature.START_CONVERSATION)
+    enrollment_satellites = []
+    start_conversation_feature = int(AssistSatelliteEntityFeature.START_CONVERSATION)
     for state in hass.states.async_all("assist_satellite"):
+        satellite = {
+            "entity_id": state.entity_id,
+            "name": state.name,
+            "available": state.state not in ("unavailable", "unknown"),
+        }
+        satellites.append(satellite)
         supported = int(state.attributes.get("supported_features", 0) or 0)
-        if supported & feature:
-            satellites.append(
-                {
-                    "entity_id": state.entity_id,
-                    "name": state.name,
-                    "available": state.state not in ("unavailable", "unknown"),
-                }
-            )
+        if supported & start_conversation_feature:
+            enrollment_satellites.append(satellite)
 
     staged: dict[str, list[int]] = {}
     domain_data = hass.data.setdefault(DOMAIN, {})
@@ -98,6 +101,7 @@ async def websocket_status(
         if isinstance(values, dict):
             staged[user_id] = sorted(int(index) for index in values)
 
+    live_session, live_result = live_test_status(hass)
     connection.send_result(
         msg["id"],
         {
@@ -107,8 +111,18 @@ async def websocket_status(
             "phrases": list(ENROLLMENT_PHRASES),
             "minimum_samples": MIN_ENROLLMENT_SAMPLES,
             "satellites": satellites,
+            "enrollment_satellites": enrollment_satellites,
             "staged": staged,
             "completed_satellite_captures": completed_satellite_capture_ids(hass),
+            "live_test_active": (
+                {
+                    "session_id": live_session.session_id,
+                    "satellite_id": live_session.satellite_id,
+                }
+                if live_session is not None
+                else None
+            ),
+            "live_test_result": live_result,
             "microphone_secure_context_required": True,
         },
     )
@@ -206,6 +220,37 @@ async def websocket_start_satellite_sample(
 
 @websocket_api.websocket_command(
     {
+        vol.Required("type"): f"{DOMAIN}/start_live_test",
+        vol.Required("satellite_id"): str,
+    }
+)
+@websocket_api.require_admin
+@callback
+def websocket_start_live_test(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Arm one normal Assist turn from a selected satellite for diagnostics."""
+    satellite_id = msg["satellite_id"]
+    state = hass.states.get(satellite_id)
+    if state is None or not satellite_id.startswith("assist_satellite."):
+        connection.send_error(
+            msg["id"], "unknown_satellite", "Assist satellite was not found"
+        )
+        return
+    if state.state in ("unavailable", "unknown"):
+        connection.send_error(
+            msg["id"], "satellite_unavailable", "Assist satellite is unavailable"
+        )
+        return
+
+    session_id = start_live_test(hass, satellite_id)
+    connection.send_result(msg["id"], {"started": True, "session_id": session_id})
+
+
+@websocket_api.websocket_command(
+    {
         vol.Required("type"): f"{DOMAIN}/commit_enrollment",
         vol.Required("user_id"): str,
     }
@@ -292,5 +337,6 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, websocket_status)
     websocket_api.async_register_command(hass, websocket_stage_sample)
     websocket_api.async_register_command(hass, websocket_start_satellite_sample)
+    websocket_api.async_register_command(hass, websocket_start_live_test)
     websocket_api.async_register_command(hass, websocket_commit_enrollment)
     websocket_api.async_register_command(hass, websocket_test_sample)

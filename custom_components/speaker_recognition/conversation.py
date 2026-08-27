@@ -34,6 +34,7 @@ from .const import (
     ENTRY_TYPE_MAIN,
 )
 from .correlation import take_correlated_recognition
+from .diagnostics import record_live_test_result
 from .enrollment import async_capture_satellite_sample
 from .recognition import SpeakerRecognition
 
@@ -200,6 +201,16 @@ class SpeakerRecognitionConversationEntity(
 
         speaker_data = take_correlated_recognition()
         if speaker_data is not None:
+            min_confidence = self._config_entry.options.get(
+                CONF_MIN_CONFIDENCE,
+                self._config_entry.data.get(CONF_MIN_CONFIDENCE, DEFAULT_MIN_CONFIDENCE),
+            )
+            identity_eligible = bool(
+                speaker_data.accepted
+                and speaker_data.confidence >= min_confidence
+                and speaker_data.user_id
+            )
+
             audio_cache = self.hass.data.setdefault(DOMAIN, {}).setdefault(
                 "utterance_audio", {}
             )
@@ -219,16 +230,15 @@ class SpeakerRecognitionConversationEntity(
                         conversation_id=user_input.conversation_id,
                     )
 
-            min_confidence = self._config_entry.options.get(
-                CONF_MIN_CONFIDENCE,
-                self._config_entry.data.get(CONF_MIN_CONFIDENCE, 0.7),
+            record_live_test_result(
+                self.hass,
+                user_input.satellite_id,
+                speaker_data,
+                threshold=min_confidence,
+                identity_eligible=identity_eligible,
             )
 
-            if (
-                speaker_data.accepted
-                and speaker_data.confidence >= min_confidence
-                and speaker_data.user_id
-            ):
+            if identity_eligible:
                 if user_input.context.user_id is None:
                     _LOGGER.info(
                         "Enriching correlated conversation turn: "

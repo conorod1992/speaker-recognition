@@ -215,20 +215,32 @@ class SpeakerRecognitionSTTEntity(SpeechToTextEntity):
         utterance_sequence = int(domain_data.get("utterance_sequence", 0)) + 1
         domain_data["utterance_sequence"] = utterance_sequence
 
+        stt_seconds = 0.0
+        recognition_seconds = 0.0
+        preparation_seconds = 0.0
+        audio_seconds: float | None = None
+        stt_completed_at: float | None = None
+        recognition_completed_at: float | None = None
+
         async def process_stt(buffered_stream: AsyncIterable[bytes]) -> SpeechResult:
+            nonlocal stt_seconds, stt_completed_at
             stt_started = perf_counter()
             try:
                 return await source_entity.async_process_audio_stream(
                     metadata, buffered_stream
                 )
             finally:
+                stt_completed_at = perf_counter()
+                stt_seconds = stt_completed_at - stt_started
                 _LOGGER.debug(
                     "Wrapped STT completed in %.3fs for utterance %d",
-                    perf_counter() - stt_started,
+                    stt_seconds,
                     utterance_sequence,
                 )
 
         async def recognize_speaker(audio_data: bytes):
+            nonlocal recognition_seconds, preparation_seconds
+            nonlocal audio_seconds, recognition_completed_at
             recognition_started = perf_counter()
             try:
                 if (
@@ -252,9 +264,11 @@ class SpeakerRecognitionSTTEntity(SpeechToTextEntity):
                     int(metadata.sample_rate),
                     int(metadata.channel),
                 )
+                preparation_seconds = perf_counter() - preparation_started
+                audio_seconds = len(pcm_audio) / (sample_rate * 2)
                 _LOGGER.debug(
                     "Prepared recognition audio in %.3fs for utterance %d",
-                    perf_counter() - preparation_started,
+                    preparation_seconds,
                     utterance_sequence,
                 )
                 audio_cache = domain_data.setdefault("utterance_audio", {})
@@ -265,15 +279,21 @@ class SpeakerRecognitionSTTEntity(SpeechToTextEntity):
                     pcm_audio, sample_rate=sample_rate
                 )
             finally:
+                recognition_completed_at = perf_counter()
+                recognition_seconds = recognition_completed_at - recognition_started
                 _LOGGER.debug(
                     "Total speaker recognition took %.3fs for utterance %d",
-                    perf_counter() - recognition_started,
+                    recognition_seconds,
                     utterance_sequence,
                 )
 
         result, recognition_result = await async_process_buffered_stream(
             stream, process_stt, recognize_speaker
         )
+
+        added_latency_seconds = 0.0
+        if stt_completed_at is not None and recognition_completed_at is not None:
+            added_latency_seconds = max(0.0, recognition_completed_at - stt_completed_at)
 
         if recognition_result is None:
             _LOGGER.debug(
@@ -290,6 +310,11 @@ class SpeakerRecognitionSTTEntity(SpeechToTextEntity):
                 all_scores={},
                 stt_entity_id=self.entity_id,
                 utterance_sequence=utterance_sequence,
+                stt_seconds=stt_seconds,
+                recognition_seconds=recognition_seconds,
+                preparation_seconds=preparation_seconds,
+                added_latency_seconds=added_latency_seconds,
+                audio_seconds=audio_seconds,
             )
             set_correlated_recognition(correlated)
             return result
@@ -304,12 +329,18 @@ class SpeakerRecognitionSTTEntity(SpeechToTextEntity):
             all_scores=recognition_result.all_scores,
             stt_entity_id=self.entity_id,
             utterance_sequence=utterance_sequence,
+            stt_seconds=stt_seconds,
+            recognition_seconds=recognition_seconds,
+            preparation_seconds=preparation_seconds,
+            added_latency_seconds=added_latency_seconds,
+            audio_seconds=audio_seconds,
         )
         set_correlated_recognition(correlated)
 
         _LOGGER.info(
             "Speaker recognition decision - User: %s, Candidate: %s, "
-            "Similarity: %.3f, Margin: %s, Accepted: %s, All scores: %s",
+            "Similarity: %.3f, Margin: %s, Accepted: %s, "
+            "Recognition: %.3fs, Added Assist latency: %.3fs, All scores: %s",
             recognition_result.user_id,
             recognition_result.candidate_user_id,
             recognition_result.similarity,
@@ -319,6 +350,8 @@ class SpeakerRecognitionSTTEntity(SpeechToTextEntity):
                 else "n/a"
             ),
             recognition_result.accepted,
+            recognition_seconds,
+            added_latency_seconds,
             {
                 user: f"{score:.3f}"
                 for user, score in recognition_result.all_scores.items()
@@ -336,6 +369,11 @@ class SpeakerRecognitionSTTEntity(SpeechToTextEntity):
                 "all_scores": recognition_result.all_scores,
                 "entity_id": self.entity_id,
                 "utterance_sequence": utterance_sequence,
+                "stt_seconds": stt_seconds,
+                "recognition_seconds": recognition_seconds,
+                "preparation_seconds": preparation_seconds,
+                "added_latency_seconds": added_latency_seconds,
+                "audio_seconds": audio_seconds,
             },
         )
 

@@ -7,11 +7,16 @@ class SpeakerRecognitionPanel extends HTMLElement {
     this._userId = "";
     this._sampleIndex = 0;
     this._satelliteId = "";
+    this._liveSatelliteId = "";
+    this._liveTestSessionId = "";
     this._recording = null;
     this._lastWav = null;
     this._message = "";
+    this._liveMessage = "";
     this._busy = false;
+    this._liveBusy = false;
     this._pollTimer = null;
+    this._livePollTimer = null;
   }
 
   set hass(value) {
@@ -25,6 +30,7 @@ class SpeakerRecognitionPanel extends HTMLElement {
 
   disconnectedCallback() {
     if (this._pollTimer) clearTimeout(this._pollTimer);
+    if (this._livePollTimer) clearTimeout(this._livePollTimer);
     this._stopRecorderTracks();
   }
 
@@ -38,8 +44,12 @@ class SpeakerRecognitionPanel extends HTMLElement {
     try {
       this._status = await this._call({ type: "speaker_recognition/status" });
       if (!this._userId && this._status.users.length) this._userId = this._status.users[0].id;
-      if (!this._satelliteId && this._status.satellites.length) {
-        this._satelliteId = this._status.satellites[0].entity_id;
+      const enrollmentSatellites = this._status.enrollment_satellites || this._status.satellites || [];
+      if (!this._satelliteId && enrollmentSatellites.length) {
+        this._satelliteId = enrollmentSatellites[0].entity_id;
+      }
+      if (!this._liveSatelliteId && this._status.satellites.length) {
+        this._liveSatelliteId = this._status.satellites[0].entity_id;
       }
       const staged = (this._status.staged && this._status.staged[this._userId]) || [];
       if (staged.length && !staged.includes(this._sampleIndex)) {
@@ -286,6 +296,88 @@ class SpeakerRecognitionPanel extends HTMLElement {
     }
   }
 
+  async _startLiveTest() {
+    if (!this._liveSatelliteId) return;
+    this._liveBusy = true;
+    this._liveMessage = "Listening for the next normal Assist request from this satellite…";
+    this._render();
+    try {
+      const started = await this._call({
+        type: "speaker_recognition/start_live_test",
+        satellite_id: this._liveSatelliteId,
+      });
+      this._liveTestSessionId = started.session_id;
+      this._pollForLiveTest(started.session_id);
+    } catch (err) {
+      this._liveBusy = false;
+      this._liveMessage = this._errorText(err);
+      this._render();
+    }
+  }
+
+  _pollForLiveTest(sessionId) {
+    if (this._livePollTimer) clearTimeout(this._livePollTimer);
+    const started = Date.now();
+    const poll = async () => {
+      await this._refresh(true);
+      const result = this._status.live_test_result;
+      if (result && result.session_id === sessionId) {
+        this._liveBusy = false;
+        this._liveMessage = "Live test completed.";
+        this._render();
+        return;
+      }
+      if (Date.now() - started > 90000) {
+        this._liveBusy = false;
+        this._liveMessage = "No matching Assist turn was seen within 90 seconds. Make sure this pipeline uses the Speaker Recognition STT and Conversation proxies.";
+        this._render();
+        return;
+      }
+      this._livePollTimer = setTimeout(poll, 1000);
+    };
+    this._livePollTimer = setTimeout(poll, 1000);
+  }
+
+  _userName(userId) {
+    if (!userId || !this._status) return userId || "Unknown";
+    const user = this._status.users.find(item => item.id === userId);
+    return user ? user.name : userId;
+  }
+
+  _formatMs(seconds) {
+    return `${Math.round(Number(seconds || 0) * 1000)} ms`;
+  }
+
+  _renderLiveResult(result) {
+    if (!result) return "";
+    const candidate = this._escape(this._userName(result.candidate_user_id));
+    const recognized = result.identity_eligible && result.user_id
+      ? this._escape(this._userName(result.user_id))
+      : "Unknown / not applied";
+    const similarity = Number(result.similarity || 0).toFixed(3);
+    const margin = result.margin == null ? "n/a" : Number(result.margin).toFixed(3);
+    const threshold = Number(result.threshold || 0).toFixed(2);
+    const scoreRows = Object.entries(result.all_scores || {})
+      .sort((a, b) => Number(b[1]) - Number(a[1]))
+      .map(([userId, score]) => `<li>${this._escape(this._userName(userId))}: ${Number(score).toFixed(3)}</li>`)
+      .join("");
+    return `<div class="result ${result.identity_eligible ? "success" : ""}">
+      <strong>${result.identity_eligible ? "Recognised successfully" : "Speaker identity was not applied"}</strong>
+      <div class="metrics">
+        <span><b>Recognised as</b><br>${recognized}</span>
+        <span><b>Candidate</b><br>${candidate}</span>
+        <span><b>Similarity</b><br>${similarity}</span>
+        <span><b>Margin</b><br>${margin}</span>
+        <span><b>HA threshold</b><br>${threshold}</span>
+        <span><b>Recognition</b><br>${this._formatMs(result.recognition_seconds)}</span>
+        <span><b>Added Assist latency</b><br>${this._formatMs(result.added_latency_seconds)}</span>
+        <span><b>STT</b><br>${this._formatMs(result.stt_seconds)}</span>
+        <span><b>Audio</b><br>${Number(result.audio_seconds || 0).toFixed(1)} s</span>
+      </div>
+      ${scoreRows ? `<details><summary>All profile scores</summary><ul>${scoreRows}</ul></details>` : ""}
+    </div>`;
+  }
+
   _render() {
     if (!this.shadowRoot) return;
     const s = this._status;
@@ -293,6 +385,8 @@ class SpeakerRecognitionPanel extends HTMLElement {
     const staged = this._stagedIndexes();
     const minimum = s ? s.minimum_samples : 5;
     const micAvailable = this._canUseMicrophone();
+    const enrollmentSatellites = s ? (s.enrollment_satellites || s.satellites || []) : [];
+    const liveResult = s ? s.live_test_result : null;
     this.shadowRoot.innerHTML = `
       <style>
         :host { display:block; box-sizing:border-box; padding:24px; color:var(--primary-text-color); background:var(--primary-background-color); min-height:100vh; }
@@ -315,6 +409,10 @@ class SpeakerRecognitionPanel extends HTMLElement {
         .sample { padding:6px 9px; border-radius:999px; background:var(--secondary-background-color); }
         .sample.done { outline:2px solid var(--primary-color); }
         .warning { color:var(--warning-color, #e67e22); }
+        .result { margin-top:16px; padding:16px; border-radius:8px; background:var(--secondary-background-color); }
+        .result.success { border-left:4px solid var(--success-color, #43a047); }
+        .metrics { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-top:14px; }
+        .metrics span { padding:10px; background:var(--card-background-color); border-radius:6px; }
       </style>
       <div class="wrap">
         <h1>Speaker Recognition</h1>
@@ -331,12 +429,24 @@ class SpeakerRecognitionPanel extends HTMLElement {
               ${this._lastWav ? `<button id="playBtn" class="secondary">Play back</button><button id="useBtn" ${this._busy ? "disabled" : ""}>Use this recording</button><button id="testBtn" class="secondary" ${this._busy ? "disabled" : ""}>Test profile</button>` : ""}
             </div>` : `<p class="warning">Microphone access is unavailable in this browser context. Browser microphone APIs require HTTPS (or localhost). You can still use a compatible voice satellite or the existing WAV upload flow in the integration options.</p>`}
             <h3>Record with a voice satellite</h3>
-            ${s.satellites.length ? `<div class="row"><select id="satelliteSelect">${s.satellites.map(x => `<option value="${x.entity_id}" ${x.entity_id === this._satelliteId ? "selected" : ""}>${this._escape(x.name || x.entity_id)}${x.available ? "" : " (unavailable)"}</option>`).join("")}</select><button id="satelliteBtn" ${this._busy ? "disabled" : ""}>Prompt satellite</button></div>` : `<p class="muted">No Assist Satellite entity currently advertises remote Start Conversation support.</p>`}
+            ${enrollmentSatellites.length ? `<div class="row"><select id="satelliteSelect">${enrollmentSatellites.map(x => `<option value="${x.entity_id}" ${x.entity_id === this._satelliteId ? "selected" : ""}>${this._escape(x.name || x.entity_id)}${x.available ? "" : " (unavailable)"}</option>`).join("")}</select><button id="satelliteBtn" ${this._busy ? "disabled" : ""}>Prompt satellite</button></div>` : `<p class="muted">No Assist Satellite entity currently advertises remote Start Conversation support.</p>`}
             <p class="muted">The satellite path is bound to the selected satellite and the exact Assist turn; unrelated speech from another satellite is ignored.</p>
             <div class="row"><button id="commitBtn" ${staged.length < minimum || this._busy ? "disabled" : ""}>Train with ${staged.length} staged sample${staged.length === 1 ? "" : "s"}</button><span class="muted">Minimum ${minimum}; up to ${s.phrases.length}.</span></div>
             ${this._message ? `<div class="message">${this._escape(this._message)}</div>` : ""}
           </div>
-          <div class="card"><h2>Profile diagnostics</h2><p>Enrolled users: ${s.enrolled_users.length ? s.enrolled_users.map(x => this._escape(x)).join(", ") : "none"}</p><p class="muted">Record any phrase above and choose <strong>Test profile</strong> to see the candidate, similarity, runner-up margin and accepted/unknown decision.</p></div>
+          <div class="card">
+            <h2>Profile diagnostics</h2>
+            <p>Enrolled users: ${s.enrolled_users.length ? s.enrolled_users.map(x => this._escape(x)).join(", ") : "none"}</p>
+            <p class="muted">Record any phrase above and choose <strong>Test profile</strong> to see the candidate, similarity, runner-up margin and accepted/unknown decision. The first recognition after the backend starts can take longer while the recognition engine gets ready; later recognitions are normally faster.</p>
+          </div>
+          <div class="card">
+            <h2>Live satellite test</h2>
+            <p>Test the real microphone, room acoustics, distance and Assist path. Select a satellite, start the test, then address that satellite normally within 90 seconds. Ask a harmless question such as <em>“What time is it?”</em> or use a reversible command.</p>
+            ${s.satellites.length ? `<div class="row"><select id="liveSatelliteSelect">${s.satellites.map(x => `<option value="${x.entity_id}" ${x.entity_id === this._liveSatelliteId ? "selected" : ""}>${this._escape(x.name || x.entity_id)}${x.available ? "" : " (unavailable)"}</option>`).join("")}</select><button id="liveTestBtn" ${this._liveBusy ? "disabled" : ""}>${this._liveBusy ? "Waiting for Assist…" : "Start live test"}</button></div>` : `<p class="muted">No Assist Satellite entities are available.</p>`}
+            <p class="muted">Your normal Assist request still runs. The test only observes the exact correlated speaker decision from the selected satellite.</p>
+            ${this._liveMessage ? `<div class="message">${this._escape(this._liveMessage)}</div>` : ""}
+            ${this._renderLiveResult(liveResult)}
+          </div>
         `}
       </div>`;
     this._bindEvents();
@@ -350,6 +460,7 @@ class SpeakerRecognitionPanel extends HTMLElement {
     const $ = (id) => this.shadowRoot.getElementById(id);
     if ($("userSelect")) $("userSelect").onchange = (e) => { this._userId = e.target.value; this._sampleIndex = 0; this._render(); };
     if ($("satelliteSelect")) $("satelliteSelect").onchange = (e) => { this._satelliteId = e.target.value; };
+    if ($("liveSatelliteSelect")) $("liveSatelliteSelect").onchange = (e) => { this._liveSatelliteId = e.target.value; };
     if ($("recordBtn")) $("recordBtn").onclick = () => this._startRecording();
     if ($("stopBtn")) $("stopBtn").onclick = () => this._stopRecording();
     if ($("playBtn")) $("playBtn").onclick = () => this._playRecording();
@@ -357,6 +468,7 @@ class SpeakerRecognitionPanel extends HTMLElement {
     if ($("testBtn")) $("testBtn").onclick = () => this._testProfile();
     if ($("satelliteBtn")) $("satelliteBtn").onclick = () => this._startSatellite();
     if ($("commitBtn")) $("commitBtn").onclick = () => this._commitEnrollment();
+    if ($("liveTestBtn")) $("liveTestBtn").onclick = () => this._startLiveTest();
     for (const button of this.shadowRoot.querySelectorAll("[data-sample]")) {
       button.onclick = () => { this._sampleIndex = Number(button.dataset.sample); this._lastWav = null; this._render(); };
     }
