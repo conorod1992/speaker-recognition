@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import base64
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from time import perf_counter
 from typing import TYPE_CHECKING, Any
 
@@ -31,6 +31,8 @@ class TrainingResult:
     """Training response returned by the Speaker Recognition app."""
 
     users_trained: list[str]
+    profile_consistency: dict[str, float] = field(default_factory=dict)
+    outlier_samples: dict[str, list[int]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -65,7 +67,13 @@ class SpeakerRecognition:
         self.hass = hass
         self.voice_samples = voice_samples
         self._trained = False
+        self._enrolled_users: list[str] = []
         self._base_url = base_url.rstrip("/")
+
+    @property
+    def enrolled_users(self) -> list[str]:
+        """Return users currently reported as enrolled by the backend."""
+        return list(self._enrolled_users)
 
     async def _async_post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         """Call the local Speaker Recognition app without external dependencies."""
@@ -104,6 +112,54 @@ class SpeakerRecognition:
             raise ValueError("Selected media source does not provide a local file")
         return await self.hass.async_add_executor_job(resolved_media.path.read_bytes)
 
+    @staticmethod
+    def _parse_training_response(
+        response: dict[str, Any], expected_users: set[str]
+    ) -> TrainingResult:
+        """Validate a backend training response and retain profile diagnostics."""
+        trained_users = response.get("trained_users")
+        if not isinstance(trained_users, list) or not all(
+            isinstance(user, str) for user in trained_users
+        ):
+            raise ValueError("Invalid training response from Speaker Recognition app")
+        if not trained_users:
+            raise ValueError("Speaker Recognition app did not train any users")
+
+        trained_user_set = set(trained_users)
+        if not expected_users.issubset(trained_user_set):
+            missing_users = sorted(expected_users - trained_user_set)
+            raise ValueError(
+                "Speaker Recognition app did not train requested users: "
+                + ", ".join(missing_users)
+            )
+
+        raw_consistency = response.get("profile_consistency", {})
+        raw_outliers = response.get("outlier_samples", {})
+        if not isinstance(raw_consistency, dict) or not isinstance(raw_outliers, dict):
+            raise ValueError("Invalid profile diagnostics from Speaker Recognition app")
+
+        profile_consistency: dict[str, float] = {}
+        for user, value in raw_consistency.items():
+            if not isinstance(user, str) or not isinstance(value, (int, float)):
+                raise ValueError("Invalid profile consistency from Speaker Recognition app")
+            profile_consistency[user] = float(value)
+
+        outlier_samples: dict[str, list[int]] = {}
+        for user, values in raw_outliers.items():
+            if (
+                not isinstance(user, str)
+                or not isinstance(values, list)
+                or not all(isinstance(index, int) and index > 0 for index in values)
+            ):
+                raise ValueError("Invalid profile outliers from Speaker Recognition app")
+            outlier_samples[user] = list(values)
+
+        return TrainingResult(
+            users_trained=trained_users,
+            profile_consistency=profile_consistency,
+            outlier_samples=outlier_samples,
+        )
+
     async def async_refresh_status(self) -> bool:
         """Refresh recognition availability from persisted backend profiles."""
         try:
@@ -118,11 +174,13 @@ class SpeakerRecognition:
                 )
         except (ClientError, OSError, ValueError, TypeError) as error:
             self._trained = False
+            self._enrolled_users = []
             _LOGGER.warning("Unable to read speaker recognition status: %s", error)
             raise RecognitionBackendUnavailable(
                 "Speaker Recognition backend is unavailable"
             ) from error
 
+        self._enrolled_users = sorted(enrolled_users)
         self._trained = trained and bool(enrolled_users)
         _LOGGER.info(
             "Speaker recognition backend has %d persisted profiles",
@@ -198,23 +256,7 @@ class SpeakerRecognition:
             response = await self._async_post(
                 "/train", {"voice_samples": voice_sample_models}
             )
-            trained_users = response.get("trained_users")
-            if not isinstance(trained_users, list) or not all(
-                isinstance(user, str) for user in trained_users
-            ):
-                raise ValueError(
-                    "Invalid training response from Speaker Recognition app"
-                )
-            if not trained_users:
-                raise ValueError("Speaker Recognition app did not train any users")
-            trained_user_set = set(trained_users)
-            if not expected_users.issubset(trained_user_set):
-                missing_users = sorted(expected_users - trained_user_set)
-                raise ValueError(
-                    "Speaker Recognition app did not train requested users: "
-                    + ", ".join(missing_users)
-                )
-            result = TrainingResult(users_trained=trained_users)
+            result = self._parse_training_response(response, expected_users)
 
         except (ClientError, OSError, ValueError, TypeError) as error:
             _LOGGER.error(
@@ -224,11 +266,38 @@ class SpeakerRecognition:
             return False
         else:
             self._trained = True
+            self._enrolled_users = sorted(
+                set(self._enrolled_users).union(result.users_trained)
+            )
             _LOGGER.info(
                 "Speaker recognition training completed: %d users trained",
                 len(result.users_trained),
             )
             return True
+
+    async def async_train_pcm_samples(
+        self, user_id: str, samples: list[bytes], sample_rate: int = 16000
+    ) -> TrainingResult:
+        """Train one user from in-memory mono 16-bit PCM enrollment samples."""
+        if not samples:
+            raise ValueError("No enrollment samples provided")
+        payload = {
+            "voice_samples": [
+                {
+                    "user": user_id,
+                    "audio": {
+                        "audio_data": base64.b64encode(sample).decode("utf-8"),
+                        "sample_rate": sample_rate,
+                    },
+                }
+                for sample in samples
+            ]
+        }
+        response = await self._async_post("/train", payload)
+        result = self._parse_training_response(response, {user_id})
+        self._trained = True
+        self._enrolled_users = sorted(set(self._enrolled_users).union({user_id}))
+        return result
 
     async def async_recognize(
         self, audio_data: bytes, sample_rate: int = 16000
