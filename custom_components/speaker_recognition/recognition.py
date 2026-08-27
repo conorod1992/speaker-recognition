@@ -22,6 +22,10 @@ _LOGGER = logging.getLogger(__name__)
 DEFAULT_ADDON_URL = "http://localhost:8099"
 
 
+class RecognitionBackendUnavailable(RuntimeError):
+    """Raised when the Speaker Recognition backend cannot provide valid status."""
+
+
 @dataclass(frozen=True)
 class TrainingResult:
     """Training response returned by the Speaker Recognition app."""
@@ -109,13 +113,17 @@ class SpeakerRecognition:
                     "Invalid enrolled user list from Speaker Recognition app"
                 )
         except (ClientError, OSError, ValueError, TypeError) as error:
-            _LOGGER.error("Unable to read speaker recognition status: %s", error)
-        else:
-            self._trained = trained and bool(enrolled_users)
-            _LOGGER.info(
-                "Speaker recognition backend has %d persisted profiles",
-                len(enrolled_users),
-            )
+            self._trained = False
+            _LOGGER.warning("Unable to read speaker recognition status: %s", error)
+            raise RecognitionBackendUnavailable(
+                "Speaker Recognition backend is unavailable"
+            ) from error
+
+        self._trained = trained and bool(enrolled_users)
+        _LOGGER.info(
+            "Speaker recognition backend has %d persisted profiles",
+            len(enrolled_users),
+        )
         return self._trained
 
     async def async_train(self, user_ids: set[str] | None = None) -> bool:
@@ -133,6 +141,12 @@ class SpeakerRecognition:
         if not selected_samples:
             _LOGGER.warning("No changed voice samples available for training")
             return False
+
+        expected_users = {
+            user
+            for sample in selected_samples
+            if isinstance((user := sample.get("user")), str)
+        }
 
         try:
             voice_sample_models = []
@@ -189,6 +203,13 @@ class SpeakerRecognition:
                 )
             if not trained_users:
                 raise ValueError("Speaker Recognition app did not train any users")
+            trained_user_set = set(trained_users)
+            if not expected_users.issubset(trained_user_set):
+                missing_users = sorted(expected_users - trained_user_set)
+                raise ValueError(
+                    "Speaker Recognition app did not train requested users: "
+                    + ", ".join(missing_users)
+                )
             result = TrainingResult(users_trained=trained_users)
 
         except (ClientError, OSError, ValueError, TypeError) as error:

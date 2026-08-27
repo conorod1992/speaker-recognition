@@ -221,17 +221,12 @@ class SpeakerRecognitionConversationEntity(
                 age = self.hass.loop.time() - timestamp
 
                 if age < 5.0:  # 5 second window
-                    # Enrich if: no user_id OR different user_id from recognition
-                    should_enrich = (
-                        user_input.context.user_id is None
-                        or user_input.context.user_id != recognized_user_id
-                    )
-
-                    if should_enrich:
+                    # Speaker recognition supplements a missing identity; it must
+                    # not replace an identity Home Assistant already knows.
+                    if user_input.context.user_id is None:
                         _LOGGER.info(
                             "Enriching conversation with speaker recognition: "
-                            "original_user_id=%s, recognized_user_id=%s, confidence=%.3f",
-                            user_input.context.user_id,
+                            "recognized_user_id=%s, confidence=%.3f",
                             recognized_user_id,
                             confidence,
                         )
@@ -253,6 +248,13 @@ class SpeakerRecognitionConversationEntity(
                             language=user_input.language,
                             agent_id=user_input.agent_id,
                             extra_system_prompt=user_input.extra_system_prompt,
+                        )
+                    elif user_input.context.user_id != recognized_user_id:
+                        _LOGGER.debug(
+                            "Keeping existing Home Assistant user_id=%s instead of "
+                            "speaker recognition user_id=%s",
+                            user_input.context.user_id,
+                            recognized_user_id,
                         )
                 else:
                     _LOGGER.debug("Speaker recognition data too old: %.1f seconds", age)

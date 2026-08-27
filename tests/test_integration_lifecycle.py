@@ -56,8 +56,9 @@ async def test_restart_uses_persisted_status_without_retraining() -> None:
         [{"user": "alice", "samples": [{"media_content_id": "media-source://old"}]}]
     )
 
-    await lifecycle.async_initialize_recognition(recognition)
+    completed = await lifecycle.async_initialize_recognition(recognition)
 
+    assert completed
     assert recognition.status_refreshes == 1
     assert recognition.training_calls == []
     assert recognition.usable_profiles
@@ -71,9 +72,25 @@ async def test_new_guided_enrollment_trains_once_during_initial_setup() -> None:
         [{"user": "alice", "samples": [{"media_content_id": "new-alice"}]}]
     )
 
-    await lifecycle.async_initialize_recognition(recognition, "alice")
+    completed = await lifecycle.async_initialize_recognition(recognition, "alice")
 
+    assert completed
     assert recognition.status_refreshes == 1
+    assert recognition.training_calls == [{"alice"}]
+
+
+@pytest.mark.asyncio
+async def test_failed_pending_enrollment_remains_incomplete() -> None:
+    """Startup can retain the pending marker when the backend rejects enrollment."""
+    lifecycle = _load_integration_module("lifecycle.py")
+    recognition = _FakeRecognition(
+        [{"user": "alice", "samples": [{"media_content_id": "bad-alice"}]}],
+        training_succeeds=False,
+    )
+
+    completed = await lifecycle.async_initialize_recognition(recognition, "alice")
+
+    assert not completed
     assert recognition.training_calls == [{"alice"}]
 
 
@@ -96,27 +113,28 @@ async def test_changed_enrollment_trains_only_updated_user() -> None:
 
     assert changed == {"alice"}
     assert recognition.training_calls == [{"alice"}]
+    assert recognition.voice_samples == updated
 
 
 @pytest.mark.asyncio
-async def test_failed_retraining_preserves_existing_backend_usability() -> None:
-    """A failed changed enrollment does not invalidate previously loaded profiles."""
+async def test_failed_retraining_restores_previous_runtime_configuration() -> None:
+    """Failed replacement cannot leave runtime samples ahead of persisted profile."""
     lifecycle = _load_integration_module("lifecycle.py")
-    recognition = _FakeRecognition(
-        [{"user": "bob", "samples": [{"media_content_id": "old-bob"}]}],
-        training_succeeds=False,
-    )
+    original = [
+        {"user": "bob", "samples": [{"media_content_id": "old-bob"}]},
+    ]
+    recognition = _FakeRecognition(original, training_succeeds=False)
+    updated = [
+        {"user": "bob", "samples": [{"media_content_id": "new-bob"}]},
+    ]
 
-    await lifecycle.async_apply_enrollment_update(
-        recognition,
-        [
-            {"user": "bob", "samples": [{"media_content_id": "old-bob"}]},
-            {"user": "alice", "samples": [{"media_content_id": "bad-alice"}]},
-        ],
-    )
+    with pytest.raises(lifecycle.EnrollmentUpdateFailed) as raised:
+        await lifecycle.async_apply_enrollment_update(recognition, updated)
 
-    assert recognition.training_calls == [{"alice"}]
-    assert recognition.usable_profiles
+    assert raised.value.changed_users == {"bob"}
+    assert raised.value.previous_samples == original
+    assert recognition.training_calls == [{"bob"}]
+    assert recognition.voice_samples == original
 
 
 def test_effective_backend_url_prefers_current_options() -> None:

@@ -218,9 +218,13 @@ def test_retraining_one_user_preserves_unrelated_profiles(recognizer_factory) ->
         )
     )
 
-    recognizer._encoder = _SequenceEncoder([[1.0, 1.0]])
+    recognizer._encoder = _SequenceEncoder(
+        [[1.0, 1.0], [1.0, 1.0], [1.0, 1.0]]
+    )
     result = recognizer.train(
-        TrainingRequest(voice_samples=[VoiceSample(user="alice", audio=sample)])
+        TrainingRequest(
+            voice_samples=[VoiceSample(user="alice", audio=sample) for _ in range(3)]
+        )
     )
 
     assert result.trained_users == ["alice"]
@@ -238,6 +242,27 @@ def test_retraining_one_user_preserves_unrelated_profiles(recognizer_factory) ->
         )
     recognizer._encoder = _SequenceEncoder([[0.0, 1.0]])
     assert recognizer.recognize(RecognitionRequest(audio=sample)).user_id == "bob"
+
+
+def test_retraining_rejects_too_few_accepted_samples(recognizer_factory) -> None:
+    """A weak retraining attempt cannot replace an existing usable profile."""
+    recognizer = recognizer_factory()
+    sample = _audio_input([100, 200])
+    recognizer._encoder = _SequenceEncoder([[1.0, 0.0]])
+    recognizer.train(
+        TrainingRequest(voice_samples=[VoiceSample(user="alice", audio=sample)])
+    )
+    original = recognizer._reference_embeddings["alice"].copy()
+
+    recognizer._encoder = _SequenceEncoder([[0.0, 1.0], [0.0, 1.0]])
+    with pytest.raises(ValueError, match="No valid"):
+        recognizer.train(
+            TrainingRequest(
+                voice_samples=[VoiceSample(user="alice", audio=sample) for _ in range(2)]
+            )
+        )
+
+    np.testing.assert_allclose(recognizer._reference_embeddings["alice"], original)
 
 
 def test_invalid_sample_is_rejected_without_discarding_valid_sample(

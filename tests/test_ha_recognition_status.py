@@ -91,6 +91,24 @@ async def test_persisted_backend_status_enables_recognition(
 
 
 @pytest.mark.asyncio
+async def test_backend_status_failure_is_explicitly_retryable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Startup can distinguish an unavailable backend from an untrained backend."""
+    module = _load_recognition_module(monkeypatch)
+    recognition = module.SpeakerRecognition(_FakeHass(), [])
+
+    async def async_get(path: str):
+        del path
+        raise OSError("backend starting")
+
+    recognition._async_get = async_get
+
+    with pytest.raises(module.RecognitionBackendUnavailable):
+        await recognition.async_refresh_status()
+
+
+@pytest.mark.asyncio
 async def test_failed_training_keeps_loaded_profiles_available(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

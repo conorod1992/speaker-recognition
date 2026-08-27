@@ -21,6 +21,19 @@ class RecognitionLifecycle(Protocol):
         """Replace configured media references."""
 
 
+class EnrollmentUpdateFailed(RuntimeError):
+    """Raised when changed enrollment samples fail to replace a profile."""
+
+    def __init__(
+        self,
+        changed_users: set[str],
+        previous_samples: list[dict[str, Any]],
+    ) -> None:
+        super().__init__("Speaker enrollment update failed")
+        self.changed_users = changed_users
+        self.previous_samples = previous_samples
+
+
 def _samples_by_user(
     voice_samples: Iterable[dict[str, Any]],
 ) -> dict[str, dict[str, Any]]:
@@ -34,11 +47,15 @@ def _samples_by_user(
 
 async def async_initialize_recognition(
     recognition: RecognitionLifecycle, pending_user: str | None = None
-) -> None:
-    """Load backend status and process only a newly completed enrollment."""
+) -> bool:
+    """Load backend status and process only a newly completed enrollment.
+
+    Return whether there is no pending enrollment left to retry.
+    """
     await recognition.async_refresh_status()
-    if pending_user is not None:
-        await recognition.async_train({pending_user})
+    if pending_user is None:
+        return True
+    return await recognition.async_train({pending_user})
 
 
 async def async_apply_enrollment_update(
@@ -46,7 +63,8 @@ async def async_apply_enrollment_update(
     voice_samples: list[dict[str, Any]],
 ) -> set[str]:
     """Train only users whose configured samples actually changed."""
-    previous = _samples_by_user(recognition.voice_samples)
+    previous_samples = recognition.voice_samples
+    previous = _samples_by_user(previous_samples)
     current = _samples_by_user(voice_samples)
     changed_users = {
         user_id
@@ -54,6 +72,7 @@ async def async_apply_enrollment_update(
         if previous.get(user_id) != sample
     }
     recognition.update_voice_samples(voice_samples)
-    if changed_users:
-        await recognition.async_train(changed_users)
+    if changed_users and not await recognition.async_train(changed_users):
+        recognition.update_voice_samples(previous_samples)
+        raise EnrollmentUpdateFailed(changed_users, previous_samples)
     return changed_users
