@@ -28,6 +28,55 @@ jobs:
           # installation of this custom integration.
           ignore: issues topics
 
+  version-consistency:
+    name: Verify release versions
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Check version-bearing files
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          import re
+
+          pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
+          package = re.search(r'(?m)^version = "([^"]+)"$', pyproject)
+          if package is None:
+              raise SystemExit("Could not read pyproject version")
+          expected = package.group(1)
+
+          manifest = json.loads(Path("custom_components/speaker_recognition/manifest.json").read_text(encoding="utf-8"))
+          addon = Path("speaker_recognition_addon/config.yaml").read_text(encoding="utf-8")
+          addon_version = re.search(r'(?m)^version: "([^"]+)"$', addon)
+          dockerfile = Path("speaker_recognition_addon/Dockerfile").read_text(encoding="utf-8")
+          docker_default = re.search(r'(?m)^ARG BUILD_VERSION="([^"]+)"$', dockerfile)
+
+          api_versions = []
+          for path in (
+              Path("speaker_recognition/api.py"),
+              Path("speaker_recognition_addon/speaker_recognition/api.py"),
+          ):
+              match = re.search(r'(?m)^    version="([^"]+)",$', path.read_text(encoding="utf-8"))
+              if match is None:
+                  raise SystemExit(f"Could not read API version from {path}")
+              api_versions.append(match.group(1))
+
+          found = {
+              "manifest": manifest.get("version"),
+              "addon": addon_version.group(1) if addon_version else None,
+              "addon Docker default": docker_default.group(1) if docker_default else None,
+              "backend API": api_versions[0],
+              "add-on API": api_versions[1],
+          }
+          mismatches = {name: value for name, value in found.items() if value != expected}
+          if mismatches:
+              raise SystemExit(f"Expected version {expected}; mismatches: {mismatches}")
+          print(f"All release versions match {expected}")
+          PY
+
   cache:
     runs-on: ubuntu-latest
     steps:
@@ -178,7 +227,7 @@ jobs:
           platforms: ${{ matrix.platform }}
           build-args: |
             BUILD_ARCH=${{ matrix.arch }}
-            BUILD_VERSION=1.1.0
+            BUILD_VERSION=2.1.0
           load: ${{ matrix.arch == 'amd64' }}
           push: false
           tags: speaker-recognition-addon:test
