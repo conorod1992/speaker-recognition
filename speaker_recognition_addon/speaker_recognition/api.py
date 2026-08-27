@@ -1,6 +1,7 @@
 """FastAPI application for speaker recognition service."""
 
 import logging
+from threading import Lock
 
 from fastapi import FastAPI, HTTPException
 
@@ -15,22 +16,24 @@ from speaker_recognition.models import (
 from speaker_recognition.recognizer import recognizer
 
 _LOGGER = logging.getLogger(__name__)
+_RECOGNIZER_LOCK = Lock()
 
 app = FastAPI(
     title="Speaker Recognition Service",
     description="API for training and recognizing speakers using voice samples",
-    version="1.1.0",
+    version="1.2.0",
 )
 
 
 @app.get("/health", response_model=HealthResponse, tags=["Health"])
-async def health_check() -> HealthResponse:
+def health_check() -> HealthResponse:
     """Health check endpoint."""
-    return HealthResponse(
-        status="healthy",
-        trained=recognizer.is_trained,
-        enrolled_users=recognizer.enrolled_users,
-    )
+    with _RECOGNIZER_LOCK:
+        return HealthResponse(
+            status="healthy",
+            trained=recognizer.is_trained,
+            enrolled_users=recognizer.enrolled_users,
+        )
 
 
 @app.post(
@@ -39,10 +42,11 @@ async def health_check() -> HealthResponse:
     responses={400: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
     tags=["Training"],
 )
-async def train(request: TrainingRequest) -> TrainingResult:
+def train(request: TrainingRequest) -> TrainingResult:
     """Train the speaker recognition model."""
     try:
-        return recognizer.train(request)
+        with _RECOGNIZER_LOCK:
+            return recognizer.train(request)
 
     except ValueError as error:
         _LOGGER.error(f"Validation error during training: {error}")
@@ -58,10 +62,11 @@ async def train(request: TrainingRequest) -> TrainingResult:
     responses={400: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
     tags=["Recognition"],
 )
-async def recognize(request: RecognitionRequest) -> RecognitionResult:
+def recognize(request: RecognitionRequest) -> RecognitionResult:
     """Recognize speaker from audio data."""
     try:
-        return recognizer.recognize(request)
+        with _RECOGNIZER_LOCK:
+            return recognizer.recognize(request)
 
     except (ValueError, RuntimeError) as error:
         _LOGGER.error(f"Recognition error: {error}")
