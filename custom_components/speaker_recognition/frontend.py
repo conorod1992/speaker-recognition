@@ -11,7 +11,7 @@ from homeassistant.core import HomeAssistant
 from .const import DOMAIN
 
 PANEL_URL_PATH = "speaker-recognition"
-PANEL_ELEMENT = "speaker-recognition-panel"
+PANEL_ELEMENT = "speaker-recognition-calibration-panel"
 STATIC_URL = "/speaker-recognition-static"
 
 
@@ -25,7 +25,7 @@ async def async_register_frontend(hass: HomeAssistant) -> None:
         hass,
         webcomponent_name=PANEL_ELEMENT,
         frontend_url_path=PANEL_URL_PATH,
-        module_url=f"{STATIC_URL}/speaker-recognition-panel.js",
+        module_url=f"{STATIC_URL}/speaker-recognition-calibration-panel.js",
         sidebar_title="Speaker Recognition",
         sidebar_icon="mdi:account-voice",
         require_admin=True,
