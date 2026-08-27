@@ -257,6 +257,10 @@ class SpeakerRecognitionSTTEntity(SpeechToTextEntity):
                     perf_counter() - preparation_started,
                     utterance_sequence,
                 )
+                audio_cache = domain_data.setdefault("utterance_audio", {})
+                audio_cache[utterance_sequence] = (pcm_audio, sample_rate)
+                for old_sequence in sorted(audio_cache)[:-8]:
+                    audio_cache.pop(old_sequence, None)
                 return await self.recognition.async_recognize(
                     pcm_audio, sample_rate=sample_rate
                 )
@@ -276,6 +280,18 @@ class SpeakerRecognitionSTTEntity(SpeechToTextEntity):
                 "Speaker recognition produced no result for utterance %d",
                 utterance_sequence,
             )
+            correlated = CorrelatedRecognition(
+                user_id=None,
+                candidate_user_id="",
+                confidence=0.0,
+                similarity=0.0,
+                margin=None,
+                accepted=False,
+                all_scores={},
+                stt_entity_id=self.entity_id,
+                utterance_sequence=utterance_sequence,
+            )
+            set_correlated_recognition(correlated)
             return result
 
         correlated = CorrelatedRecognition(

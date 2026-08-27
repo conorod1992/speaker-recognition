@@ -6,6 +6,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.helpers.typing import ConfigType
 
 from .const import (
     CONF_ENTRY_TYPE,
@@ -15,12 +16,14 @@ from .const import (
     ENTRY_TYPE_STT,
     effective_backend_url,
 )
+from .frontend import async_register_frontend
 from .lifecycle import (
     EnrollmentUpdateFailed,
     async_apply_enrollment_update,
     async_initialize_recognition,
 )
 from .recognition import RecognitionBackendUnavailable, SpeakerRecognition
+from .websocket import async_register_websocket_commands
 
 SpeakerRecognitionConfigEntry = ConfigEntry[SpeakerRecognition]
 
@@ -32,6 +35,13 @@ def _get_main_entry(hass: HomeAssistant) -> ConfigEntry | None:
         if entry.data.get(CONF_ENTRY_TYPE) == ENTRY_TYPE_MAIN:
             return entry
     return None
+
+
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    """Set up shared frontend and WebSocket resources once per HA process."""
+    await async_register_frontend(hass)
+    async_register_websocket_commands(hass)
+    return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
