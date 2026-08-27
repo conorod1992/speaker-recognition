@@ -31,6 +31,9 @@ from .enrollment import (
     staged_samples,
     start_satellite_session,
 )
+from .telemetry import get_decision_history
+
+_FEEDBACK_VALUES = ("correct", "wrong_speaker", "missed_speaker")
 
 
 def _main_entry(hass: HomeAssistant) -> ConfigEntry | None:
@@ -126,6 +129,74 @@ async def websocket_status(
             "microphone_secure_context_required": True,
         },
     )
+
+
+@websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/decision_history"})
+@websocket_api.require_admin
+@callback
+def websocket_decision_history(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Return recent audio-free decisions for calibration."""
+    history = get_decision_history(hass)
+    if history is None:
+        connection.send_result(msg["id"], {"decisions": []})
+        return
+    decisions = history.recent(25)
+    connection.send_result(
+        msg["id"],
+        {
+            "decisions": decisions,
+            "feedback_count": sum(1 for item in decisions if item.get("feedback")),
+        },
+    )
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/decision_feedback",
+        vol.Required("decision_id"): str,
+        vol.Required("feedback"): vol.In(_FEEDBACK_VALUES),
+        vol.Optional("actual_user_id"): vol.Any(str, None),
+    }
+)
+@websocket_api.require_admin
+@websocket_api.async_response
+async def websocket_decision_feedback(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Attach explicit ground-truth feedback to a recent decision."""
+    history = get_decision_history(hass)
+    if history is None:
+        connection.send_error(msg["id"], "history_unavailable", "History is unavailable")
+        return
+
+    feedback = msg["feedback"]
+    actual_user_id = msg.get("actual_user_id")
+    if feedback in ("wrong_speaker", "missed_speaker"):
+        if not isinstance(actual_user_id, str) or not actual_user_id:
+            connection.send_error(
+                msg["id"], "actual_user_required", "Choose the actual speaker"
+            )
+            return
+        auth_users = await hass.auth.async_get_users()
+        valid_users = {user.id for user in auth_users if not user.system_generated}
+        if actual_user_id not in valid_users:
+            connection.send_error(
+                msg["id"], "unknown_user", "The selected Home Assistant user was not found"
+            )
+            return
+    else:
+        actual_user_id = None
+
+    if not history.add_feedback(msg["decision_id"], feedback, actual_user_id):
+        connection.send_error(msg["id"], "unknown_decision", "Decision was not found")
+        return
+    connection.send_result(msg["id"], {"saved": True})
 
 
 @websocket_api.websocket_command(
@@ -335,6 +406,8 @@ async def websocket_test_sample(
 def async_register_websocket_commands(hass: HomeAssistant) -> None:
     """Register all Speaker Recognition frontend commands once."""
     websocket_api.async_register_command(hass, websocket_status)
+    websocket_api.async_register_command(hass, websocket_decision_history)
+    websocket_api.async_register_command(hass, websocket_decision_feedback)
     websocket_api.async_register_command(hass, websocket_stage_sample)
     websocket_api.async_register_command(hass, websocket_start_satellite_sample)
     websocket_api.async_register_command(hass, websocket_start_live_test)
