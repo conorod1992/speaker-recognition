@@ -5,6 +5,7 @@ from __future__ import annotations
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryNotReady
 
 from .const import (
     CONF_ENTRY_TYPE,
@@ -15,10 +16,11 @@ from .const import (
     effective_backend_url,
 )
 from .lifecycle import (
+    EnrollmentUpdateFailed,
     async_apply_enrollment_update,
     async_initialize_recognition,
 )
-from .recognition import SpeakerRecognition
+from .recognition import RecognitionBackendUnavailable, SpeakerRecognition
 
 SpeakerRecognitionConfigEntry = ConfigEntry[SpeakerRecognition]
 
@@ -54,9 +56,16 @@ async def async_setup_main_entry(
 
     pending_user_value = entry.options.get(CONF_PENDING_ENROLLMENT)
     pending_user = pending_user_value if isinstance(pending_user_value, str) else None
-    await async_initialize_recognition(recognition, pending_user)
+    try:
+        pending_succeeded = await async_initialize_recognition(
+            recognition, pending_user
+        )
+    except RecognitionBackendUnavailable as error:
+        raise ConfigEntryNotReady(
+            "Speaker Recognition backend is not ready"
+        ) from error
 
-    if CONF_PENDING_ENROLLMENT in entry.options:
+    if CONF_PENDING_ENROLLMENT in entry.options and pending_succeeded:
         updated_options = dict(entry.options)
         updated_options.pop(CONF_PENDING_ENROLLMENT)
         hass.config_entries.async_update_entry(entry, options=updated_options)
@@ -111,7 +120,13 @@ async def async_update_main_listener(
 ) -> None:
     """Handle main config options update."""
     voice_samples = entry.options.get(CONF_VOICE_SAMPLES, [])
-    await async_apply_enrollment_update(entry.runtime_data, voice_samples)
+    try:
+        await async_apply_enrollment_update(entry.runtime_data, voice_samples)
+    except EnrollmentUpdateFailed as error:
+        updated_options = dict(entry.options)
+        updated_options[CONF_VOICE_SAMPLES] = error.previous_samples
+        hass.config_entries.async_update_entry(entry, options=updated_options)
+        return
     await hass.config_entries.async_reload(entry.entry_id)
 
 

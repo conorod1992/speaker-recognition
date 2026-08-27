@@ -22,6 +22,7 @@ from speaker_recognition.models import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+MIN_RETRAINING_SAMPLES = 3
 
 
 class SpeakerRecognizer:
@@ -250,6 +251,19 @@ class SpeakerRecognizer:
             if not embeddings:
                 continue
 
+            if (
+                user_id in self._reference_embeddings
+                and len(embeddings) < MIN_RETRAINING_SAMPLES
+            ):
+                _LOGGER.warning(
+                    "Refusing to replace existing profile for %s with only %d "
+                    "accepted samples; at least %d are required",
+                    user_id,
+                    len(embeddings),
+                    MIN_RETRAINING_SAMPLES,
+                )
+                continue
+
             sample_embeddings = np.stack(embeddings).astype(np.float32, copy=False)
             centroid = self._normalize_embedding(sample_embeddings.mean(axis=0))
             self._save_profile(user_id, centroid, sample_embeddings)
@@ -278,7 +292,7 @@ class SpeakerRecognizer:
             )
 
         self._is_trained = bool(self._reference_embeddings)
-        raise ValueError("No valid voice samples processed")
+        raise ValueError("No valid voice profiles updated")
 
     def recognize(self, request: RecognitionRequest) -> RecognitionResult:
         """Recognize speaker from audio data.
