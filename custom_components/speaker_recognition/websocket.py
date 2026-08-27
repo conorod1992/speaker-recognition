@@ -13,12 +13,17 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 
 from .audio import decode_wav
+from .calibration import analyze_thresholds
 from .const import (
+    CONF_CONVERSATION_ENTITY,
     CONF_ENTRY_TYPE,
+    CONF_MIN_CONFIDENCE,
     CONF_SAMPLES,
     CONF_USER,
     CONF_VOICE_SAMPLES,
+    DEFAULT_MIN_CONFIDENCE,
     DOMAIN,
+    ENTRY_TYPE_CONVERSATION,
     ENTRY_TYPE_MAIN,
 )
 from .diagnostics import live_test_status, start_live_test
@@ -41,6 +46,24 @@ def _main_entry(hass: HomeAssistant) -> ConfigEntry | None:
         if entry.data.get(CONF_ENTRY_TYPE) == ENTRY_TYPE_MAIN:
             return entry
     return None
+
+
+def _conversation_entries(hass: HomeAssistant) -> list[ConfigEntry]:
+    """Return configured Speaker Recognition Conversation proxy entries."""
+    return [
+        entry
+        for entry in hass.config_entries.async_entries(DOMAIN)
+        if entry.data.get(CONF_ENTRY_TYPE) == ENTRY_TYPE_CONVERSATION
+    ]
+
+
+def _conversation_threshold(entry: ConfigEntry) -> float:
+    """Return the effective HA confidence threshold for one proxy entry."""
+    value = entry.options.get(
+        CONF_MIN_CONFIDENCE,
+        entry.data.get(CONF_MIN_CONFIDENCE, DEFAULT_MIN_CONFIDENCE),
+    )
+    return float(value)
 
 
 def _replace_user_samples(
@@ -150,6 +173,91 @@ def websocket_decision_history(
         {
             "decisions": decisions,
             "feedback_count": sum(1 for item in decisions if item.get("feedback")),
+        },
+    )
+
+
+@websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/calibration_analysis"})
+@websocket_api.require_admin
+@callback
+def websocket_calibration_analysis(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Return evidence-based threshold guidance for each Conversation proxy."""
+    history = get_decision_history(hass)
+    records = history.labelled() if history is not None else []
+    entries = []
+    for entry in _conversation_entries(hass):
+        threshold = _conversation_threshold(entry)
+        entries.append(
+            {
+                "entry_id": entry.entry_id,
+                "title": entry.title,
+                "conversation_entity": entry.options.get(
+                    CONF_CONVERSATION_ENTITY,
+                    entry.data.get(CONF_CONVERSATION_ENTITY),
+                ),
+                "analysis": analyze_thresholds(records, threshold),
+            }
+        )
+    connection.send_result(msg["id"], {"conversation_entries": entries})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/apply_recommended_threshold",
+        vol.Required("entry_id"): str,
+    }
+)
+@websocket_api.require_admin
+@callback
+def websocket_apply_recommended_threshold(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Apply the current server-side recommendation to one Conversation proxy."""
+    entry = next(
+        (
+            candidate
+            for candidate in _conversation_entries(hass)
+            if candidate.entry_id == msg["entry_id"]
+        ),
+        None,
+    )
+    if entry is None:
+        connection.send_error(
+            msg["id"], "unknown_conversation_entry", "Conversation proxy was not found"
+        )
+        return
+
+    history = get_decision_history(hass)
+    if history is None:
+        connection.send_error(msg["id"], "history_unavailable", "History is unavailable")
+        return
+
+    current_threshold = _conversation_threshold(entry)
+    analysis = analyze_thresholds(history.labelled(), current_threshold)
+    recommendation = analysis.get("recommended_threshold")
+    if not analysis.get("ready") or not isinstance(recommendation, (int, float)):
+        connection.send_error(
+            msg["id"],
+            "insufficient_evidence",
+            "More labelled recognition decisions are required before applying a recommendation",
+        )
+        return
+
+    options = dict(entry.options)
+    options[CONF_MIN_CONFIDENCE] = float(recommendation)
+    hass.config_entries.async_update_entry(entry, options=options)
+    connection.send_result(
+        msg["id"],
+        {
+            "applied": True,
+            "previous_threshold": current_threshold,
+            "new_threshold": float(recommendation),
         },
     )
 
@@ -407,6 +515,8 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
     """Register all Speaker Recognition frontend commands once."""
     websocket_api.async_register_command(hass, websocket_status)
     websocket_api.async_register_command(hass, websocket_decision_history)
+    websocket_api.async_register_command(hass, websocket_calibration_analysis)
+    websocket_api.async_register_command(hass, websocket_apply_recommended_threshold)
     websocket_api.async_register_command(hass, websocket_decision_feedback)
     websocket_api.async_register_command(hass, websocket_stage_sample)
     websocket_api.async_register_command(hass, websocket_start_satellite_sample)

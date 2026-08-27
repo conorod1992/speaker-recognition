@@ -103,6 +103,10 @@ class DecisionHistory:
         """Return newest decisions first."""
         return [dict(item) for item in reversed(self._records[-limit:])]
 
+    def labelled(self) -> list[dict[str, Any]]:
+        """Return all explicitly labelled decisions in chronological order."""
+        return [dict(item) for item in self._records if item.get("feedback")]
+
     def add_feedback(
         self, decision_id: str, feedback: str, actual_user_id: str | None
     ) -> bool:
