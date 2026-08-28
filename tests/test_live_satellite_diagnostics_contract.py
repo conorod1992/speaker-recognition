@@ -11,6 +11,7 @@ def test_changed_home_assistant_modules_compile() -> None:
         "conversation.py",
         "correlation.py",
         "diagnostics.py",
+        "enrollment.py",
         "stt.py",
         "websocket.py",
         "whisper.py",
@@ -19,14 +20,17 @@ def test_changed_home_assistant_modules_compile() -> None:
         compile(source, str(ROOT / filename), "exec")
 
 
-def test_live_test_is_bound_to_selected_satellite_without_intercepting_assist() -> None:
-    """A live test observes one exact normal Assist turn from the chosen satellite."""
+def test_live_test_is_claimed_from_selected_satellite_during_stt() -> None:
+    """A live test no longer requires the Speaker Recognition Conversation proxy."""
     diagnostics_source = (ROOT / "diagnostics.py").read_text(encoding="utf-8")
-    conversation_source = (ROOT / "conversation.py").read_text(encoding="utf-8")
+    stt_source = (ROOT / "stt.py").read_text(encoding="utf-8")
     websocket_source = (ROOT / "websocket.py").read_text(encoding="utf-8")
 
-    assert "satellite_id != session.satellite_id" in diagnostics_source
-    assert "record_live_test_result" in conversation_source
+    assert "claim_live_test_turn" in stt_source
+    assert "record_live_test_result" in stt_source
+    assert 'state.state != "listening"' in diagnostics_source
+    assert "claimed_utterance_sequence" in diagnostics_source
+    assert "claimed_match" in diagnostics_source
     assert 'f"{DOMAIN}/start_live_test"' in websocket_source
     assert "start_conversation" not in websocket_source.split(
         "def websocket_start_live_test", 1
