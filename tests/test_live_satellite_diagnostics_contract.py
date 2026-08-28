@@ -62,6 +62,7 @@ def test_live_test_exposes_whispering_independently_of_speaker_identity() -> Non
     correlation_source = (ROOT / "correlation.py").read_text(encoding="utf-8")
     diagnostics_source = (ROOT / "diagnostics.py").read_text(encoding="utf-8")
     stt_source = (ROOT / "stt.py").read_text(encoding="utf-8")
+    whisper_source = (ROOT / "whisper.py").read_text(encoding="utf-8")
     panel = (ROOT / "www" / "speaker-recognition-calibration-panel.js").read_text(
         encoding="utf-8"
     )
@@ -77,6 +78,24 @@ def test_live_test_exposes_whispering_independently_of_speaker_identity() -> Non
     assert '"whispering": recognition.whispering' in diagnostics_source
     assert "Whispering Detected" in panel
     assert 'result.whispering ? "Yes" : "No"' in panel
+
+    for field in (
+        "spectral_flatness",
+        "spectral_centroid_hz",
+        "low_frequency_ratio",
+        "high_frequency_ratio",
+        "voicing_score",
+        "spectral_score",
+    ):
+        assert field in whisper_source
+
+    assert "cached_detection" in diagnostics_source
+    assert '"whisper_diagnostics"' in diagnostics_source
+    assert "Whisper diagnostics" in panel
+    assert "Voicing evidence" in panel
+    assert "Spectral evidence" in panel
+    assert "Spectral flatness" in panel
+    assert "Spectral centroid" in panel
 
 
 def test_frontend_explains_live_test_and_cold_first_recognition() -> None:

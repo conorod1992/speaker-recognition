@@ -11,6 +11,7 @@ from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN
 from .correlation import CorrelatedRecognition
+from .whisper import cached_detection
 
 _LIVE_TEST_TIMEOUT = 90.0
 
@@ -43,7 +44,9 @@ def start_live_test(hass: HomeAssistant, satellite_id: str) -> str:
     return session_id
 
 
-def live_test_status(hass: HomeAssistant) -> tuple[LiveTestSession | None, dict[str, Any] | None]:
+def live_test_status(
+    hass: HomeAssistant,
+) -> tuple[LiveTestSession | None, dict[str, Any] | None]:
     """Return the active live-test session and latest result, pruning expiry."""
     data = _domain_data(hass)
     session = data.get("live_test_session")
@@ -77,6 +80,27 @@ def claim_live_test_turn(hass: HomeAssistant, utterance_sequence: int) -> bool:
         session, claimed_utterance_sequence=utterance_sequence
     )
     return True
+
+
+def _whisper_diagnostics(
+    data: dict[str, Any], recognition: CorrelatedRecognition
+) -> dict[str, float]:
+    """Return component features from the exact whisper analysis, without raw audio."""
+    audio_cache = data.get("utterance_audio")
+    if not isinstance(audio_cache, dict):
+        return {}
+
+    cached_audio = audio_cache.get(recognition.utterance_sequence)
+    if (
+        not isinstance(cached_audio, tuple)
+        or len(cached_audio) != 2
+        or not isinstance(cached_audio[0], bytes)
+        or not isinstance(cached_audio[1], int)
+    ):
+        return {}
+
+    detection = cached_detection(cached_audio[0], cached_audio[1])
+    return detection.diagnostics() if detection is not None else {}
 
 
 def record_live_test_result(
@@ -119,6 +143,7 @@ def record_live_test_result(
         "whispering": recognition.whispering,
         "whisper_score": recognition.whisper_score,
         "whisper_available": recognition.whisper_available,
+        "whisper_diagnostics": _whisper_diagnostics(data, recognition),
         "stt_seconds": recognition.stt_seconds,
         "recognition_seconds": recognition.recognition_seconds,
         "preparation_seconds": recognition.preparation_seconds,
