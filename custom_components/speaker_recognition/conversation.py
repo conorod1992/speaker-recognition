@@ -38,7 +38,6 @@ from .diagnostics import record_live_test_result
 from .enrollment import async_capture_satellite_sample
 from .recognition import SpeakerRecognition
 from .telemetry import get_decision_history
-from .whisper import WhisperDetection, detect_whisper
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -213,7 +212,6 @@ class SpeakerRecognitionConversationEntity(
                 and speaker_data.user_id
             )
 
-            whisper = WhisperDetection(False, 0.0, False)
             audio_cache = self.hass.data.setdefault(DOMAIN, {}).setdefault(
                 "utterance_audio", {}
             )
@@ -233,27 +231,12 @@ class SpeakerRecognitionConversationEntity(
                         conversation_id=user_input.conversation_id,
                     )
 
-                try:
-                    whisper = await self.hass.async_add_executor_job(
-                        detect_whisper,
-                        pcm_audio,
-                        sample_rate,
-                    )
-                except Exception:  # Speech-style analysis must never block Assist.
-                    _LOGGER.exception(
-                        "Whisper detection failed for utterance %d",
-                        speaker_data.utterance_sequence,
-                    )
-
             record_live_test_result(
                 self.hass,
                 user_input.satellite_id,
                 speaker_data,
                 threshold=min_confidence,
                 identity_eligible=identity_eligible,
-                whispering=whisper.whispering,
-                whisper_score=whisper.score,
-                whisper_available=whisper.available,
             )
 
             history = get_decision_history(self.hass)
