@@ -62,7 +62,7 @@ def _frame_periodicity(frame: list[float], sample_rate: float) -> float:
         right_energy = sum(value * value for value in right)
         if left_energy <= 0.0 or right_energy <= 0.0:
             continue
-        correlation = sum(a * b for a, b in zip(left, right, strict=False))
+        correlation = sum(a * b for a, b in zip(left, right))
         correlation /= math.sqrt(left_energy * right_energy)
         best = max(best, correlation)
     return _clamp(best)
