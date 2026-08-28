@@ -63,9 +63,6 @@ def record_live_test_result(
     *,
     threshold: float,
     identity_eligible: bool,
-    whispering: bool = False,
-    whisper_score: float = 0.0,
-    whisper_available: bool = False,
 ) -> bool:
     """Store one exact correlated decision when it matches the armed satellite."""
     data = _domain_data(hass)
@@ -90,9 +87,9 @@ def record_live_test_result(
         "all_scores": recognition.all_scores,
         "threshold": threshold,
         "identity_eligible": identity_eligible,
-        "whispering": whispering,
-        "whisper_score": whisper_score,
-        "whisper_available": whisper_available,
+        "whispering": recognition.whispering,
+        "whisper_score": recognition.whisper_score,
+        "whisper_available": recognition.whisper_available,
         "stt_seconds": recognition.stt_seconds,
         "recognition_seconds": recognition.recognition_seconds,
         "preparation_seconds": recognition.preparation_seconds,
