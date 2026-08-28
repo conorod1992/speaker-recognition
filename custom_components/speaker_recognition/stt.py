@@ -27,11 +27,24 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_state_change_event
 
 from .audio import prepare_live_pcm
-from .const import CONF_ENTRY_TYPE, CONF_STT_ENTITY, DOMAIN, ENTRY_TYPE_MAIN
+from .const import (
+    CONF_ENTRY_TYPE,
+    CONF_MIN_CONFIDENCE,
+    CONF_STT_ENTITY,
+    DEFAULT_MIN_CONFIDENCE,
+    DOMAIN,
+    ENTRY_TYPE_CONVERSATION,
+    ENTRY_TYPE_MAIN,
+)
 from .correlation import (
     CorrelatedRecognition,
     clear_correlated_recognition,
     set_correlated_recognition,
+)
+from .diagnostics import claim_live_test_turn, record_live_test_result
+from .enrollment import (
+    async_capture_claimed_satellite_sample,
+    claim_satellite_enrollment_turn,
 )
 from .recognition import SpeakerRecognition
 from .stream import async_process_buffered_stream
@@ -47,6 +60,24 @@ def _get_main_entry(hass: HomeAssistant) -> ConfigEntry | None:
         if entry.data.get(CONF_ENTRY_TYPE) == ENTRY_TYPE_MAIN:
             return entry
     return None
+
+
+def _diagnostic_threshold(hass: HomeAssistant) -> float:
+    """Return the single configured Conversation threshold when unambiguous."""
+    entries = [
+        entry
+        for entry in hass.config_entries.async_entries(DOMAIN)
+        if entry.data.get(CONF_ENTRY_TYPE) == ENTRY_TYPE_CONVERSATION
+    ]
+    if len(entries) != 1:
+        return DEFAULT_MIN_CONFIDENCE
+    entry = entries[0]
+    return float(
+        entry.options.get(
+            CONF_MIN_CONFIDENCE,
+            entry.data.get(CONF_MIN_CONFIDENCE, DEFAULT_MIN_CONFIDENCE),
+        )
+    )
 
 
 async def async_setup_entry(
@@ -217,6 +248,13 @@ class SpeakerRecognitionSTTEntity(SpeechToTextEntity):
         utterance_sequence = int(domain_data.get("utterance_sequence", 0)) + 1
         domain_data["utterance_sequence"] = utterance_sequence
 
+        enrollment_turn_claimed = claim_satellite_enrollment_turn(
+            self.hass, utterance_sequence
+        )
+        live_test_claimed = False
+        if not enrollment_turn_claimed:
+            live_test_claimed = claim_live_test_turn(self.hass, utterance_sequence)
+
         stt_seconds = 0.0
         recognition_seconds = 0.0
         preparation_seconds = 0.0
@@ -277,6 +315,24 @@ class SpeakerRecognitionSTTEntity(SpeechToTextEntity):
                 audio_cache[utterance_sequence] = (pcm_audio, sample_rate)
                 for old_sequence in sorted(audio_cache)[:-8]:
                     audio_cache.pop(old_sequence, None)
+
+                if enrollment_turn_claimed:
+                    try:
+                        if await async_capture_claimed_satellite_sample(
+                            self.hass,
+                            utterance_sequence,
+                            pcm_audio,
+                            sample_rate,
+                        ):
+                            _LOGGER.info(
+                                "Captured satellite enrollment audio for utterance %d",
+                                utterance_sequence,
+                            )
+                    except Exception:
+                        _LOGGER.exception(
+                            "Failed to capture satellite enrollment audio for utterance %d",
+                            utterance_sequence,
+                        )
 
                 async def analyze_whisper() -> WhisperDetection:
                     try:
@@ -389,6 +445,20 @@ class SpeakerRecognitionSTTEntity(SpeechToTextEntity):
                     user: f"{score:.3f}"
                     for user, score in recognition_result.all_scores.items()
                 },
+            )
+
+        if live_test_claimed:
+            threshold = _diagnostic_threshold(self.hass)
+            record_live_test_result(
+                self.hass,
+                None,
+                correlated,
+                threshold=threshold,
+                identity_eligible=bool(
+                    correlated.accepted
+                    and correlated.confidence >= threshold
+                    and correlated.user_id
+                ),
             )
 
         set_correlated_recognition(correlated)

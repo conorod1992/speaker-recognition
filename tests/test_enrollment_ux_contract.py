@@ -28,23 +28,30 @@ def test_browser_panel_keeps_upload_fallback_and_secure_context_message() -> Non
     assert "Test profile" in panel
 
 
-def test_satellite_enrollment_is_bound_to_exact_satellite_turn() -> None:
-    """Satellite capture uses turn correlation and a precise capture session."""
+def test_satellite_enrollment_is_claimed_during_selected_satellite_stt() -> None:
+    """Enrollment completion no longer depends on the Conversation proxy."""
     stt_source = (ROOT / "stt.py").read_text(encoding="utf-8")
-    conversation_source = (ROOT / "conversation.py").read_text(encoding="utf-8")
     enrollment_source = (ROOT / "enrollment.py").read_text(encoding="utf-8")
     websocket_source = (ROOT / "websocket.py").read_text(encoding="utf-8")
     panel = (ROOT / "www" / "speaker-recognition-panel.js").read_text(encoding="utf-8")
 
-    assert 'domain_data.setdefault("utterance_audio", {})' in stt_source
-    assert "speaker_data.utterance_sequence" in conversation_source
-    assert "async_capture_satellite_sample" in conversation_source
-    assert "sessions.get(satellite_id)" in enrollment_source
-    assert "session.session_id" in enrollment_source
+    assert "claim_satellite_enrollment_turn" in stt_source
+    assert "async_capture_claimed_satellite_sample" in stt_source
+    assert 'state.state == "listening"' in enrollment_source
+    assert "claimed_utterance_sequence" in enrollment_source
+    assert "_completed_satellite_captures(hass)[session.session_id]" in enrollment_source
     assert "AssistSatelliteEntityFeature.START_CONVERSATION" in websocket_source
     assert '"session_id": session_id' in websocket_source
     assert "completed_satellite_captures" in panel
     assert "completed.includes(sessionId)" in panel
+
+
+def test_enrollment_has_priority_over_a_live_test_for_the_same_stt_turn() -> None:
+    """A prompted enrollment utterance cannot accidentally satisfy a live test."""
+    stt_source = (ROOT / "stt.py").read_text(encoding="utf-8")
+
+    assert "if not enrollment_turn_claimed:" in stt_source
+    assert "live_test_claimed = claim_live_test_turn" in stt_source
 
 
 def test_interactive_enrollment_reuses_transactional_profile_update() -> None:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import time
 from typing import Any
 from uuid import uuid4
@@ -22,6 +22,7 @@ class LiveTestSession:
     session_id: str
     satellite_id: str
     expires_at: float
+    claimed_utterance_sequence: int | None = None
 
 
 def _domain_data(hass: HomeAssistant) -> dict[str, Any]:
@@ -56,6 +57,28 @@ def live_test_status(hass: HomeAssistant) -> tuple[LiveTestSession | None, dict[
     return session, result if isinstance(result, dict) else None
 
 
+def claim_live_test_turn(hass: HomeAssistant, utterance_sequence: int) -> bool:
+    """Claim the armed live test when its selected satellite enters STT."""
+    data = _domain_data(hass)
+    session = data.get("live_test_session")
+    if not isinstance(session, LiveTestSession):
+        return False
+    if time.monotonic() > session.expires_at:
+        data.pop("live_test_session", None)
+        return False
+    if session.claimed_utterance_sequence is not None:
+        return False
+
+    state = hass.states.get(session.satellite_id)
+    if state is None or state.state != "listening":
+        return False
+
+    data["live_test_session"] = replace(
+        session, claimed_utterance_sequence=utterance_sequence
+    )
+    return True
+
+
 def record_live_test_result(
     hass: HomeAssistant,
     satellite_id: str | None,
@@ -64,7 +87,7 @@ def record_live_test_result(
     threshold: float,
     identity_eligible: bool,
 ) -> bool:
-    """Store one exact correlated decision when it matches the armed satellite."""
+    """Store one correlated decision when it matches the armed live test."""
     data = _domain_data(hass)
     session = data.get("live_test_session")
     if not isinstance(session, LiveTestSession):
@@ -72,7 +95,13 @@ def record_live_test_result(
     if time.monotonic() > session.expires_at:
         data.pop("live_test_session", None)
         return False
-    if satellite_id != session.satellite_id:
+
+    claimed_match = (
+        session.claimed_utterance_sequence is not None
+        and session.claimed_utterance_sequence == recognition.utterance_sequence
+    )
+    satellite_match = satellite_id == session.satellite_id
+    if not claimed_match and not satellite_match:
         return False
 
     data["live_test_result"] = {

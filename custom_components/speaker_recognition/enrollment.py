@@ -37,6 +37,7 @@ class SatelliteEnrollmentSession:
     satellite_id: str
     sample_index: int
     expires_at: float
+    claimed_utterance_sequence: int | None = None
 
 
 def _domain_data(hass: HomeAssistant) -> dict:
@@ -146,6 +147,71 @@ def start_satellite_session(
 def cancel_satellite_session(hass: HomeAssistant, satellite_id: str) -> None:
     """Cancel the pending enrollment session for one satellite."""
     _satellite_sessions(hass).pop(satellite_id, None)
+
+
+def claim_satellite_enrollment_turn(
+    hass: HomeAssistant, utterance_sequence: int
+) -> bool:
+    """Claim an armed enrollment for the satellite currently entering STT.
+
+    Home Assistant sets the originating Assist Satellite entity to ``listening``
+    before invoking the STT entity. Claiming at that point keeps the capture bound
+    to the selected satellite without depending on a Conversation proxy later in
+    the pipeline.
+    """
+    sessions = _satellite_sessions(hass)
+    now = time.monotonic()
+    candidates: list[SatelliteEnrollmentSession] = []
+
+    for satellite_id, session in list(sessions.items()):
+        if now > session.expires_at:
+            sessions.pop(satellite_id, None)
+            continue
+        if session.claimed_utterance_sequence is not None:
+            continue
+        state = hass.states.get(satellite_id)
+        if state is not None and state.state == "listening":
+            candidates.append(session)
+
+    if len(candidates) != 1:
+        return False
+
+    candidates[0].claimed_utterance_sequence = utterance_sequence
+    return True
+
+
+async def async_capture_claimed_satellite_sample(
+    hass: HomeAssistant,
+    utterance_sequence: int,
+    pcm_data: bytes,
+    sample_rate: int,
+) -> bool:
+    """Persist audio for the enrollment session claimed by this STT utterance."""
+    sessions = _satellite_sessions(hass)
+    session = next(
+        (
+            candidate
+            for candidate in sessions.values()
+            if candidate.claimed_utterance_sequence == utterance_sequence
+        ),
+        None,
+    )
+    if session is None:
+        return False
+    if time.monotonic() > session.expires_at:
+        sessions.pop(session.satellite_id, None)
+        return False
+
+    await async_stage_pcm_sample(
+        hass,
+        session.user_id,
+        session.sample_index,
+        pcm_data,
+        sample_rate,
+    )
+    sessions.pop(session.satellite_id, None)
+    _completed_satellite_captures(hass)[session.session_id] = time.monotonic()
+    return True
 
 
 async def async_capture_satellite_sample(
