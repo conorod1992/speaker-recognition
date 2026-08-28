@@ -54,7 +54,34 @@ class SpeakerRecognitionCalibrationPanel extends BasePanel {
       ? ""
       : `<br><small>score ${Number(result.whisper_score || 0).toFixed(2)}</small>`;
     const metric = `<span><b>Whispering Detected</b><br>${whisperLabel}${whisperScore}</span>`;
-    return rendered.replace('<div class="metrics">', `<div class="metrics">${metric}`);
+    let enriched = rendered.replace('<div class="metrics">', `<div class="metrics">${metric}`);
+
+    const diagnostics = result.whisper_diagnostics || {};
+    if (result.whisper_available !== false && Object.keys(diagnostics).length) {
+      const percentage = value => `${Math.round(Number(value || 0) * 100)}%`;
+      const fixed = value => Number(value || 0).toFixed(2);
+      const diagnosticsPanel = `<details>
+        <summary>Whisper diagnostics</summary>
+        <p class="muted">These component measurements are shown for tuning. The overall whisper score is diagnostic, not a calibrated probability.</p>
+        <div class="metrics">
+          <span><b>Voicing evidence</b><br>${fixed(diagnostics.voicing_score)}</span>
+          <span><b>Spectral evidence</b><br>${fixed(diagnostics.spectral_score)}</span>
+          <span><b>Periodicity</b><br>${fixed(diagnostics.periodicity)}</span>
+          <span><b>Voiced frames</b><br>${percentage(diagnostics.voiced_fraction)}</span>
+          <span><b>Spectral flatness</b><br>${fixed(diagnostics.spectral_flatness)}</span>
+          <span><b>Spectral centroid</b><br>${Math.round(Number(diagnostics.spectral_centroid_hz || 0))} Hz</span>
+          <span><b>Low-band energy</b><br>${percentage(diagnostics.low_frequency_ratio)}</span>
+          <span><b>High-band energy</b><br>${percentage(diagnostics.high_frequency_ratio)}</span>
+          <span><b>Zero crossing rate</b><br>${fixed(diagnostics.zero_crossing_rate)}</span>
+          <span><b>Difference ratio</b><br>${fixed(diagnostics.difference_ratio)}</span>
+        </div>
+      </details>`;
+      const closingIndex = enriched.lastIndexOf("</div>");
+      if (closingIndex >= 0) {
+        enriched = `${enriched.slice(0, closingIndex)}${diagnosticsPanel}${enriched.slice(closingIndex)}`;
+      }
+    }
+    return enriched;
   }
 
   _renderCalibrationCard() {
