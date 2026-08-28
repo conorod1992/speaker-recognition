@@ -20,7 +20,8 @@ _MIN_SIGNAL_RMS = 64.0
 _MIN_PITCH_HZ = 70.0
 _MAX_PITCH_HZ = 350.0
 _VOICED_PERIODICITY = 0.42
-_WHISPER_THRESHOLD = 0.58
+_STRONG_VOICED_PERIODICITY = 0.62
+_WHISPER_THRESHOLD = 0.60
 _SPECTRAL_BIN_HZ = 125
 _DETECTION_CACHE_LIMIT = 16
 
@@ -34,6 +35,9 @@ class WhisperDetection:
     available: bool
     periodicity: float = 0.0
     voiced_fraction: float = 0.0
+    peak_periodicity: float = 0.0
+    strong_voiced_fraction: float = 0.0
+    normal_voicing_rescue: float = 0.0
     spectral_flatness: float = 0.0
     spectral_centroid_hz: float = 0.0
     low_frequency_ratio: float = 0.0
@@ -48,6 +52,9 @@ class WhisperDetection:
         return {
             "periodicity": self.periodicity,
             "voiced_fraction": self.voiced_fraction,
+            "peak_periodicity": self.peak_periodicity,
+            "strong_voiced_fraction": self.strong_voiced_fraction,
+            "normal_voicing_rescue": self.normal_voicing_rescue,
             "spectral_flatness": self.spectral_flatness,
             "spectral_centroid_hz": self.spectral_centroid_hz,
             "low_frequency_ratio": self.low_frequency_ratio,
@@ -231,6 +238,15 @@ def _evenly_spaced_frames(
     return [frames[index] for index in indexes]
 
 
+def _upper_percentile(values: list[float], fraction: float) -> float:
+    """Return a deterministic upper percentile without adding a numeric dependency."""
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    index = round(_clamp(fraction) * (len(ordered) - 1))
+    return float(ordered[index])
+
+
 def detect_whisper(pcm_data: bytes, sample_rate: int) -> WhisperDetection:
     """Classify an utterance as whispered or normally voiced speech.
 
@@ -241,8 +257,11 @@ def detect_whisper(pcm_data: bytes, sample_rate: int) -> WhisperDetection:
     * spectral evidence from flatness, spectral centroid, high-frequency energy,
       and depletion of the low-frequency harmonic region.
 
-    Requiring agreement between the two families is intentionally more
-    conservative than treating any noise-like or unvoiced frame as a whisper.
+    The detector also looks for a minority of strongly periodic frames. Soft or
+    distant normal speech can have whisper-like median statistics after room and
+    microphone processing while still retaining unmistakably voiced vowel frames.
+    Those frames provide a conservative normal-speech rescue rather than making
+    quietness itself evidence for or against whispering.
     """
     if sample_rate < _TARGET_SAMPLE_RATE:
         return WhisperDetection(False, 0.0, False)
@@ -318,6 +337,10 @@ def detect_whisper(pcm_data: bytes, sample_rate: int) -> WhisperDetection:
     voiced_fraction = sum(
         value >= _VOICED_PERIODICITY for value in periodicities
     ) / len(periodicities)
+    peak_periodicity = _upper_percentile(periodicities, 0.85)
+    strong_voiced_fraction = sum(
+        value >= _STRONG_VOICED_PERIODICITY for value in periodicities
+    ) / len(periodicities)
     zero_crossing_rate = float(statistics.median(zero_crossing_rates))
     difference_ratio = float(statistics.median(difference_ratios))
     spectral_flatness = float(statistics.median(spectral_flatnesses))
@@ -348,10 +371,17 @@ def detect_whisper(pcm_data: bytes, sample_rate: int) -> WhisperDetection:
         + 0.20 * low_frequency_depletion
     )
 
+    peak_rescue = _clamp((peak_periodicity - 0.58) / 0.25)
+    strong_fraction_rescue = _clamp((strong_voiced_fraction - 0.04) / 0.29)
+    normal_voicing_rescue = _clamp(
+        0.60 * peak_rescue + 0.40 * strong_fraction_rescue
+    )
+
     agreement = min(voicing_score, spectral_score)
-    score = _clamp(
+    raw_score = _clamp(
         0.42 * voicing_score + 0.42 * spectral_score + 0.16 * agreement
     )
+    score = _clamp(raw_score - 0.22 * normal_voicing_rescue)
 
     detection = WhisperDetection(
         whispering=score >= _WHISPER_THRESHOLD,
@@ -359,6 +389,9 @@ def detect_whisper(pcm_data: bytes, sample_rate: int) -> WhisperDetection:
         available=True,
         periodicity=periodicity,
         voiced_fraction=voiced_fraction,
+        peak_periodicity=peak_periodicity,
+        strong_voiced_fraction=strong_voiced_fraction,
+        normal_voicing_rescue=normal_voicing_rescue,
         spectral_flatness=spectral_flatness,
         spectral_centroid_hz=spectral_centroid_hz,
         low_frequency_ratio=low_frequency_ratio,
