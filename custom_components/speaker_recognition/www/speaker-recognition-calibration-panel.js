@@ -43,6 +43,20 @@ class SpeakerRecognitionCalibrationPanel extends BasePanel {
     return `${metrics.false_accepts} wrong-person · ${metrics.missed_speakers} missed`;
   }
 
+  _renderLiveResult(result) {
+    const rendered = super._renderLiveResult(result);
+    if (!result || !rendered) return rendered;
+
+    const whisperLabel = result.whisper_available === false
+      ? "Unavailable"
+      : (result.whispering ? "Yes" : "No");
+    const whisperScore = result.whisper_available === false
+      ? ""
+      : `<br><small>score ${Number(result.whisper_score || 0).toFixed(2)}</small>`;
+    const metric = `<span><b>Whispering Detected</b><br>${whisperLabel}${whisperScore}</span>`;
+    return rendered.replace('<div class="metrics">', `<div class="metrics">${metric}`);
+  }
+
   _renderCalibrationCard() {
     const entries = this._calibration && this._calibration.conversation_entries
       ? this._calibration.conversation_entries

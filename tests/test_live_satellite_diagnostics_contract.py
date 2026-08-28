@@ -13,6 +13,7 @@ def test_changed_home_assistant_modules_compile() -> None:
         "diagnostics.py",
         "stt.py",
         "websocket.py",
+        "whisper.py",
     ):
         source = (ROOT / filename).read_text(encoding="utf-8")
         compile(source, str(ROOT / filename), "exec")
@@ -50,6 +51,28 @@ def test_turn_correlation_exposes_real_latency_breakdown() -> None:
 
     assert "recognition_completed_at - stt_completed_at" in stt_source
     assert "max(0.0" in stt_source
+
+
+def test_live_test_exposes_whispering_independently_of_speaker_identity() -> None:
+    """A rejected/unknown speaker can still produce a generic whisper result."""
+    correlation_source = (ROOT / "correlation.py").read_text(encoding="utf-8")
+    diagnostics_source = (ROOT / "diagnostics.py").read_text(encoding="utf-8")
+    stt_source = (ROOT / "stt.py").read_text(encoding="utf-8")
+    panel = (ROOT / "www" / "speaker-recognition-calibration-panel.js").read_text(
+        encoding="utf-8"
+    )
+
+    for field in ("whispering", "whisper_score", "whisper_available"):
+        assert field in correlation_source
+        assert field in diagnostics_source
+        assert field in stt_source
+
+    assert "detect_whisper" in stt_source
+    assert "asyncio.gather" in stt_source
+    assert '"whispering": correlated.whispering' in stt_source
+    assert '"whispering": recognition.whispering' in diagnostics_source
+    assert "Whispering Detected" in panel
+    assert 'result.whispering ? "Yes" : "No"' in panel
 
 
 def test_frontend_explains_live_test_and_cold_first_recognition() -> None:

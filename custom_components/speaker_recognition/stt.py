@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterable
 import logging
 from time import perf_counter
@@ -34,6 +35,7 @@ from .correlation import (
 )
 from .recognition import SpeakerRecognition
 from .stream import async_process_buffered_stream
+from .whisper import WhisperDetection, detect_whisper
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -249,7 +251,7 @@ class SpeakerRecognitionSTTEntity(SpeechToTextEntity):
                     or metadata.bit_rate != AudioBitRates.BITRATE_16
                 ):
                     _LOGGER.warning(
-                        "Skipping speaker recognition for unsupported STT audio: "
+                        "Skipping speaker and whisper analysis for unsupported STT audio: "
                         "format=%s codec=%s bit_rate=%s",
                         metadata.format,
                         metadata.codec,
@@ -275,25 +277,50 @@ class SpeakerRecognitionSTTEntity(SpeechToTextEntity):
                 audio_cache[utterance_sequence] = (pcm_audio, sample_rate)
                 for old_sequence in sorted(audio_cache)[:-8]:
                     audio_cache.pop(old_sequence, None)
-                return await self.recognition.async_recognize(
-                    pcm_audio, sample_rate=sample_rate
+
+                async def analyze_whisper() -> WhisperDetection:
+                    try:
+                        return await self.hass.async_add_executor_job(
+                            detect_whisper,
+                            pcm_audio,
+                            sample_rate,
+                        )
+                    except Exception:  # Supplemental analysis must never block Assist.
+                        _LOGGER.exception(
+                            "Whisper detection failed for utterance %d",
+                            utterance_sequence,
+                        )
+                        return WhisperDetection(False, 0.0, False)
+
+                recognition_result, whisper_result = await asyncio.gather(
+                    self.recognition.async_recognize(
+                        pcm_audio,
+                        sample_rate=sample_rate,
+                    ),
+                    analyze_whisper(),
                 )
+                return recognition_result, whisper_result
             finally:
                 recognition_completed_at = perf_counter()
                 recognition_seconds = recognition_completed_at - recognition_started
                 _LOGGER.debug(
-                    "Total speaker recognition took %.3fs for utterance %d",
+                    "Total speaker and whisper analysis took %.3fs for utterance %d",
                     recognition_seconds,
                     utterance_sequence,
                 )
 
-        result, recognition_result = await async_process_buffered_stream(
+        result, analysis_result = await async_process_buffered_stream(
             stream, process_stt, recognize_speaker
         )
 
         added_latency_seconds = 0.0
         if stt_completed_at is not None and recognition_completed_at is not None:
             added_latency_seconds = max(0.0, recognition_completed_at - stt_completed_at)
+
+        recognition_result = None
+        whisper_result = WhisperDetection(False, 0.0, False)
+        if analysis_result is not None:
+            recognition_result, whisper_result = analysis_result
 
         if recognition_result is None:
             _LOGGER.debug(
@@ -310,63 +337,74 @@ class SpeakerRecognitionSTTEntity(SpeechToTextEntity):
                 all_scores={},
                 stt_entity_id=self.entity_id,
                 utterance_sequence=utterance_sequence,
+                whispering=whisper_result.whispering,
+                whisper_score=whisper_result.score,
+                whisper_available=whisper_result.available,
                 stt_seconds=stt_seconds,
                 recognition_seconds=recognition_seconds,
                 preparation_seconds=preparation_seconds,
                 added_latency_seconds=added_latency_seconds,
                 audio_seconds=audio_seconds,
             )
-            set_correlated_recognition(correlated)
-            return result
+        else:
+            correlated = CorrelatedRecognition(
+                user_id=recognition_result.user_id,
+                candidate_user_id=recognition_result.candidate_user_id,
+                confidence=recognition_result.confidence,
+                similarity=recognition_result.similarity,
+                margin=recognition_result.margin,
+                accepted=recognition_result.accepted,
+                all_scores=recognition_result.all_scores,
+                stt_entity_id=self.entity_id,
+                utterance_sequence=utterance_sequence,
+                whispering=whisper_result.whispering,
+                whisper_score=whisper_result.score,
+                whisper_available=whisper_result.available,
+                stt_seconds=stt_seconds,
+                recognition_seconds=recognition_seconds,
+                preparation_seconds=preparation_seconds,
+                added_latency_seconds=added_latency_seconds,
+                audio_seconds=audio_seconds,
+            )
 
-        correlated = CorrelatedRecognition(
-            user_id=recognition_result.user_id,
-            candidate_user_id=recognition_result.candidate_user_id,
-            confidence=recognition_result.confidence,
-            similarity=recognition_result.similarity,
-            margin=recognition_result.margin,
-            accepted=recognition_result.accepted,
-            all_scores=recognition_result.all_scores,
-            stt_entity_id=self.entity_id,
-            utterance_sequence=utterance_sequence,
-            stt_seconds=stt_seconds,
-            recognition_seconds=recognition_seconds,
-            preparation_seconds=preparation_seconds,
-            added_latency_seconds=added_latency_seconds,
-            audio_seconds=audio_seconds,
-        )
+            _LOGGER.info(
+                "Speaker recognition decision - User: %s, Candidate: %s, "
+                "Similarity: %.3f, Margin: %s, Accepted: %s, "
+                "Whispering: %s (%.2f), Recognition: %.3fs, "
+                "Added Assist latency: %.3fs, All scores: %s",
+                recognition_result.user_id,
+                recognition_result.candidate_user_id,
+                recognition_result.similarity,
+                (
+                    f"{recognition_result.margin:.3f}"
+                    if recognition_result.margin is not None
+                    else "n/a"
+                ),
+                recognition_result.accepted,
+                whisper_result.whispering,
+                whisper_result.score,
+                recognition_seconds,
+                added_latency_seconds,
+                {
+                    user: f"{score:.3f}"
+                    for user, score in recognition_result.all_scores.items()
+                },
+            )
+
         set_correlated_recognition(correlated)
-
-        _LOGGER.info(
-            "Speaker recognition decision - User: %s, Candidate: %s, "
-            "Similarity: %.3f, Margin: %s, Accepted: %s, "
-            "Recognition: %.3fs, Added Assist latency: %.3fs, All scores: %s",
-            recognition_result.user_id,
-            recognition_result.candidate_user_id,
-            recognition_result.similarity,
-            (
-                f"{recognition_result.margin:.3f}"
-                if recognition_result.margin is not None
-                else "n/a"
-            ),
-            recognition_result.accepted,
-            recognition_seconds,
-            added_latency_seconds,
-            {
-                user: f"{score:.3f}"
-                for user, score in recognition_result.all_scores.items()
-            },
-        )
         self.hass.bus.async_fire(
             "speaker_recognition_detected",
             {
-                "user_id": recognition_result.user_id,
-                "candidate_user_id": recognition_result.candidate_user_id,
-                "confidence": recognition_result.confidence,
-                "similarity": recognition_result.similarity,
-                "margin": recognition_result.margin,
-                "accepted": recognition_result.accepted,
-                "all_scores": recognition_result.all_scores,
+                "user_id": correlated.user_id,
+                "candidate_user_id": correlated.candidate_user_id,
+                "confidence": correlated.confidence,
+                "similarity": correlated.similarity,
+                "margin": correlated.margin,
+                "accepted": correlated.accepted,
+                "all_scores": correlated.all_scores,
+                "whispering": correlated.whispering,
+                "whisper_score": correlated.whisper_score,
+                "whisper_available": correlated.whisper_available,
                 "entity_id": self.entity_id,
                 "utterance_sequence": utterance_sequence,
                 "stt_seconds": stt_seconds,
