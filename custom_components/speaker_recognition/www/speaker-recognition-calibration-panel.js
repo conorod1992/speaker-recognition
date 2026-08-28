@@ -62,12 +62,15 @@ class SpeakerRecognitionCalibrationPanel extends BasePanel {
       const fixed = value => Number(value || 0).toFixed(2);
       const diagnosticsPanel = `<details>
         <summary>Whisper diagnostics</summary>
-        <p class="muted">These component measurements are shown for tuning. The overall whisper score is diagnostic, not a calibrated probability.</p>
+        <p class="muted">These component measurements are shown for tuning. The overall whisper score is diagnostic, not a calibrated probability. Strong periodic vowel frames can reduce the score when otherwise whisper-like audio still contains convincing normal voicing.</p>
         <div class="metrics">
           <span><b>Voicing evidence</b><br>${fixed(diagnostics.voicing_score)}</span>
           <span><b>Spectral evidence</b><br>${fixed(diagnostics.spectral_score)}</span>
+          <span><b>Normal-voice rescue</b><br>${fixed(diagnostics.normal_voicing_rescue)}</span>
           <span><b>Periodicity</b><br>${fixed(diagnostics.periodicity)}</span>
+          <span><b>Peak periodicity</b><br>${fixed(diagnostics.peak_periodicity)}</span>
           <span><b>Voiced frames</b><br>${percentage(diagnostics.voiced_fraction)}</span>
+          <span><b>Strong voiced frames</b><br>${percentage(diagnostics.strong_voiced_fraction)}</span>
           <span><b>Spectral flatness</b><br>${fixed(diagnostics.spectral_flatness)}</span>
           <span><b>Spectral centroid</b><br>${Math.round(Number(diagnostics.spectral_centroid_hz || 0))} Hz</span>
           <span><b>Low-band energy</b><br>${percentage(diagnostics.low_frequency_ratio)}</span>
