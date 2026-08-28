@@ -19,7 +19,7 @@ RUN /opt/speaker-recognition/bin/pip install --no-cache-dir -r requirements.txt
 FROM ghcr.io/home-assistant/base-debian:bookworm
 
 ARG BUILD_ARCH="unknown"
-ARG BUILD_VERSION="2.1.0"
+ARG BUILD_VERSION="2.2.0"
 
 LABEL \
     io.hass.type="app" \
