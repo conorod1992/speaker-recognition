@@ -8,7 +8,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class CorrelatedRecognition:
-    """Speaker decision produced by one specific Assist STT turn."""
+    """Speaker and speech-style decision produced by one specific Assist STT turn."""
 
     user_id: str | None
     candidate_user_id: str
@@ -19,6 +19,9 @@ class CorrelatedRecognition:
     all_scores: dict[str, float]
     stt_entity_id: str | None
     utterance_sequence: int
+    whispering: bool = False
+    whisper_score: float = 0.0
+    whisper_available: bool = False
     stt_seconds: float = 0.0
     recognition_seconds: float = 0.0
     preparation_seconds: float = 0.0
