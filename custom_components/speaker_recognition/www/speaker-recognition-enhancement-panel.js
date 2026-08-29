@@ -62,7 +62,7 @@ Panel.prototype._renderLiveResult = function(result) {
     const metrics = preview.comparison_metrics || {};
 
     comparison = `<div class="result">
-      <strong>Audio comparison</strong>
+      <strong>Audio comparison · Neural denoise benchmark</strong>
       <p class="muted">All four players use the same live Assist utterance. RNNoise-only now receives the untouched Home Assistant PCM, so this test separates RNNoise quality from any effect caused by the basic DSP preprocessing. Production STT is still unchanged.</p>
       <div class="audioCompare">
         <div><b>Original from Home Assistant</b><small>No extra processing</small><audio controls preload="metadata" src="data:audio/wav;base64,${preview.original_wav_base64}"></audio></div>
