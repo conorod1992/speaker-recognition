@@ -14,6 +14,9 @@ RUN apt-get update \
 
 COPY requirements.txt ./
 RUN /opt/speaker-recognition/bin/pip install --no-cache-dir -r requirements.txt
+# Only the bundled RNNoise library and low-level Python wrapper are used. Avoid
+# pyrnnoise's CLI/plotting dependencies inside the Home Assistant add-on.
+RUN /opt/speaker-recognition/bin/pip install --no-cache-dir --no-deps pyrnnoise==0.4.3
 
 
 FROM ghcr.io/home-assistant/base-debian:bookworm
