@@ -23,7 +23,7 @@ RUN /opt/speaker-recognition/bin/pip install --no-cache-dir --no-deps pyrnnoise=
 FROM ghcr.io/home-assistant/base-debian:bookworm
 
 ARG BUILD_ARCH="unknown"
-ARG BUILD_VERSION="2.4.0"
+ARG BUILD_VERSION="2.5.0"
 
 LABEL \
     io.hass.type="app" \
