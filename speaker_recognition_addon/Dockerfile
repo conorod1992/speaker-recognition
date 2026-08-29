@@ -14,8 +14,9 @@ RUN apt-get update \
 
 COPY requirements.txt ./
 RUN /opt/speaker-recognition/bin/pip install --no-cache-dir -r requirements.txt
-# Only the bundled RNNoise library and low-level Python wrapper are used. Avoid
-# pyrnnoise's CLI/plotting dependencies inside the Home Assistant add-on.
+# Install the wheel only as a carrier for its bundled architecture-specific
+# librnnoise.so. Runtime code loads that library directly with ctypes and does
+# not import pyrnnoise's high-level package or its optional audio/plotting stack.
 RUN /opt/speaker-recognition/bin/pip install --no-cache-dir --no-deps pyrnnoise==0.4.3
 
 
@@ -50,4 +51,4 @@ COPY rootfs /
 
 RUN chmod a+x /etc/s6-overlay/s6-rc.d/speaker-recognition/run \
     && /opt/speaker-recognition/bin/python -c \
-        "from speaker_recognition.api import app; from pyrnnoise.rnnoise import FRAME_SIZE; assert app.title and FRAME_SIZE == 480"
+        "from speaker_recognition.api import app; from speaker_recognition.neural_denoise import rnnoise_frame_size; assert app.title and rnnoise_frame_size() == 480"
