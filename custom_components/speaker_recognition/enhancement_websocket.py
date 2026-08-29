@@ -14,7 +14,9 @@ from .const import CONF_ENTRY_TYPE, DOMAIN, ENTRY_TYPE_MAIN
 from .enhancement import (
     build_comparison_preview,
     enhance_speech_pcm,
+    wav_base64,
 )
+from .enhancement_metrics import audio_quality_metrics
 from .recognition import SpeakerRecognition
 
 
@@ -42,7 +44,7 @@ async def websocket_enhancement_preview(
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
 ) -> None:
-    """Return temporary original/basic/neural audio for a cached Assist turn."""
+    """Return temporary original/basic/RNNoise comparison audio."""
     sequence = int(msg["utterance_sequence"])
     domain_data = hass.data.setdefault(DOMAIN, {})
     live_result = domain_data.get("live_test_result")
@@ -77,8 +79,10 @@ async def websocket_enhancement_preview(
     )
     basic_seconds = perf_counter() - basic_started
 
-    neural_pcm: bytes | None = None
-    neural_seconds: float | None = None
+    rnnoise_pcm: bytes | None = None
+    rnnoise_seconds: float | None = None
+    combo_pcm: bytes | None = None
+    combo_seconds: float | None = None
     neural_engine: str | None = None
     neural_error: str | None = None
     recognition = _main_recognition(hass)
@@ -86,13 +90,16 @@ async def websocket_enhancement_preview(
         neural_error = "Speaker Recognition backend is not currently available"
     else:
         try:
-            neural = await recognition.async_denoise(basic_pcm, sample_rate)
-            if neural.sample_rate != sample_rate:
+            rnnoise = await recognition.async_denoise(pcm_data, sample_rate)
+            combo = await recognition.async_denoise(basic_pcm, sample_rate)
+            if rnnoise.sample_rate != sample_rate or combo.sample_rate != sample_rate:
                 neural_error = "Neural backend returned an unexpected sample rate"
             else:
-                neural_pcm = neural.audio_data
-                neural_seconds = neural.processing_seconds
-                neural_engine = neural.engine
+                rnnoise_pcm = rnnoise.audio_data
+                rnnoise_seconds = rnnoise.processing_seconds
+                combo_pcm = combo.audio_data
+                combo_seconds = combo.processing_seconds
+                neural_engine = rnnoise.engine
         except Exception as error:  # Diagnostics must never disrupt Assist.
             neural_error = f"Neural preview unavailable: {error}"
 
@@ -102,11 +109,34 @@ async def websocket_enhancement_preview(
         basic_pcm,
         sample_rate,
         basic_seconds,
-        neural_pcm,
-        neural_seconds,
+        combo_pcm,
+        combo_seconds,
         neural_engine,
         neural_error,
     )
+    if rnnoise_pcm is not None:
+        result["rnnoise_wav_base64"] = await hass.async_add_executor_job(
+            wav_base64, rnnoise_pcm, sample_rate
+        )
+        result["rnnoise_processing_seconds"] = rnnoise_seconds or 0.0
+    result["comparison_metrics"] = {
+        "original": await hass.async_add_executor_job(
+            audio_quality_metrics, pcm_data, sample_rate
+        ),
+        "basic": await hass.async_add_executor_job(
+            audio_quality_metrics, basic_pcm, sample_rate
+        ),
+        "rnnoise": await hass.async_add_executor_job(
+            audio_quality_metrics, rnnoise_pcm, sample_rate
+        )
+        if rnnoise_pcm is not None
+        else {},
+        "combo": await hass.async_add_executor_job(
+            audio_quality_metrics, combo_pcm, sample_rate
+        )
+        if combo_pcm is not None
+        else {},
+    }
     connection.send_result(msg["id"], result)
 
 
