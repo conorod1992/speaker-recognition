@@ -100,8 +100,8 @@ class HealthResponse(BaseModel):
     trained: bool = False
     enrolled_users: list[str] = Field(default_factory=list)
     encoder_ready: bool = False
-    warmup_seconds: float | None = None
-    warmup_error: str | None = None
+    warmup_seconds: Optional[float] = None
+    warmup_error: Optional[str] = None
 
 
 class ErrorResponse(BaseModel):
