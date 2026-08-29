@@ -9,9 +9,10 @@ from homeassistant.components.http import StaticPathConfig
 from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN
+from .enhancement import async_register_enhancement_websocket
 
 PANEL_URL_PATH = "speaker-recognition"
-PANEL_ELEMENT = "speaker-recognition-calibration-panel"
+PANEL_ELEMENT = "speaker-recognition-enhancement-panel"
 STATIC_URL = "/speaker-recognition-static"
 
 
@@ -21,11 +22,12 @@ async def async_register_frontend(hass: HomeAssistant) -> None:
     await hass.http.async_register_static_paths(
         [StaticPathConfig(STATIC_URL, str(www_path), False)]
     )
+    async_register_enhancement_websocket(hass)
     await panel_custom.async_register_panel(
         hass,
         webcomponent_name=PANEL_ELEMENT,
         frontend_url_path=PANEL_URL_PATH,
-        module_url=f"{STATIC_URL}/speaker-recognition-calibration-panel.js",
+        module_url=f"{STATIC_URL}/speaker-recognition-enhancement-panel.js",
         sidebar_title="Speaker Recognition",
         sidebar_icon="mdi:account-voice",
         require_admin=True,
