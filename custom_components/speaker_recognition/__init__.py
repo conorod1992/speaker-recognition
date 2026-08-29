@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant
+from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.typing import ConfigType
 
@@ -42,7 +42,18 @@ def _get_main_entry(hass: HomeAssistant) -> ConfigEntry | None:
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up shared frontend, calibration storage and WebSocket resources."""
     await async_register_frontend(hass)
-    await async_setup_decision_history(hass)
+    history = await async_setup_decision_history(hass)
+    domain_data = hass.data.setdefault(DOMAIN, {})
+    if "decision_history_event_unsub" not in domain_data:
+
+        @callback
+        def _record_stt_decision(event: Event) -> None:
+            """Persist STT recognition even when no Conversation proxy is used."""
+            history.record_event(dict(event.data))
+
+        domain_data["decision_history_event_unsub"] = hass.bus.async_listen(
+            "speaker_recognition_detected", _record_stt_decision
+        )
     async_register_websocket_commands(hass)
     return True
 
