@@ -50,5 +50,5 @@ ENV PATH="/opt/speaker-recognition/bin:${PATH}"
 COPY rootfs /
 
 RUN chmod a+x /etc/s6-overlay/s6-rc.d/speaker-recognition/run \
-    && /opt/speaker-recognition/bin/python -c \
+    && SPEAKER_RECOGNITION_SKIP_WARMUP=1 /opt/speaker-recognition/bin/python -c \
         "from speaker_recognition.api import app; from speaker_recognition.neural_denoise import rnnoise_frame_size; assert app.title and rnnoise_frame_size() == 480"
