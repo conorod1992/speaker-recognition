@@ -87,12 +87,49 @@ class SpeakerRecognitionCalibrationPanel extends BasePanel {
     return enriched;
   }
 
+  _renderEnrollmentStatus() {
+    if (!this._status || !this._userId) return "";
+    const enrolled = (this._status.enrolled_users || []).includes(this._userId);
+    const staged = this._stagedIndexes();
+    const minimum = Number(this._status.minimum_samples || 5);
+    const total = (this._status.phrases || []).length;
+    const remaining = Math.max(0, minimum - staged.length);
+    const ready = staged.length >= minimum;
+    const mode = enrolled ? "Retraining existing profile" : "New enrollment";
+    let guidance;
+    if (ready) {
+      guidance = `Ready to train. ${staged.length} new sample${staged.length === 1 ? " is" : "s are"} staged.`;
+    } else if (staged.length) {
+      guidance = `${remaining} more sample${remaining === 1 ? "" : "s"} needed before training.`;
+    } else {
+      guidance = enrolled
+        ? "No replacement samples staged yet. The current trained profile remains active."
+        : "No samples staged yet.";
+    }
+    return `<div class="result" id="selectedEnrollmentStatus">
+      <strong>Selected user status</strong>
+      <div class="metrics">
+        <span><b>Current profile</b><br>${enrolled ? "Enrolled" : "Not enrolled"}</span>
+        <span><b>Enrollment mode</b><br>${mode}</span>
+        <span><b>New samples</b><br>${staged.length} staged<br><small>${minimum} minimum · ${total} available</small></span>
+        <span><b>Ready to train</b><br>${ready ? "Yes" : "No"}</span>
+      </div>
+      <p class="muted">${guidance}${enrolled && staged.length ? " Your existing trained profile stays in use until the replacement is successfully committed." : ""}</p>
+    </div>`;
+  }
+
   _renderCalibrationCard() {
     const entries = this._calibration && this._calibration.conversation_entries
       ? this._calibration.conversation_entries
       : [];
+    const decisions = this._history && this._history.decisions ? this._history.decisions : [];
+    const labelled = decisions.filter(item => item.feedback).length;
     if (!entries.length) {
-      return `<div class="card"><h2>Threshold guidance</h2><p class="muted">Add a Speaker Recognition Conversation proxy to calibrate its Home Assistant confidence threshold.</p></div>`;
+      return `<div class="card" id="calibrationGuidanceCard">
+        <h2>Threshold guidance</h2>
+        <p><strong>${decisions.length} recent recognition decision${decisions.length === 1 ? "" : "s"} available</strong>${labelled ? ` · ${labelled} labelled` : ""}</p>
+        <p class="muted">Recognition history is collected from the Speaker Recognition STT proxy even when your pipeline sends the conversation directly to another agent. You can label recent results above now. Add a Speaker Recognition Conversation proxy only if you want this section to recommend and apply a Home Assistant identity-confidence threshold.</p>
+      </div>`;
     }
 
     const entry = this._selectedCalibrationEntry();
@@ -162,6 +199,18 @@ class SpeakerRecognitionCalibrationPanel extends BasePanel {
     if (!this.shadowRoot || !this._status || !this._status.configured) return;
     const wrap = this.shadowRoot.querySelector(".wrap");
     if (!wrap) return;
+
+    const enrollmentCard = wrap.querySelector(".card");
+    if (enrollmentCard) {
+      const holder = document.createElement("div");
+      holder.innerHTML = this._renderEnrollmentStatus();
+      const status = holder.firstElementChild;
+      const userSelect = enrollmentCard.querySelector("#userSelect");
+      if (status && userSelect) {
+        userSelect.insertAdjacentElement("afterend", status);
+      }
+    }
+
     const holder = document.createElement("div");
     holder.innerHTML = this._renderCalibrationCard();
     const card = holder.firstElementChild;
