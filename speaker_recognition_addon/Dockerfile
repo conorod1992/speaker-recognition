@@ -50,4 +50,4 @@ COPY rootfs /
 
 RUN chmod a+x /etc/s6-overlay/s6-rc.d/speaker-recognition/run \
     && /opt/speaker-recognition/bin/python -c \
-        "from speaker_recognition.api import app; assert app.title"
+        "from speaker_recognition.api import app; from pyrnnoise.rnnoise import FRAME_SIZE; assert app.title and FRAME_SIZE == 480"
