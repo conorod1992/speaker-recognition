@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import logging
 import math
+import os
 from time import perf_counter
 from typing import Any, Optional
 
@@ -26,6 +27,10 @@ class WarmupStatus:
 
 def warm_encoder(recognizer: Any) -> WarmupStatus:
     """Run one deterministic embedding before the API starts accepting traffic."""
+    if os.environ.get("SPEAKER_RECOGNITION_SKIP_WARMUP") == "1":
+        _LOGGER.debug("Skipping speaker encoder warm-up by environment request")
+        return WarmupStatus(ready=True, seconds=0.0)
+
     started = perf_counter()
     try:
         sample_count = int(_WARMUP_SAMPLE_RATE * _WARMUP_SECONDS)
