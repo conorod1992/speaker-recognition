@@ -53,6 +53,8 @@ jobs:
           addon_version = re.search(r'(?m)^version: "([^"]+)"$', addon)
           dockerfile = Path("speaker_recognition_addon/Dockerfile").read_text(encoding="utf-8")
           docker_default = re.search(r'(?m)^ARG BUILD_VERSION="([^"]+)"$', dockerfile)
+          quality = Path(".github/workflows/quality.yml").read_text(encoding="utf-8")
+          smoke_build = re.search(r'(?m)^            BUILD_VERSION=([^\s]+)$', quality)
 
           api_versions = []
           for path in (
@@ -70,6 +72,7 @@ jobs:
               "addon Docker default": docker_default.group(1) if docker_default else None,
               "backend API": api_versions[0],
               "add-on API": api_versions[1],
+              "CI add-on smoke build": smoke_build.group(1) if smoke_build else None,
           }
           mismatches = {name: value for name, value in found.items() if value != expected}
           if mismatches:
@@ -227,7 +230,7 @@ jobs:
           platforms: ${{ matrix.platform }}
           build-args: |
             BUILD_ARCH=${{ matrix.arch }}
-            BUILD_VERSION=2.3.0
+            BUILD_VERSION=2.4.0
           load: ${{ matrix.arch == 'amd64' }}
           push: false
           tags: speaker-recognition-addon:test

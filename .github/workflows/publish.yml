@@ -92,6 +92,7 @@ jobs:
               Path("speaker_recognition_addon/speaker_recognition/api.py"): (r'(?m)^    version=".*",$', f'    version="{version}",'),
               Path("custom_components/speaker_recognition/manifest.json"): (r'(?m)^  "version": ".*"$', f'  "version": "{version}"'),
               Path("speaker_recognition_addon/config.yaml"): (r'(?m)^version: ".*"$', f'version: "{version}"'),
+              Path("speaker_recognition_addon/Dockerfile"): (r'(?m)^ARG BUILD_VERSION=".*"$', f'ARG BUILD_VERSION="{version}"'),
           }
 
           for path, (pattern, replacement) in replacements.items():
