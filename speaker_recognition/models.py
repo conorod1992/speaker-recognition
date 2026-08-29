@@ -36,7 +36,7 @@ class AudioInput(BaseModel):
 
 
 class VoiceSample(BaseModel):
-    """Voice sample data model."""
+    """Audio sample associated with one user."""
 
     user: str = Field(..., description="User identifier")
     audio: AudioInput = Field(..., description="Audio input for voice sample")
@@ -76,6 +76,21 @@ class RecognitionResult(BaseModel):
     margin: Optional[float] = None
     accepted: bool
     all_scores: dict[str, float]
+
+
+class DenoiseRequest(BaseModel):
+    """Neural speech denoise request."""
+
+    audio: AudioInput = Field(..., description="Mono PCM16 audio to denoise")
+
+
+class DenoiseResult(BaseModel):
+    """Neural speech denoise response."""
+
+    audio_data: str = Field(..., description="Base64 encoded denoised mono PCM16")
+    sample_rate: int
+    processing_seconds: float
+    engine: str = "rnnoise"
 
 
 class HealthResponse(BaseModel):
