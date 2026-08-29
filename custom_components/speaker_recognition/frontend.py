@@ -9,10 +9,10 @@ from homeassistant.components.http import StaticPathConfig
 from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN
-from .enhancement import async_register_enhancement_websocket
+from .enhancement_websocket import async_register_enhancement_websocket
 
 PANEL_URL_PATH = "speaker-recognition"
-PANEL_ELEMENT = "speaker-recognition-enhancement-panel"
+PANEL_ELEMENT = "speaker-recognition-calibration-panel"
 STATIC_URL = "/speaker-recognition-static"
 
 
