@@ -23,7 +23,7 @@ RUN /opt/speaker-recognition/bin/pip install --no-cache-dir --no-deps pyrnnoise=
 FROM ghcr.io/home-assistant/base-debian:bookworm
 
 ARG BUILD_ARCH="unknown"
-ARG BUILD_VERSION="2.4.0"
+ARG BUILD_VERSION="2.5.0"
 
 LABEL \
     io.hass.type="app" \
@@ -50,5 +50,5 @@ ENV PATH="/opt/speaker-recognition/bin:${PATH}"
 COPY rootfs /
 
 RUN chmod a+x /etc/s6-overlay/s6-rc.d/speaker-recognition/run \
-    && /opt/speaker-recognition/bin/python -c \
+    && SPEAKER_RECOGNITION_SKIP_WARMUP=1 /opt/speaker-recognition/bin/python -c \
         "from speaker_recognition.api import app; from speaker_recognition.neural_denoise import rnnoise_frame_size; assert app.title and rnnoise_frame_size() == 480"
