@@ -7,7 +7,7 @@ from time import perf_counter
 
 import numpy as np
 from numpy.typing import NDArray
-from scipy.signal import resample_poly
+from scipy.signal import resample_poly  # type: ignore[import-untyped]
 
 RNNOISE_SAMPLE_RATE = 48000
 
