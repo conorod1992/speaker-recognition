@@ -17,6 +17,7 @@ from .const import (
     ENTRY_TYPE_STT,
     effective_backend_url,
 )
+from .enhancement_websocket import async_register_enhancement_websocket
 from .frontend import async_register_frontend
 from .lifecycle import (
     EnrollmentUpdateFailed,
@@ -60,6 +61,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
             "speaker_recognition_detected", _record_stt_decision
         )
     async_register_websocket_commands(hass)
+    async_register_enhancement_websocket(hass)
     return True
 
 

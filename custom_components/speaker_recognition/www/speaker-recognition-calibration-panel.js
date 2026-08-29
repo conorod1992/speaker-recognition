@@ -234,3 +234,4 @@ class SpeakerRecognitionCalibrationPanel extends BasePanel {
 }
 
 customElements.define("speaker-recognition-calibration-panel", SpeakerRecognitionCalibrationPanel);
+import("./speaker-recognition-enhancement-panel.js");
