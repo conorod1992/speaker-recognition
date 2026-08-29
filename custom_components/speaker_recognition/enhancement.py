@@ -1,4 +1,4 @@
-"""Dependency-free speech enhancement preview for live satellite diagnostics."""
+"""Dependency-free speech enhancement helpers for live satellite diagnostics."""
 
 from __future__ import annotations
 
@@ -9,13 +9,6 @@ import math
 from time import perf_counter
 from typing import Any
 import wave
-
-import voluptuous as vol
-
-from homeassistant.components import websocket_api
-from homeassistant.core import HomeAssistant
-
-from .const import DOMAIN
 
 
 def _clip_int16(value: float) -> int:
@@ -113,12 +106,9 @@ def enhance_speech_pcm(pcm_data: bytes, sample_rate: int) -> bytes:
 
     pcm = array("h")
     pcm.frombytes(pcm_data)
-    if pcm.itemsize != 2:
-        return pcm_data
-    if not pcm:
+    if pcm.itemsize != 2 or not pcm:
         return pcm_data
 
-    # Convert to float and remove any residual DC component before filtering.
     mean = sum(pcm) / len(pcm)
     samples = [float(sample) - mean for sample in pcm]
 
@@ -147,8 +137,8 @@ def _wav_base64(pcm_data: bytes, sample_rate: int) -> str:
     return base64.b64encode(buffer.getvalue()).decode("ascii")
 
 
-def _build_preview(pcm_data: bytes, sample_rate: int) -> dict[str, Any]:
-    """Build original/enhanced WAV previews and timing off the event loop."""
+def build_enhancement_preview(pcm_data: bytes, sample_rate: int) -> dict[str, Any]:
+    """Build original/enhanced WAV previews and processing timing."""
     started = perf_counter()
     enhanced = enhance_speech_pcm(pcm_data, sample_rate)
     processing_seconds = perf_counter() - started
@@ -159,51 +149,3 @@ def _build_preview(pcm_data: bytes, sample_rate: int) -> dict[str, Any]:
         "original_wav_base64": _wav_base64(pcm_data, sample_rate),
         "enhanced_wav_base64": _wav_base64(enhanced, sample_rate),
     }
-
-
-@websocket_api.websocket_command(
-    {
-        vol.Required("type"): f"{DOMAIN}/enhancement_preview",
-        vol.Required("utterance_sequence"): int,
-    }
-)
-@websocket_api.require_admin
-@websocket_api.async_response
-async def websocket_enhancement_preview(
-    hass: HomeAssistant,
-    connection: websocket_api.ActiveConnection,
-    msg: dict[str, Any],
-) -> None:
-    """Return temporary original and enhanced audio for a cached Assist turn."""
-    sequence = int(msg["utterance_sequence"])
-    domain_data = hass.data.setdefault(DOMAIN, {})
-    live_result = domain_data.get("live_test_result")
-    if not isinstance(live_result, dict) or live_result.get("utterance_sequence") != sequence:
-        connection.send_error(
-            msg["id"],
-            "not_live_test_audio",
-            "Audio preview is only available for the latest live satellite test",
-        )
-        return
-
-    audio_cache = domain_data.get("utterance_audio")
-    cached = audio_cache.get(sequence) if isinstance(audio_cache, dict) else None
-    if (
-        not isinstance(cached, tuple)
-        or len(cached) != 2
-        or not isinstance(cached[0], bytes)
-        or not isinstance(cached[1], int)
-    ):
-        connection.send_error(
-            msg["id"], "audio_unavailable", "The live-test audio is no longer cached"
-        )
-        return
-
-    pcm_data, sample_rate = cached
-    result = await hass.async_add_executor_job(_build_preview, pcm_data, sample_rate)
-    connection.send_result(msg["id"], result)
-
-
-def async_register_enhancement_websocket(hass: HomeAssistant) -> None:
-    """Register the experimental enhancement preview command."""
-    websocket_api.async_register_command(hass, websocket_enhancement_preview)
