@@ -211,6 +211,9 @@ async def async_capture_claimed_satellite_sample(
     )
     sessions.pop(session.satellite_id, None)
     _completed_satellite_captures(hass)[session.session_id] = time.monotonic()
+    _domain_data(hass).setdefault("calibration_excluded_utterances", set()).add(
+        utterance_sequence
+    )
     return True
 
 
