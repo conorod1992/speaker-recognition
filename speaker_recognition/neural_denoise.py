@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import math
 from time import perf_counter
-from typing import cast
 
 import numpy as np
 from numpy.typing import NDArray
@@ -30,7 +29,7 @@ def _resample_int16(
     converted = np.asarray(
         np.clip(np.rint(resampled), -32768, 32767), dtype=np.int16
     )
-    return cast(NDArray[np.int16], converted)
+    return converted
 
 
 def denoise_pcm_rnnoise(pcm_data: bytes, sample_rate: int) -> tuple[bytes, float]:
