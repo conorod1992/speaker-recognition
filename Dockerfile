@@ -13,6 +13,7 @@ COPY speaker_recognition ./speaker_recognition
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 RUN uv pip install --system --no-cache -e ".[server]"
+RUN uv pip install --system --no-cache --no-deps pyrnnoise==0.4.3
 
 RUN mkdir -p /data/embeddings
 
