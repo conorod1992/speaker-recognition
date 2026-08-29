@@ -126,7 +126,7 @@ def enhance_speech_pcm(pcm_data: bytes, sample_rate: int) -> bytes:
     return output.tobytes()
 
 
-def _wav_base64(pcm_data: bytes, sample_rate: int) -> str:
+def wav_base64(pcm_data: bytes, sample_rate: int) -> str:
     """Encode mono signed 16-bit PCM as a base64 WAV payload."""
     buffer = BytesIO()
     with wave.open(buffer, "wb") as wav_file:
@@ -137,15 +137,42 @@ def _wav_base64(pcm_data: bytes, sample_rate: int) -> str:
     return base64.b64encode(buffer.getvalue()).decode("ascii")
 
 
+def build_comparison_preview(
+    original_pcm: bytes,
+    basic_pcm: bytes,
+    sample_rate: int,
+    basic_processing_seconds: float,
+    neural_pcm: bytes | None = None,
+    neural_processing_seconds: float | None = None,
+    neural_engine: str | None = None,
+    neural_error: str | None = None,
+) -> dict[str, Any]:
+    """Build an A/B/C preview payload from precomputed enhancement stages."""
+    result: dict[str, Any] = {
+        "sample_rate": sample_rate,
+        "audio_seconds": len(original_pcm) / (sample_rate * 2),
+        "processing_seconds": basic_processing_seconds,
+        "basic_processing_seconds": basic_processing_seconds,
+        "original_wav_base64": wav_base64(original_pcm, sample_rate),
+        "enhanced_wav_base64": wav_base64(basic_pcm, sample_rate),
+    }
+    if neural_pcm is not None:
+        result["neural_wav_base64"] = wav_base64(neural_pcm, sample_rate)
+        result["neural_processing_seconds"] = neural_processing_seconds or 0.0
+        result["neural_engine"] = neural_engine or "rnnoise"
+    if neural_error:
+        result["neural_error"] = neural_error
+    return result
+
+
 def build_enhancement_preview(pcm_data: bytes, sample_rate: int) -> dict[str, Any]:
-    """Build original/enhanced WAV previews and processing timing."""
+    """Build original/basic WAV previews and processing timing."""
     started = perf_counter()
     enhanced = enhance_speech_pcm(pcm_data, sample_rate)
     processing_seconds = perf_counter() - started
-    return {
-        "sample_rate": sample_rate,
-        "audio_seconds": len(pcm_data) / (sample_rate * 2),
-        "processing_seconds": processing_seconds,
-        "original_wav_base64": _wav_base64(pcm_data, sample_rate),
-        "enhanced_wav_base64": _wav_base64(enhanced, sample_rate),
-    }
+    return build_comparison_preview(
+        pcm_data,
+        enhanced,
+        sample_rate,
+        processing_seconds,
+    )
