@@ -23,7 +23,7 @@ def _load_neural_module():
 
 
 def test_backend_source_copy_and_addon_include_rnnoise() -> None:
-    """The add-on ships the same backend code and the lightweight RNNoise wheel."""
+    """The add-on ships the same backend code and bundled RNNoise native library."""
     assert (BACKEND / "neural_denoise.py").read_text(encoding="utf-8") == (
         ADDON_BACKEND / "neural_denoise.py"
     ).read_text(encoding="utf-8")
@@ -39,8 +39,13 @@ def test_backend_source_copy_and_addon_include_rnnoise() -> None:
     )
     assert "pyrnnoise==0.4.3" in addon_dockerfile
     assert "--no-deps" in addon_dockerfile
-    assert "from pyrnnoise.rnnoise import FRAME_SIZE" in addon_dockerfile
-    assert "FRAME_SIZE == 480" in addon_dockerfile
+    assert "speaker_recognition.neural_denoise import rnnoise_frame_size" in addon_dockerfile
+    assert "rnnoise_frame_size() == 480" in addon_dockerfile
+
+    neural_source = (BACKEND / "neural_denoise.py").read_text(encoding="utf-8")
+    assert 'metadata.distribution("pyrnnoise")' in neural_source
+    assert "ctypes.CDLL" in neural_source
+    assert "from pyrnnoise" not in neural_source
 
     # Standalone/remote backends retain the same API but need not carry the native
     # diagnostic runtime; HA falls back cleanly when /denoise returns unavailable.
