@@ -29,7 +29,7 @@ _DENOISE_LOCK = Lock()
 app = FastAPI(
     title="Speaker Recognition Service",
     description="API for training and recognizing speakers using voice samples",
-    version="2.3.0",
+    version="2.4.0",
 )
 
 
