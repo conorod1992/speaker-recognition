@@ -21,15 +21,17 @@ from speaker_recognition.neural_denoise import (
     denoise_pcm_rnnoise,
 )
 from speaker_recognition.recognizer import recognizer
+from speaker_recognition.warmup import warm_encoder
 
 _LOGGER = logging.getLogger(__name__)
 _RECOGNIZER_LOCK = Lock()
 _DENOISE_LOCK = Lock()
+_WARMUP_STATUS = warm_encoder(recognizer)
 
 app = FastAPI(
     title="Speaker Recognition Service",
     description="API for training and recognizing speakers using voice samples",
-    version="2.4.0",
+    version="2.5.0",
 )
 
 
@@ -38,9 +40,12 @@ def health_check() -> HealthResponse:
     """Health check endpoint."""
     with _RECOGNIZER_LOCK:
         return HealthResponse(
-            status="healthy",
+            status="healthy" if _WARMUP_STATUS.ready else "degraded",
             trained=recognizer.is_trained,
             enrolled_users=recognizer.enrolled_users,
+            encoder_ready=_WARMUP_STATUS.ready,
+            warmup_seconds=_WARMUP_STATUS.seconds,
+            warmup_error=_WARMUP_STATUS.error,
         )
 
 
