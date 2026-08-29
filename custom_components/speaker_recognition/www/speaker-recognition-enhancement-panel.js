@@ -39,20 +39,26 @@ Panel.prototype._renderLiveResult = function(result) {
 
   let comparison;
   if (this._enhancementSequence !== result.utterance_sequence || this._enhancementBusy) {
-    comparison = `<div class="result"><strong>Audio comparison</strong><p class="muted">Preparing original and enhanced playback…</p></div>`;
+    comparison = `<div class="result"><strong>Audio comparison</strong><p class="muted">Preparing original, basic DSP and neural-denoise playback…</p></div>`;
   } else if (this._enhancementError) {
     comparison = `<div class="result"><strong>Audio comparison</strong><p class="muted">${this._escape(this._enhancementError)}</p></div>`;
   } else if (this._enhancementPreview) {
     const preview = this._enhancementPreview;
-    const processingMs = Math.round(Number(preview.processing_seconds || 0) * 1000);
+    const basicMs = Math.round(Number(preview.basic_processing_seconds ?? preview.processing_seconds ?? 0) * 1000);
+    const neuralMs = Math.round(Number(preview.neural_processing_seconds || 0) * 1000);
+    const neuralPlayer = preview.neural_wav_base64
+      ? `<div><b>Neural denoise</b><small>Basic DSP + ${this._escape(preview.neural_engine || "RNNoise")}</small><audio controls preload="metadata" src="data:audio/wav;base64,${preview.neural_wav_base64}"></audio></div>`
+      : `<div><b>Neural denoise</b><small>Basic DSP + RNNoise</small><p class="muted">${this._escape(preview.neural_error || "Neural preview unavailable")}</p></div>`;
+
     comparison = `<div class="result">
       <strong>Audio comparison</strong>
-      <p class="muted">These are the same live Assist utterance after Home Assistant delivered it to the Speaker Recognition wrapper. The enhanced version is an experimental dependency-free speech cleanup preview; production STT is unchanged in this v1.</p>
+      <p class="muted">All three players use the same live Assist utterance. Basic DSP is the current lightweight cleanup. Neural denoise runs that result through RNNoise in the Speaker Recognition backend. Production STT is still unchanged while we compare quality and latency.</p>
       <div class="audioCompare">
-        <div><b>Original from Home Assistant</b><audio controls preload="metadata" src="data:audio/wav;base64,${preview.original_wav_base64}"></audio></div>
-        <div><b>Enhanced preview</b><audio controls preload="metadata" src="data:audio/wav;base64,${preview.enhanced_wav_base64}"></audio></div>
+        <div><b>Original from Home Assistant</b><small>No extra processing</small><audio controls preload="metadata" src="data:audio/wav;base64,${preview.original_wav_base64}"></audio></div>
+        <div><b>Basic DSP</b><small>High-pass, mains notches and conservative attenuation</small><audio controls preload="metadata" src="data:audio/wav;base64,${preview.enhanced_wav_base64}"></audio></div>
+        ${neuralPlayer}
       </div>
-      <p class="muted">Enhancement processing: ${processingMs} ms for ${Number(preview.audio_seconds || 0).toFixed(1)} s of audio at ${preview.sample_rate} Hz.</p>
+      <p class="muted">Basic DSP: ${basicMs} ms${preview.neural_wav_base64 ? ` · Neural stage: ${neuralMs} ms` : ""} · Audio: ${Number(preview.audio_seconds || 0).toFixed(1)} s at ${preview.sample_rate} Hz.</p>
     </div>`;
   } else {
     comparison = "";
@@ -77,10 +83,12 @@ Panel.prototype._render = function() {
     const style = document.createElement("style");
     style.id = "enhancement-style";
     style.textContent = `
-      .audioCompare { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 12px; }
+      .audioCompare { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-top: 12px; }
       .audioCompare > div { min-width: 0; }
+      .audioCompare b, .audioCompare small { display: block; }
+      .audioCompare small { margin-top: 4px; opacity: 0.72; }
       .audioCompare audio { display: block; width: 100%; margin-top: 8px; }
-      @media (max-width: 700px) { .audioCompare { grid-template-columns: 1fr; } }
+      @media (max-width: 900px) { .audioCompare { grid-template-columns: 1fr; } }
     `;
     this.shadowRoot.append(style);
   }
