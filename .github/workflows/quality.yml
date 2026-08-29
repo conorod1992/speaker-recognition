@@ -227,7 +227,7 @@ jobs:
           platforms: ${{ matrix.platform }}
           build-args: |
             BUILD_ARCH=${{ matrix.arch }}
-            BUILD_VERSION=2.2.4
+            BUILD_VERSION=2.3.0
           load: ${{ matrix.arch == 'amd64' }}
           push: false
           tags: speaker-recognition-addon:test
