@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import logging
 import math
 from time import perf_counter
-from typing import Any
+from typing import Any, Optional
 
 import numpy as np
 
@@ -21,7 +21,7 @@ class WarmupStatus:
 
     ready: bool
     seconds: float
-    error: str | None = None
+    error: Optional[str] = None
 
 
 def warm_encoder(recognizer: Any) -> WarmupStatus:
