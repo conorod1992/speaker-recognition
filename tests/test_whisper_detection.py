@@ -48,6 +48,18 @@ def _voiced_samples(amplitude: int, *, sample_rate: int = 16000) -> list[int]:
     ]
 
 
+def _breathy_soft_voiced_samples(*, sample_rate: int = 16000) -> list[int]:
+    """Create soft voiced speech with enough noise to confuse median-only features."""
+    rng = random.Random(31)
+    voiced = _voiced_samples(1900, sample_rate=sample_rate)
+    samples = []
+    for index, value in enumerate(voiced):
+        envelope = 0.70 + 0.30 * math.sin(math.pi * index / len(voiced)) ** 2
+        noise = rng.uniform(-900.0, 900.0)
+        samples.append(int((value + noise) * envelope))
+    return samples
+
+
 def _whisper_like_samples(*, sample_rate: int = 16000) -> list[int]:
     """Create deterministic aperiodic, noise-excited speech-like audio."""
     rng = random.Random(17)
@@ -78,11 +90,8 @@ def _lowpassed_whisper_like_samples(*, sample_rate: int = 16000) -> list[int]:
 
 
 def test_normally_voiced_speech_is_not_classified_as_whispering() -> None:
-    """Strong periodic voicing is treated as normal speech."""
     whisper = _load_whisper_module()
-
     result = whisper.detect_whisper(_pcm_bytes(_voiced_samples(8000)), 16000)
-
     assert result.available
     assert not result.whispering
     assert result.voiced_fraction > 0.8
@@ -91,23 +100,28 @@ def test_normally_voiced_speech_is_not_classified_as_whispering() -> None:
 
 
 def test_quiet_normally_voiced_speech_is_not_mistaken_for_a_whisper() -> None:
-    """Loudness alone must not turn otherwise voiced speech into a whisper."""
     whisper = _load_whisper_module()
-
     result = whisper.detect_whisper(_pcm_bytes(_voiced_samples(800)), 16000)
-
     assert result.available
     assert not result.whispering
     assert result.voiced_fraction > 0.8
     assert result.score < 0.2
 
 
-def test_aperiodic_noise_excited_speech_is_classified_as_whisper_like() -> None:
-    """Whisper-like excitation produces both voicing and spectral evidence."""
+def test_breathy_soft_voice_gets_normal_voicing_rescue() -> None:
+    """Strong harmonic vowel frames can rescue otherwise whisper-like soft speech."""
     whisper = _load_whisper_module()
+    result = whisper.detect_whisper(_pcm_bytes(_breathy_soft_voiced_samples()), 16000)
+    assert result.available
+    assert result.peak_periodicity > 0.62
+    assert result.strong_voiced_fraction > 0.0
+    assert result.normal_voicing_rescue > 0.0
+    assert not result.whispering
 
+
+def test_aperiodic_noise_excited_speech_is_classified_as_whisper_like() -> None:
+    whisper = _load_whisper_module()
     result = whisper.detect_whisper(_pcm_bytes(_whisper_like_samples()), 16000)
-
     assert result.available
     assert result.whispering
     assert result.voiced_fraction < 0.5
@@ -116,13 +130,10 @@ def test_aperiodic_noise_excited_speech_is_classified_as_whisper_like() -> None:
 
 
 def test_lowpassed_whisper_still_has_enough_cross_family_evidence() -> None:
-    """A microphone that rolls off highs should not erase whisper classification."""
     whisper = _load_whisper_module()
-
     result = whisper.detect_whisper(
         _pcm_bytes(_lowpassed_whisper_like_samples()), 16000
     )
-
     assert result.available
     assert result.whispering
     assert result.voicing_score > 0.7
@@ -130,27 +141,24 @@ def test_lowpassed_whisper_still_has_enough_cross_family_evidence() -> None:
 
 
 def test_whisper_score_ranks_clear_whisper_above_normal_voice() -> None:
-    """Protect against the real-world regression where whisper scored lower."""
     whisper = _load_whisper_module()
-
     normal = whisper.detect_whisper(_pcm_bytes(_voiced_samples(5000)), 16000)
     whispered = whisper.detect_whisper(_pcm_bytes(_whisper_like_samples()), 16000)
-
     assert whispered.score > normal.score + 0.35
 
 
 def test_component_diagnostics_are_cached_without_raw_audio() -> None:
-    """Live satellite diagnostics can retrieve the exact completed analysis."""
     whisper = _load_whisper_module()
     pcm_data = _pcm_bytes(_whisper_like_samples())
-
     result = whisper.detect_whisper(pcm_data, 16000)
     cached = whisper.cached_detection(pcm_data, 16000)
-
     assert cached == result
     assert set(result.diagnostics()) == {
         "periodicity",
         "voiced_fraction",
+        "peak_periodicity",
+        "strong_voiced_fraction",
+        "normal_voicing_rescue",
         "spectral_flatness",
         "spectral_centroid_hz",
         "low_frequency_ratio",
@@ -163,11 +171,8 @@ def test_component_diagnostics_are_cached_without_raw_audio() -> None:
 
 
 def test_silence_does_not_produce_a_whisper_decision() -> None:
-    """No usable speech signal is reported as unavailable rather than whispered."""
     whisper = _load_whisper_module()
-
     result = whisper.detect_whisper(_pcm_bytes([0] * 16000), 16000)
-
     assert not result.available
     assert not result.whispering
     assert result.score == 0.0
