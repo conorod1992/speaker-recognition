@@ -1,9 +1,28 @@
 """Tests for the experimental dependency-free speech enhancement preview."""
 
 from array import array
+import importlib.util
 import math
+from pathlib import Path
 
-from custom_components.speaker_recognition.enhancement import enhance_speech_pcm
+
+def _load_enhancement_module():
+    module_path = (
+        Path(__file__).parents[1]
+        / "custom_components"
+        / "speaker_recognition"
+        / "enhancement.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "speaker_recognition_integration_enhancement", module_path
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+enhance_speech_pcm = _load_enhancement_module().enhance_speech_pcm
 
 
 def _tone(frequency: float, sample_rate: int = 16000, seconds: float = 1.0) -> bytes:
