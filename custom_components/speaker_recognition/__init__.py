@@ -49,6 +49,11 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         @callback
         def _record_stt_decision(event: Event) -> None:
             """Persist STT recognition even when no Conversation proxy is used."""
+            sequence = event.data.get("utterance_sequence")
+            excluded = domain_data.setdefault("calibration_excluded_utterances", set())
+            if isinstance(sequence, int) and sequence in excluded:
+                excluded.discard(sequence)
+                return
             history.record_event(dict(event.data))
 
         domain_data["decision_history_event_unsub"] = hass.bus.async_listen(
