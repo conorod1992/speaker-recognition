@@ -2,6 +2,7 @@
 
 # Keep NumPy 1.x until Resemblyzer's older dependency chain officially supports 2.x.
 numpy>=1.26.0,<2.0.0
+scipy>=1.11.0,<2.0.0
 torch==2.8.0+cpu
 resemblyzer==0.1.4
 
