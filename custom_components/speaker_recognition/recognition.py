@@ -71,13 +71,18 @@ class SpeakerRecognition:
         self._trained = False
         self._base_url = base_url.rstrip("/")
 
-    async def _async_post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+    async def _async_post(
+        self,
+        path: str,
+        payload: dict[str, Any],
+        timeout_seconds: float = 300,
+    ) -> dict[str, Any]:
         """Call the local Speaker Recognition app without external dependencies."""
         session = async_get_clientsession(self.hass)
         async with session.post(
             f"{self._base_url}{path}",
             json=payload,
-            timeout=ClientTimeout(total=300),
+            timeout=ClientTimeout(total=timeout_seconds),
         ) as response:
             response.raise_for_status()
             data = await response.json()
@@ -331,6 +336,7 @@ class SpeakerRecognition:
                     "sample_rate": sample_rate,
                 }
             },
+            timeout_seconds=30,
         )
 
         encoded = response.get("audio_data")
