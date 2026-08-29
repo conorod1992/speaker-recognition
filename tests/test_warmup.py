@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import importlib.util
+from pathlib import Path
+import sys
 
 import numpy as np
 
@@ -13,6 +14,7 @@ def _load_warmup_module():
     spec = importlib.util.spec_from_file_location("speaker_recognition_warmup_test", path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
