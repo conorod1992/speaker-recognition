@@ -1,6 +1,6 @@
 [project]
 name = "hass-speaker-recognition"
-version = "2.2.5"
+version = "2.2.4"
 description = "Speaker recognition for Home Assistant using Resemblyzer"
 readme = "README.md"
 requires-python = ">=3.8"
