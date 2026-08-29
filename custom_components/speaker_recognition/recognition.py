@@ -46,6 +46,16 @@ class RecognitionResult:
     all_scores: dict[str, float]
 
 
+@dataclass(frozen=True)
+class DenoiseResult:
+    """Neural denoise response returned by the Speaker Recognition app."""
+
+    audio_data: bytes
+    sample_rate: int
+    processing_seconds: float
+    engine: str
+
+
 class SpeakerRecognition:
     """Handle speaker recognition from audio data."""
 
@@ -55,13 +65,7 @@ class SpeakerRecognition:
         voice_samples: list[dict],
         base_url: str = DEFAULT_ADDON_URL,
     ) -> None:
-        """Initialize speaker recognition.
-
-        Args:
-            hass: Home Assistant instance
-            voice_samples: List of voice samples with user and audio file info
-            base_url: Base URL of the speaker recognition service
-        """
+        """Initialize speaker recognition."""
         self.hass = hass
         self.voice_samples = voice_samples
         self._trained = False
@@ -233,15 +237,7 @@ class SpeakerRecognition:
     async def async_recognize(
         self, audio_data: bytes, sample_rate: int = 16000
     ) -> RecognitionResult | None:
-        """Recognize speaker from audio data.
-
-        Args:
-            audio_data: Raw audio data to analyze (PCM 16-bit)
-            sample_rate: Audio sample rate
-
-        Returns:
-            RecognitionResult if the backend returns a valid decision, None otherwise
-        """
+        """Recognize speaker from audio data."""
         if not self._trained:
             _LOGGER.warning(
                 "Speaker recognition is not trained; skipping recognition request"
@@ -320,14 +316,50 @@ class SpeakerRecognition:
                 f"{result.margin:.3f}" if result.margin is not None else "n/a",
                 result.accepted,
             )
-
             return result
 
-    def update_voice_samples(self, voice_samples: list[dict]) -> None:
-        """Update configured voice sample media references.
+    async def async_denoise(
+        self, audio_data: bytes, sample_rate: int
+    ) -> DenoiseResult:
+        """Request an optional RNNoise diagnostic preview from the backend."""
+        audio_base64 = base64.b64encode(audio_data).decode("ascii")
+        response = await self._async_post(
+            "/denoise",
+            {
+                "audio": {
+                    "audio_data": audio_base64,
+                    "sample_rate": sample_rate,
+                }
+            },
+        )
 
-        Args:
-            voice_samples: New list of voice samples
-        """
+        encoded = response.get("audio_data")
+        returned_rate = response.get("sample_rate")
+        processing_seconds = response.get("processing_seconds")
+        engine = response.get("engine")
+        if (
+            not isinstance(encoded, str)
+            or not isinstance(returned_rate, int)
+            or returned_rate <= 0
+            or not isinstance(processing_seconds, (int, float))
+            or not isinstance(engine, str)
+        ):
+            raise ValueError("Invalid denoise response from Speaker Recognition app")
+        try:
+            denoised = base64.b64decode(encoded, validate=True)
+        except ValueError as error:
+            raise ValueError("Invalid denoise audio from Speaker Recognition app") from error
+        if not denoised or len(denoised) % 2:
+            raise ValueError("Denoise response did not contain valid PCM16 audio")
+
+        return DenoiseResult(
+            audio_data=denoised,
+            sample_rate=returned_rate,
+            processing_seconds=float(processing_seconds),
+            engine=engine,
+        )
+
+    def update_voice_samples(self, voice_samples: list[dict]) -> None:
+        """Update configured voice sample media references."""
         self.voice_samples = voice_samples
         _LOGGER.debug("Configured voice sample references updated")
