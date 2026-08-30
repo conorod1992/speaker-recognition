@@ -16,15 +16,24 @@ from speaker_recognition.models import (
 class SpeakerRecognitionClient:
     """Client for interacting with the speaker recognition API."""
 
-    def __init__(self, base_url: str, timeout: float = 30.0):
+    def __init__(
+        self,
+        base_url: str,
+        timeout: float = 30.0,
+        api_token: Optional[str] = None,
+    ) -> None:
         """Initialize the client.
 
         Args:
             base_url: Base URL of the speaker recognition API
             timeout: Request timeout in seconds
+            api_token: Optional bearer token for authenticated remote backends
         """
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
+        self._headers = (
+            {"Authorization": f"Bearer {api_token}"} if api_token else None
+        )
         self._client: Optional[httpx.AsyncClient] = None
 
     async def __aenter__(self) -> "SpeakerRecognitionClient":
@@ -32,6 +41,7 @@ class SpeakerRecognitionClient:
         self._client = httpx.AsyncClient(
             base_url=self._base_url,
             timeout=self._timeout,
+            headers=self._headers,
         )
         return self
 
@@ -55,35 +65,19 @@ class SpeakerRecognitionClient:
             self._client = httpx.AsyncClient(
                 base_url=self._base_url,
                 timeout=self._timeout,
+                headers=self._headers,
             )
         return self._client
 
     async def health_check(self) -> HealthResponse:
-        """Check the health of the API.
-
-        Returns:
-            Health response indicating service status
-
-        Raises:
-            httpx.HTTPStatusError: If the request fails
-        """
+        """Check the health of the API."""
         client = self._ensure_client()
         response = await client.get("/health")
         response.raise_for_status()
         return HealthResponse(**response.json())
 
     async def train(self, request: TrainingRequest) -> TrainingResult:
-        """Train the speaker recognition model.
-
-        Args:
-            request: Training request containing voice samples
-
-        Returns:
-            Training result with status and trained users
-
-        Raises:
-            httpx.HTTPStatusError: If the request fails
-        """
+        """Train the speaker recognition model."""
         client = self._ensure_client()
         response = await client.post(
             "/train",
@@ -93,17 +87,7 @@ class SpeakerRecognitionClient:
         return TrainingResult(**response.json())
 
     async def recognize(self, request: RecognitionRequest) -> RecognitionResult:
-        """Recognize a speaker from audio data.
-
-        Args:
-            request: Recognition request containing audio data
-
-        Returns:
-            Recognition result with identified user and confidence
-
-        Raises:
-            httpx.HTTPStatusError: If the request fails
-        """
+        """Recognize a speaker from audio data."""
         client = self._ensure_client()
         response = await client.post(
             "/recognize",
@@ -116,15 +100,18 @@ class SpeakerRecognitionClient:
 class SyncSpeakerRecognitionClient:
     """Synchronous client for interacting with the speaker recognition API."""
 
-    def __init__(self, base_url: str, timeout: float = 30.0):
-        """Initialize the synchronous client.
-
-        Args:
-            base_url: Base URL of the speaker recognition API
-            timeout: Request timeout in seconds
-        """
+    def __init__(
+        self,
+        base_url: str,
+        timeout: float = 30.0,
+        api_token: Optional[str] = None,
+    ) -> None:
+        """Initialize the synchronous client."""
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
+        self._headers = (
+            {"Authorization": f"Bearer {api_token}"} if api_token else None
+        )
         self._client: Optional[httpx.Client] = None
 
     def __enter__(self) -> "SyncSpeakerRecognitionClient":
@@ -132,6 +119,7 @@ class SyncSpeakerRecognitionClient:
         self._client = httpx.Client(
             base_url=self._base_url,
             timeout=self._timeout,
+            headers=self._headers,
         )
         return self
 
@@ -153,35 +141,19 @@ class SyncSpeakerRecognitionClient:
             self._client = httpx.Client(
                 base_url=self._base_url,
                 timeout=self._timeout,
+                headers=self._headers,
             )
         return self._client
 
     def health_check(self) -> HealthResponse:
-        """Check the health of the API.
-
-        Returns:
-            Health response indicating service status
-
-        Raises:
-            httpx.HTTPStatusError: If the request fails
-        """
+        """Check the health of the API."""
         client = self._ensure_client()
         response = client.get("/health")
         response.raise_for_status()
         return HealthResponse(**response.json())
 
     def train(self, request: TrainingRequest) -> TrainingResult:
-        """Train the speaker recognition model.
-
-        Args:
-            request: Training request containing voice samples
-
-        Returns:
-            Training result with status and trained users
-
-        Raises:
-            httpx.HTTPStatusError: If the request fails
-        """
+        """Train the speaker recognition model."""
         client = self._ensure_client()
         response = client.post(
             "/train",
@@ -191,17 +163,7 @@ class SyncSpeakerRecognitionClient:
         return TrainingResult(**response.json())
 
     def recognize(self, request: RecognitionRequest) -> RecognitionResult:
-        """Recognize a speaker from audio data.
-
-        Args:
-            request: Recognition request containing audio data
-
-        Returns:
-            Recognition result with identified user and confidence
-
-        Raises:
-            httpx.HTTPStatusError: If the request fails
-        """
+        """Recognize a speaker from audio data."""
         client = self._ensure_client()
         response = client.post(
             "/recognize",

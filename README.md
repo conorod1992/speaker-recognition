@@ -1,6 +1,6 @@
 # Speaker Recognition for Home Assistant
 
-![Python Version](https://img.shields.io/badge/python-3.8%2B-blue)
+![Python Version](https://img.shields.io/badge/python-3.8%20%7C%203.9-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-integration-blue)
 
@@ -85,8 +85,9 @@ Assistant integration through HACS.
 
 6. Start the app.
 
-The first installation may take several minutes because the recognition
-software and its machine-learning dependencies need to be built.
+Release versions use prebuilt `amd64` and `aarch64` images, so Home Assistant
+normally downloads the matching image rather than rebuilding the machine-learning
+stack on the device.
 
 The app currently supports:
 
@@ -368,10 +369,13 @@ Check that:
 - the backend URL contains the correct Home Assistant/server IP address; and
 - the URL begins with `http://` unless you have separately configured HTTPS.
 
-You can also open:
+Remote backend API requests are authenticated by default. For a standalone
+backend, test the health endpoint with the same token configured in Home
+Assistant:
 
-```text
-http://HOME_ASSISTANT_IP:8099/health
+```bash
+curl -H "Authorization: Bearer YOUR_TOKEN" \
+  http://SPEAKER_RECOGNITION_HOST:8099/health
 ```
 
 A healthy service should return JSON containing:
@@ -381,6 +385,11 @@ A healthy service should return JSON containing:
   "status": "healthy"
 }
 ```
+
+A browser opening `/health` directly from another machine will normally receive
+`401 Unauthorized`, because the browser is not sending that bearer token. The
+Home Assistant OS/Supervised add-on path remains trusted through the Supervisor
+gateway.
 
 ## Browser microphone recording is unavailable
 
@@ -446,7 +455,7 @@ The recognition backend can be run as a standalone Docker container:
 docker run -d \
   -p 8099:8099 \
   -e API_TOKEN="replace-with-a-long-random-token" \
-  -v ./embeddings:/app/embeddings \
+  -v ./embeddings:/data/embeddings \
   ghcr.io/conorod1992/speaker-recognition:latest
 ```
 
@@ -467,6 +476,9 @@ the Supervisor gateway is trusted locally.
 # REST API
 
 The recognition backend also exposes a REST API for advanced integrations.
+Remote callers must send `Authorization: Bearer <token>` unless insecure remote
+access has been explicitly enabled. Loopback and the normal Supervisor gateway
+remain trusted locally.
 
 ## `GET /health`
 
@@ -500,7 +512,7 @@ Example request:
   "voice_samples": [
     {
       "user": "Alice",
-      "audio_input": {
+      "audio": {
         "audio_data": "base64-string",
         "sample_rate": 16000
       }
@@ -520,7 +532,7 @@ Example request:
 
 ```json
 {
-  "audio_input": {
+  "audio": {
     "audio_data": "base64-string",
     "sample_rate": 16000
   }
@@ -553,21 +565,24 @@ To include the recognition server dependencies:
 python -m pip install ".[server]"
 ```
 
-The server dependencies currently require Python below 3.10.
+The package currently supports Python 3.8 and 3.9.
 
 Release builds also attach the source archive and wheel to the corresponding
 GitHub Release for advanced users who prefer a packaged artifact.
 
-Example recognition request:
+Example recognition request against an authenticated remote backend:
 
 ```python
 from speaker_recognition import SpeakerRecognitionClient
 from speaker_recognition.models import AudioInput, RecognitionRequest
 
-async with SpeakerRecognitionClient("http://localhost:8099") as client:
+async with SpeakerRecognitionClient(
+    "http://192.168.1.50:8099",
+    api_token="replace-with-the-backend-token",
+) as client:
     result = await client.recognize(
         RecognitionRequest(
-            audio_input=AudioInput(
+            audio=AudioInput(
                 audio_data="<base64-encoded-audio>",
                 sample_rate=16000,
             )
@@ -575,7 +590,7 @@ async with SpeakerRecognitionClient("http://localhost:8099") as client:
     )
 
     print(
-        f"Speaker: {result.speaker} "
+        f"Speaker: {result.user_id or result.candidate_user_id} "
         f"(confidence: {result.confidence:.2%})"
     )
 ```
@@ -604,6 +619,8 @@ environment variables:
 | `LOG_LEVEL` | Logging level | `info` |
 | `ACCESS_LOG` | Enable HTTP access logging | `true` |
 | `EMBEDDINGS_DIR` | Voice-profile storage directory | `./embeddings` |
+| `API_TOKEN` | Bearer token for non-local API clients | empty |
+| `ALLOW_INSECURE_REMOTE` | Permit unauthenticated non-local clients | `false` |
 
 ---
 
@@ -616,7 +633,7 @@ For server development:
 - Python 3.9
 - [uv](https://github.com/astral-sh/uv)
 
-The client-only package supports Python 3.8 and later.
+The packaged backend/client currently supports Python 3.8 and 3.9.
 
 ## Set up the development environment
 
@@ -729,7 +746,7 @@ Recognition logs can make diagnosis much easier.
 
 # License
 
-This project is licensed under the [MIT License](LICENSE).
+This project is licensed under the [MIT License](LICENSE.md).
 
 ## Acknowledgements
 

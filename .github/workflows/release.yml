@@ -3,6 +3,9 @@ name: Release
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -12,9 +15,65 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          persist-credentials: false
 
-      - name: Semantic Release
-        uses: cycjimmy/semantic-release-action@v6
+      - name: Read and verify release version
+        id: version
+        shell: python
+        run: |
+          from pathlib import Path
+          import json
+          import os
+          import re
+
+          pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
+          match = re.search(r'(?m)^version = "([^"]+)"$', pyproject)
+          if match is None:
+              raise RuntimeError("Could not find project version in pyproject.toml")
+          version = match.group(1)
+
+          manifest = json.loads(
+              Path("custom_components/speaker_recognition/manifest.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          if manifest.get("version") != version:
+              raise RuntimeError("Home Assistant manifest version does not match pyproject.toml")
+
+          addon = Path("speaker_recognition_addon/config.yaml").read_text(encoding="utf-8")
+          if f'version: "{version}"' not in addon:
+              raise RuntimeError("Add-on version does not match pyproject.toml")
+
+          for path in (
+              Path("speaker_recognition/api.py"),
+              Path("speaker_recognition_addon/speaker_recognition/api.py"),
+              Path("speaker_recognition_addon/Dockerfile"),
+          ):
+              if version not in path.read_text(encoding="utf-8"):
+                  raise RuntimeError(f"{path} does not contain release version {version}")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"version={version}\n")
+
+      - name: Ensure release does not already exist
         env:
-          GITHUB_TOKEN: ${{ secrets.PAT }}
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            echo "Release $VERSION already exists"
+            exit 1
+          fi
+          if git rev-parse "$VERSION" >/dev/null 2>&1; then
+            echo "Tag $VERSION already exists"
+            exit 1
+          fi
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh release create "$VERSION" \
+            --target "$GITHUB_SHA" \
+            --title "$VERSION" \
+            --generate-notes

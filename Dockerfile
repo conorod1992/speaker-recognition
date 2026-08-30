@@ -7,14 +7,15 @@ RUN apt-get update && \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-COPY pyproject.toml ./
+COPY pyproject.toml README.md LICENSE.md ./
 COPY speaker_recognition ./speaker_recognition
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
-RUN uv pip install --system --no-cache -e ".[server]"
+RUN uv pip install --system --no-cache ".[server]"
 
 RUN mkdir -p /data/embeddings
+VOLUME ["/data/embeddings"]
 
 EXPOSE 8099
 
