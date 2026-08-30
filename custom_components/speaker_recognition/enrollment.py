@@ -149,34 +149,42 @@ def cancel_satellite_session(hass: HomeAssistant, satellite_id: str) -> None:
     _satellite_sessions(hass).pop(satellite_id, None)
 
 
+def _listening_satellite_ids(hass: HomeAssistant) -> list[str]:
+    """Return Assist Satellite entities that are currently listening."""
+    return [
+        state.entity_id
+        for state in hass.states.async_all("assist_satellite")
+        if state.state == "listening"
+    ]
+
+
 def claim_satellite_enrollment_turn(
     hass: HomeAssistant, utterance_sequence: int
 ) -> bool:
-    """Claim an armed enrollment for the satellite currently entering STT.
+    """Claim an armed enrollment only for an unambiguous listening satellite.
 
-    Home Assistant sets the originating Assist Satellite entity to ``listening``
-    before invoking the STT entity. Claiming at that point keeps the capture bound
-    to the selected satellite without depending on a Conversation proxy later in
-    the pipeline.
+    STT metadata does not carry the source satellite. Home Assistant does expose
+    satellite listening state before STT starts, so this fallback is safe only when
+    exactly one Assist Satellite is listening and that same entity has an armed
+    enrollment session. If multiple satellites are listening, the turn is left
+    unclaimed rather than risking capture from the wrong room.
     """
     sessions = _satellite_sessions(hass)
     now = time.monotonic()
-    candidates: list[SatelliteEnrollmentSession] = []
 
     for satellite_id, session in list(sessions.items()):
         if now > session.expires_at:
             sessions.pop(satellite_id, None)
-            continue
-        if session.claimed_utterance_sequence is not None:
-            continue
-        state = hass.states.get(satellite_id)
-        if state is not None and state.state == "listening":
-            candidates.append(session)
 
-    if len(candidates) != 1:
+    listening = _listening_satellite_ids(hass)
+    if len(listening) != 1:
         return False
 
-    candidates[0].claimed_utterance_sequence = utterance_sequence
+    session = sessions.get(listening[0])
+    if session is None or session.claimed_utterance_sequence is not None:
+        return False
+
+    session.claimed_utterance_sequence = utterance_sequence
     return True
 
 

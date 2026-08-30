@@ -10,6 +10,59 @@ class SpeakerRecognitionSettingsPanel extends BasePanel {
     this._settingsBusy = "";
   }
 
+  _pollForSatelliteCapture(index, sessionId) {
+    if (this._pollTimer) clearTimeout(this._pollTimer);
+    const started = Date.now();
+    const poll = async () => {
+      if (!this.isConnected) return;
+      await this._refresh(true);
+      if (!this.isConnected || !this._status) return;
+      const completed = this._status.completed_satellite_captures || [];
+      if (completed.includes(sessionId)) {
+        this._busy = false;
+        this._message = `Sample ${index + 1} captured from the satellite.`;
+        if (this._sampleIndex < this._status.phrases.length - 1) this._sampleIndex += 1;
+        this._render();
+        return;
+      }
+      if (Date.now() - started > 90000) {
+        this._busy = false;
+        this._message = "No matching satellite utterance was captured. Please try again.";
+        this._render();
+        return;
+      }
+      if (this.isConnected) this._pollTimer = setTimeout(poll, 1000);
+    };
+    if (this.isConnected) this._pollTimer = setTimeout(poll, 1000);
+  }
+
+  _pollForLiveTest(sessionId) {
+    if (this._livePollTimer) clearTimeout(this._livePollTimer);
+    const started = Date.now();
+    const poll = async () => {
+      if (!this.isConnected) return;
+      await this._refresh(true);
+      if (!this.isConnected || !this._status) return;
+      const result = this._status.live_test_result;
+      if (result && result.session_id === sessionId) {
+        this._liveBusy = false;
+        this._liveMessage = "Live test completed.";
+        await this._refreshHistory(true);
+        if (!this.isConnected) return;
+        this._render();
+        return;
+      }
+      if (Date.now() - started > 90000) {
+        this._liveBusy = false;
+        this._liveMessage = "No matching Assist turn was seen within 90 seconds. Make sure this pipeline uses the Speaker Recognition STT and Conversation proxies.";
+        this._render();
+        return;
+      }
+      if (this.isConnected) this._livePollTimer = setTimeout(poll, 1000);
+    };
+    if (this.isConnected) this._livePollTimer = setTimeout(poll, 1000);
+  }
+
   async _refreshHistory(silent = false) {
     await super._refreshHistory(silent);
     await this._refreshSettings(true);

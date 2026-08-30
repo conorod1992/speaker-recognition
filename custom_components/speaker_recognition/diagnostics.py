@@ -60,8 +60,20 @@ def live_test_status(
     return session, result if isinstance(result, dict) else None
 
 
+def _is_unambiguous_listening_satellite(
+    hass: HomeAssistant, satellite_id: str
+) -> bool:
+    """Return whether exactly one Assist Satellite is listening and it is selected."""
+    listening = [
+        state.entity_id
+        for state in hass.states.async_all("assist_satellite")
+        if state.state == "listening"
+    ]
+    return listening == [satellite_id]
+
+
 def claim_live_test_turn(hass: HomeAssistant, utterance_sequence: int) -> bool:
-    """Claim the armed live test when its selected satellite enters STT."""
+    """Claim the armed live test when its selected satellite unambiguously enters STT."""
     data = _domain_data(hass)
     session = data.get("live_test_session")
     if not isinstance(session, LiveTestSession):
@@ -71,9 +83,7 @@ def claim_live_test_turn(hass: HomeAssistant, utterance_sequence: int) -> bool:
         return False
     if session.claimed_utterance_sequence is not None:
         return False
-
-    state = hass.states.get(session.satellite_id)
-    if state is None or state.state != "listening":
+    if not _is_unambiguous_listening_satellite(hass, session.satellite_id):
         return False
 
     data["live_test_session"] = replace(
@@ -124,8 +134,10 @@ def record_live_test_result(
         session.claimed_utterance_sequence is not None
         and session.claimed_utterance_sequence == recognition.utterance_sequence
     )
-    satellite_match = satellite_id == session.satellite_id
-    if not claimed_match and not satellite_match:
+    if satellite_id is not None:
+        if satellite_id != session.satellite_id:
+            return False
+    elif not claimed_match:
         return False
 
     data["live_test_result"] = {

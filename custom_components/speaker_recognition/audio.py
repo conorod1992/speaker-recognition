@@ -8,9 +8,12 @@ import wave
 UNSUPPORTED_WAV_MESSAGE = (
     "Only uncompressed 16-bit PCM WAV files are currently supported."
 )
+MAX_UPLOADED_WAV_SECONDS = 30
 
 
-def decode_wav(audio_data: bytes) -> tuple[bytes, int]:
+def decode_wav(
+    audio_data: bytes, *, max_duration_seconds: int | None = MAX_UPLOADED_WAV_SECONDS
+) -> tuple[bytes, int]:
     """Decode a PCM WAV file to signed 16-bit mono PCM."""
     try:
         with wave.open(BytesIO(audio_data), "rb") as wav_file:
@@ -21,9 +24,18 @@ def decode_wav(audio_data: bytes) -> tuple[bytes, int]:
 
             sample_rate = wav_file.getframerate()
             channels = wav_file.getnchannels()
-            pcm_data = wav_file.readframes(wav_file.getnframes())
+            frames = wav_file.getnframes()
+            if (
+                max_duration_seconds is not None
+                and sample_rate > 0
+                and frames > sample_rate * max_duration_seconds
+            ):
+                raise ValueError(
+                    f"WAV audio must be {max_duration_seconds} seconds or shorter."
+                )
+            pcm_data = wav_file.readframes(frames)
         return pcm_to_mono(pcm_data, channels), sample_rate
-    except (EOFError, ValueError, wave.Error) as error:
+    except (EOFError, wave.Error) as error:
         raise ValueError(UNSUPPORTED_WAV_MESSAGE) from error
 
 
@@ -33,10 +45,11 @@ def prepare_live_pcm(
     """Return mono PCM from a live STT buffer.
 
     Home Assistant STT streams with WAV metadata may contain either a complete
-    WAV container or raw PCM frames. Decode only real WAV containers.
+    WAV container or raw PCM frames. Decode only real WAV containers. Live Assist
+    audio is not subject to the enrollment/upload duration cap.
     """
     if audio_data.startswith(b"RIFF") and audio_data[8:12] == b"WAVE":
-        return decode_wav(audio_data)
+        return decode_wav(audio_data, max_duration_seconds=None)
     return pcm_to_mono(audio_data, channels), sample_rate
 
 

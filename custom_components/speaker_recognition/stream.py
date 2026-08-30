@@ -12,6 +12,8 @@ _LOGGER = logging.getLogger(__name__)
 SttResultT = TypeVar("SttResultT")
 RecognitionResultT = TypeVar("RecognitionResultT")
 
+MAX_RECOGNITION_BUFFER_BYTES = 32 * 1024 * 1024
+
 
 async def async_process_buffered_stream(
     stream: AsyncIterable[bytes],
@@ -20,25 +22,42 @@ async def async_process_buffered_stream(
 ) -> tuple[SttResultT, RecognitionResultT | None]:
     """Feed STT immediately and start recognition when input reaches EOF.
 
-    The wrapped STT controls backpressure while every yielded chunk is copied into
-    the utterance buffer. Recognition begins at the generator's EOF, which is often
-    before the wrapped provider finishes decoding or constructing its response.
+    The wrapped STT controls backpressure while yielded chunks are copied into a
+    bounded utterance buffer. If the recognition buffer limit is exceeded, STT
+    continues normally but supplemental speaker recognition is skipped for that
+    utterance instead of allowing unbounded memory growth.
     """
     audio_buffer = bytearray()
+    buffer_overflowed = False
     stream_finished = asyncio.Event()
     stream_was_fully_consumed = False
 
     async def buffered_stream() -> AsyncIterable[bytes]:
-        nonlocal stream_was_fully_consumed
+        nonlocal buffer_overflowed, stream_was_fully_consumed
         async for chunk in stream:
-            audio_buffer.extend(chunk)
+            if not buffer_overflowed:
+                remaining = MAX_RECOGNITION_BUFFER_BYTES - len(audio_buffer)
+                if len(chunk) <= remaining:
+                    audio_buffer.extend(chunk)
+                else:
+                    buffer_overflowed = True
+                    audio_buffer.clear()
+                    _LOGGER.warning(
+                        "Skipping speaker recognition because buffered STT audio "
+                        "exceeded %d bytes",
+                        MAX_RECOGNITION_BUFFER_BYTES,
+                    )
             yield chunk
         stream_was_fully_consumed = True
         stream_finished.set()
 
     async def recognize_after_eof() -> RecognitionResultT | None:
         await stream_finished.wait()
-        if not stream_was_fully_consumed or not audio_buffer:
+        if (
+            not stream_was_fully_consumed
+            or buffer_overflowed
+            or not audio_buffer
+        ):
             return None
         try:
             return await recognition_handler(bytes(audio_buffer))

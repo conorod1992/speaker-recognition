@@ -79,3 +79,32 @@ async def test_recognition_failure_preserves_stt_result() -> None:
     )
 
     assert result == ("transcription", None)
+
+
+@pytest.mark.asyncio
+async def test_oversized_audio_is_forwarded_but_not_recognized(monkeypatch) -> None:
+    """Buffer overflow must fail open for STT without retaining the utterance."""
+    stream_module = _load_stream_module()
+    monkeypatch.setattr(stream_module, "MAX_RECOGNITION_BUFFER_BYTES", 8)
+    recognition_called = False
+
+    async def incoming_stream():
+        yield b"123456"
+        yield b"7890"
+
+    async def stt_handler(stream):
+        received = [chunk async for chunk in stream]
+        assert received == [b"123456", b"7890"]
+        return "transcription"
+
+    async def recognition_handler(audio: bytes):
+        nonlocal recognition_called
+        recognition_called = True
+        return audio
+
+    result = await stream_module.async_process_buffered_stream(
+        incoming_stream(), stt_handler, recognition_handler
+    )
+
+    assert result == ("transcription", None)
+    assert recognition_called is False

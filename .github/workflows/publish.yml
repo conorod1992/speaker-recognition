@@ -6,6 +6,9 @@ on:
     types:
       - published
 
+permissions:
+  contents: write
+
 jobs:
   version:
     runs-on: ubuntu-latest
@@ -29,7 +32,7 @@ jobs:
         with:
           route: GET /repos/${{ github.repository }}/releases/latest
         env:
-          GITHUB_TOKEN: ${{ secrets.PAT }}
+          GITHUB_TOKEN: ${{ github.token }}
 
       - name: Parse API response
         if: github.event_name == 'workflow_dispatch'
@@ -89,7 +92,7 @@ jobs:
           replacements = {
               Path("pyproject.toml"): (r'(?m)^version = ".*"$', f'version = "{version}"'),
               Path("speaker_recognition/api.py"): (r'(?m)^    version=".*",$', f'    version="{version}",'),
-              Path("speaker_recognition_addon/speaker_recognition/api.py"): (r'(?m)^    version=".*",$', f'    version="{version}",'),
+              Path("speaker_recognition_addon/speaker_recognition/api.py"): (r'(?m)^    version=".*",$', f'    version="{version}"'),
               Path("custom_components/speaker_recognition/manifest.json"): (r'(?m)^  "version": ".*"$', f'  "version": "{version}"'),
               Path("speaker_recognition_addon/config.yaml"): (r'(?m)^version: ".*"$', f'version: "{version}"'),
               Path("speaker_recognition_addon/Dockerfile"): (r'(?m)^ARG BUILD_VERSION=".*"$', f'ARG BUILD_VERSION="{version}"'),
@@ -107,25 +110,11 @@ jobs:
         run: |
           uv build
 
-      - name: Upload package to release
-        uses: actions/upload-release-asset@v1
+      - name: Upload packages to release
         env:
-          GITHUB_TOKEN: ${{ secrets.PAT }}
-        with:
-          upload_url: ${{ needs.version.outputs.upload_url }}
-          asset_path: ./dist/hass_speaker_recognition-${{ needs.version.outputs.version }}.tar.gz
-          asset_name: hass_speaker_recognition-${{ needs.version.outputs.version }}.tar.gz
-          asset_content_type: application/gzip
-
-      - name: Upload wheel to release
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.PAT }}
-        with:
-          upload_url: ${{ needs.version.outputs.upload_url }}
-          asset_path: ./dist/hass_speaker_recognition-${{ needs.version.outputs.version }}-py3-none-any.whl
-          asset_name: hass_speaker_recognition-${{ needs.version.outputs.version }}-py3-none-any.whl
-          asset_content_type: application/zip
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ needs.version.outputs.version }}" dist/*.tar.gz dist/*.whl --clobber
 
   docker:
     needs: version
