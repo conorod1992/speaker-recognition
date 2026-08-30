@@ -1,0 +1,66 @@
+name: Enrollment cleanup patch
+
+on:
+  push:
+    branches: [fix/transactional-sidebar-enrollment]
+    paths: [.github/workflows/enrollment-cleanup-patch.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: fix/transactional-sidebar-enrollment
+      - name: Apply cleanup
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace(path, old, new):
+              p = Path(path)
+              text = p.read_text(encoding="utf-8")
+              if old not in text:
+                  raise RuntimeError(f"target missing: {path}")
+              p.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          enrollment = Path("custom_components/speaker_recognition/enrollment.py")
+          text = enrollment.read_text(encoding="utf-8")
+          marker = '''def _write_wav(path: Path, pcm_data: bytes, sample_rate: int) -> None:\n    path.parent.mkdir(parents=True, exist_ok=True)\n    with wave.open(str(path), "wb") as wav_file:\n        wav_file.setnchannels(1)\n        wav_file.setsampwidth(2)\n        wav_file.setframerate(sample_rate)\n        wav_file.writeframes(pcm_data)\n\n\n'''
+          helper = '''def _managed_media_path(hass: HomeAssistant, media_id: str) -> Path | None:\n    """Resolve only enrollment media created and owned by this integration."""\n    for media_key, media_root in hass.config.media_dirs.items():\n        prefix = f"media-source://media_source/{media_key}/"\n        if not media_id.startswith(prefix):\n            continue\n        relative = media_id[len(prefix) :]\n        if not relative.startswith(f"{_MEDIA_SUBDIR}/"):\n            return None\n        root = (Path(media_root) / _MEDIA_SUBDIR).resolve()\n        candidate = (Path(media_root) / relative).resolve()\n        try:\n            candidate.relative_to(root)\n        except ValueError:\n            return None\n        return candidate\n    return None\n\n\ndef _delete_paths(paths: list[Path]) -> None:\n    """Delete integration-owned enrollment files without failing lifecycle updates."""\n    for path in paths:\n        try:\n            path.unlink(missing_ok=True)\n        except OSError:\n            continue\n\n\nasync def async_cleanup_managed_samples(\n    hass: HomeAssistant, voice_samples: list[dict], user_ids: set[str]\n) -> None:\n    """Remove superseded panel recordings after a successful profile update."""\n    paths: list[Path] = []\n    for user_sample in voice_samples:\n        if user_sample.get("user") not in user_ids:\n            continue\n        samples = user_sample.get("samples", [])\n        items = samples if isinstance(samples, list) else [samples]\n        for item in items:\n            if not isinstance(item, dict):\n                continue\n            media_id = item.get("media_content_id")\n            if not isinstance(media_id, str):\n                continue\n            path = _managed_media_path(hass, media_id)\n            if path is not None:\n                paths.append(path)\n    if paths:\n        await hass.async_add_executor_job(_delete_paths, paths)\n\n\n'''
+          if marker not in text:
+              raise RuntimeError("enrollment insertion marker missing")
+          enrollment.write_text(text.replace(marker, marker + helper, 1), encoding="utf-8")
+
+          replace(
+              "custom_components/speaker_recognition/__init__.py",
+              'from .enhancement_websocket import async_register_enhancement_websocket\n',
+              'from .enhancement_websocket import async_register_enhancement_websocket\nfrom .enrollment import async_cleanup_managed_samples\n',
+          )
+          replace(
+              "custom_components/speaker_recognition/__init__.py",
+              '''    voice_samples = entry.options.get(CONF_VOICE_SAMPLES, [])\n    try:\n        changed_users = await async_apply_enrollment_update(\n            entry.runtime_data, voice_samples\n        )\n''',
+              '''    voice_samples = entry.options.get(CONF_VOICE_SAMPLES, [])\n    previous_samples = list(entry.runtime_data.voice_samples)\n    try:\n        changed_users = await async_apply_enrollment_update(\n            entry.runtime_data, voice_samples\n        )\n''',
+          )
+          replace(
+              "custom_components/speaker_recognition/__init__.py",
+              '''    staged = hass.data.get(DOMAIN, {}).get("enrollment_staged")\n    if changed_users and isinstance(staged, dict):\n''',
+              '''    if changed_users:\n        await async_cleanup_managed_samples(hass, previous_samples, changed_users)\n\n    staged = hass.data.get(DOMAIN, {}).get("enrollment_staged")\n    if changed_users and isinstance(staged, dict):\n''',
+          )
+
+          test = Path("tests/test_transactional_enrollment_contract.py")
+          source = test.read_text(encoding="utf-8")
+          source += '''\n\ndef test_superseded_managed_recordings_are_cleaned_only_after_success() -> None:\n    enrollment = (HA / "enrollment.py").read_text(encoding="utf-8")\n    setup = (HA / "__init__.py").read_text(encoding="utf-8")\n    assert "async def async_cleanup_managed_samples(" in enrollment\n    assert "previous_samples = list(entry.runtime_data.voice_samples)" in setup\n    cleanup = "await async_cleanup_managed_samples(hass, previous_samples, changed_users)"\n    assert cleanup in setup\n    assert setup.index(cleanup) > setup.index("changed_users = await async_apply_enrollment_update")\n'''
+          test.write_text(source, encoding="utf-8")
+          PY
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add custom_components/speaker_recognition/enrollment.py custom_components/speaker_recognition/__init__.py tests/test_transactional_enrollment_contract.py
+          git diff --cached --check
+          git commit -m "fix: clean superseded enrollment media after training"
+          git push origin HEAD:fix/transactional-sidebar-enrollment
