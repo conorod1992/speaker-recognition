@@ -22,6 +22,7 @@ jobs:
         run: |
           from pathlib import Path
           import json
+          import os
           import re
 
           pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
@@ -30,11 +31,11 @@ jobs:
               raise RuntimeError("Could not find project version in pyproject.toml")
           version = match.group(1)
 
-          expected = {
-              Path("custom_components/speaker_recognition/manifest.json"): version,
-              Path("speaker_recognition_addon/config.yaml"): version,
-          }
-          manifest = json.loads(next(iter(expected)).read_text(encoding="utf-8"))
+          manifest = json.loads(
+              Path("custom_components/speaker_recognition/manifest.json").read_text(
+                  encoding="utf-8"
+              )
+          )
           if manifest.get("version") != version:
               raise RuntimeError("Home Assistant manifest version does not match pyproject.toml")
 
@@ -50,7 +51,7 @@ jobs:
               if version not in path.read_text(encoding="utf-8"):
                   raise RuntimeError(f"{path} does not contain release version {version}")
 
-          with open("$GITHUB_OUTPUT", "a", encoding="utf-8") as output:
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
               output.write(f"version={version}\n")
 
       - name: Ensure release does not already exist
