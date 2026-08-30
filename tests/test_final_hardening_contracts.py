@@ -31,7 +31,7 @@ def test_release_assets_use_builtin_github_token() -> None:
 def test_standalone_backend_python_support_matches_ml_dependencies() -> None:
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
 
-    assert 'requires-python = ">=3.8,<3.10"' in pyproject
+    assert 'requires-python = "==3.9.*"' in pyproject
     assert "python_version < '3.10'" not in pyproject
 
 
