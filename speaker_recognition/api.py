@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 from ipaddress import ip_address
 import logging
 import secrets
@@ -36,19 +38,35 @@ def _is_loopback(host: str | None) -> bool:
         return False
 
 
+def _authorization_token(authorization: str | None) -> str:
+    """Extract a bearer token or a token supplied via HTTP Basic credentials."""
+    if not authorization:
+        return ""
+    if authorization.startswith("Bearer "):
+        return authorization[7:]
+    if not authorization.startswith("Basic "):
+        return ""
+    try:
+        decoded = base64.b64decode(authorization[6:], validate=True).decode("utf-8")
+    except (binascii.Error, UnicodeDecodeError):
+        return ""
+    username, separator, password = decoded.partition(":")
+    if not separator:
+        return ""
+    return username or password
+
+
 async def require_api_access(
     request: Request,
     authorization: str | None = Header(default=None),
 ) -> None:
-    """Allow local callers, or require the configured bearer token remotely."""
+    """Allow local callers, or require the configured token remotely."""
     client_host = request.client.host if request.client is not None else None
     if _is_loopback(client_host) or config.allow_insecure_remote:
         return
 
     expected = config.api_token.strip()
-    supplied = ""
-    if authorization and authorization.startswith("Bearer "):
-        supplied = authorization[7:]
+    supplied = _authorization_token(authorization)
     if expected and supplied and secrets.compare_digest(supplied, expected):
         return
 
