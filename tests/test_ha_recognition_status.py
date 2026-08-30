@@ -64,13 +64,21 @@ class _FakeHass:
         return target(*args)
 
 
+def _configured(user: str) -> list[dict]:
+    return [
+        {
+            "user": user,
+            "samples": [{"media_content_id": f"media-source://{user}.wav"}],
+        }
+    ]
+
+
 @pytest.mark.asyncio
-async def test_persisted_backend_status_enables_recognition(
+async def test_persisted_configured_backend_status_enables_recognition(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A fresh HA wrapper recognizes using profiles loaded by the add-on."""
     module = _load_recognition_module(monkeypatch)
-    recognition = module.SpeakerRecognition(_FakeHass(), [])
+    recognition = module.SpeakerRecognition(_FakeHass(), _configured("alice"))
 
     async def async_get(path: str):
         assert path == "/health"
@@ -94,57 +102,49 @@ async def test_persisted_backend_status_enables_recognition(
 async def test_backend_status_failure_is_explicitly_retryable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Startup can distinguish an unavailable backend from an untrained backend."""
     module = _load_recognition_module(monkeypatch)
-    recognition = module.SpeakerRecognition(_FakeHass(), [])
+    recognition = module.SpeakerRecognition(_FakeHass(), _configured("alice"))
 
     async def async_get(path: str):
         del path
         raise OSError("backend starting")
 
     recognition._async_get = async_get
-
     with pytest.raises(module.RecognitionBackendUnavailable):
         await recognition.async_refresh_status()
 
 
 @pytest.mark.asyncio
-async def test_failed_training_keeps_loaded_profiles_available(
+async def test_stale_backend_profile_does_not_enable_or_impersonate_user(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """HA does not globally disable recognition when one enrollment request fails."""
+    """A stale backend identity cannot become an HA Context user."""
     module = _load_recognition_module(monkeypatch)
-    recognition = module.SpeakerRecognition(
-        _FakeHass(),
-        [
-            {
-                "user": "alice",
-                "samples": [{"media_content_id": "media-source://alice.wav"}],
-            }
-        ],
-    )
+    recognition = module.SpeakerRecognition(_FakeHass(), _configured("alice"))
 
     async def async_get(path: str):
         del path
         return {"status": "healthy", "trained": True, "enrolled_users": ["bob"]}
 
-    async def async_read_media(media_id: str):
-        del media_id
-        return b"wav"
+    recognition._async_get = async_get
+    assert not await recognition.async_refresh_status()
+    assert recognition.enrolled_users == {"bob"}
+    assert await recognition.async_recognize(b"\x01\x00") is None
+
+
+@pytest.mark.asyncio
+async def test_backend_response_with_unconfigured_identity_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_recognition_module(monkeypatch)
+    recognition = module.SpeakerRecognition(_FakeHass(), _configured("alice"))
+    recognition._trained = True
+    recognition._enrolled_users = {"alice", "bob"}
 
     async def async_post(path: str, payload):
         del payload
-        if path == "/train":
-            raise OSError("training failed")
-        return {"user_id": "bob", "confidence": 0.8, "all_scores": {"bob": 0.8}}
+        assert path == "/recognize"
+        return {"user_id": "bob", "confidence": 0.95, "all_scores": {"bob": 0.95}}
 
-    monkeypatch.setattr(module, "decode_wav", lambda audio: (b"\x01\x00", 16000))
-    recognition._async_get = async_get
-    recognition._async_read_media = async_read_media
     recognition._async_post = async_post
-
-    assert await recognition.async_refresh_status()
-    assert not await recognition.async_train({"alice"})
-    result = await recognition.async_recognize(b"\x01\x00")
-    assert result is not None
-    assert result.user_id == "bob"
+    assert await recognition.async_recognize(b"\x01\x00") is None

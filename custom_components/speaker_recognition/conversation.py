@@ -211,6 +211,16 @@ class SpeakerRecognitionConversationEntity(
                 and speaker_data.confidence >= min_confidence
                 and speaker_data.user_id
             )
+            if identity_eligible and speaker_data.user_id is not None:
+                recognized_user = await self.hass.auth.async_get_user(
+                    speaker_data.user_id
+                )
+                if recognized_user is None:
+                    identity_eligible = False
+                    _LOGGER.warning(
+                        "Ignoring speaker recognition for deleted Home Assistant user_id=%s",
+                        speaker_data.user_id,
+                    )
 
             audio_cache = self.hass.data.setdefault(DOMAIN, {}).setdefault(
                 "utterance_audio", {}

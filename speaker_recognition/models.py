@@ -83,6 +83,19 @@ class TrainingResult(BaseModel):
     outlier_samples: dict[str, list[int]] = Field(default_factory=dict)
 
 
+class ProfileSyncRequest(BaseModel):
+    """Desired set of persisted speaker profiles."""
+
+    desired_users: list[str] = Field(default_factory=list, max_length=256)
+
+
+class ProfileSyncResult(BaseModel):
+    """Result of synchronizing persisted profiles."""
+
+    enrolled_users: list[str]
+    removed_users: list[str] = Field(default_factory=list)
+
+
 class RecognitionRequest(BaseModel):
     """Recognition request data model."""
 
