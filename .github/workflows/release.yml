@@ -8,12 +8,14 @@ permissions:
 
 jobs:
   release:
+    if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     concurrency: release
     steps:
-      - name: Checkout code
+      - name: Checkout master
         uses: actions/checkout@v6
         with:
+          ref: master
           fetch-depth: 0
 
       - name: Read and verify release version
@@ -54,6 +56,10 @@ jobs:
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
               output.write(f"version={version}\n")
 
+      - name: Capture checked-out master commit
+        id: source
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
       - name: Ensure release does not already exist
         env:
           GH_TOKEN: ${{ github.token }}
@@ -72,8 +78,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
         run: |
           gh release create "$VERSION" \
-            --target "$GITHUB_SHA" \
+            --target "$SOURCE_SHA" \
             --title "$VERSION" \
             --generate-notes
