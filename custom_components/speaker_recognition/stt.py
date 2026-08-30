@@ -35,6 +35,7 @@ from .const import (
     DOMAIN,
     ENTRY_TYPE_CONVERSATION,
     ENTRY_TYPE_MAIN,
+    effective_use_basic_dsp,
 )
 from .correlation import (
     CorrelatedRecognition,
@@ -48,6 +49,7 @@ from .enrollment import (
 )
 from .recognition import SpeakerRecognition
 from .stream import async_process_buffered_stream
+from .streaming_enhancement import async_enhance_stt_stream
 from .whisper import WhisperDetection, detect_whisper
 
 _LOGGER = logging.getLogger(__name__)
@@ -87,7 +89,10 @@ async def async_setup_entry(
 ) -> None:
     """Set up Speaker Recognition STT platform via config entry."""
     registry = er.async_get(hass)
-    stt_entity_id = config_entry.data[CONF_STT_ENTITY]
+    configured_stt = config_entry.options.get(
+        CONF_STT_ENTITY, config_entry.data[CONF_STT_ENTITY]
+    )
+    stt_entity_id = str(configured_stt)
     entity_id = er.async_validate_entity_id(registry, stt_entity_id)
 
     main_entry = _get_main_entry(hass)
@@ -103,6 +108,7 @@ async def async_setup_entry(
                 entity_id,
                 config_entry.entry_id,
                 main_entry,
+                effective_use_basic_dsp(config_entry.data, config_entry.options),
             )
         ]
     )
@@ -120,6 +126,7 @@ class SpeakerRecognitionSTTEntity(SpeechToTextEntity):
         stt_entity_id: str,
         unique_id: str,
         main_entry: ConfigEntry,
+        use_basic_dsp: bool = False,
     ) -> None:
         """Initialize the STT entity."""
         registry = er.async_get(hass)
@@ -146,6 +153,7 @@ class SpeakerRecognitionSTTEntity(SpeechToTextEntity):
         self._attr_unique_id = unique_id
         self._stt_entity_id = stt_entity_id
         self._main_entry = main_entry
+        self._use_basic_dsp = use_basic_dsp
 
         self._cached_languages: list[str] | None = None
         self._cached_formats: list[AudioFormats] | None = None
@@ -265,17 +273,35 @@ class SpeakerRecognitionSTTEntity(SpeechToTextEntity):
         async def process_stt(buffered_stream: AsyncIterable[bytes]) -> SpeechResult:
             nonlocal stt_seconds, stt_completed_at
             stt_started = perf_counter()
+            stt_stream = buffered_stream
+            if self._use_basic_dsp:
+                if (
+                    metadata.format == AudioFormats.WAV
+                    and metadata.codec == AudioCodecs.PCM
+                    and metadata.bit_rate == AudioBitRates.BITRATE_16
+                ):
+                    stt_stream = async_enhance_stt_stream(
+                        buffered_stream,
+                        int(metadata.sample_rate),
+                        int(metadata.channel),
+                    )
+                else:
+                    _LOGGER.warning(
+                        "Basic DSP is enabled but this STT audio format is unsupported; "
+                        "passing the original stream through unchanged"
+                    )
             try:
                 return await source_entity.async_process_audio_stream(
-                    metadata, buffered_stream
+                    metadata, stt_stream
                 )
             finally:
                 stt_completed_at = perf_counter()
                 stt_seconds = stt_completed_at - stt_started
                 _LOGGER.debug(
-                    "Wrapped STT completed in %.3fs for utterance %d",
+                    "Wrapped STT completed in %.3fs for utterance %d (basic DSP: %s)",
                     stt_seconds,
                     utterance_sequence,
+                    self._use_basic_dsp,
                 )
 
         async def recognize_speaker(audio_data: bytes):
@@ -341,7 +367,7 @@ class SpeakerRecognitionSTTEntity(SpeechToTextEntity):
                             pcm_audio,
                             sample_rate,
                         )
-                    except Exception:  # Supplemental analysis must never block Assist.
+                    except Exception:
                         _LOGGER.exception(
                             "Whisper detection failed for utterance %d",
                             utterance_sequence,

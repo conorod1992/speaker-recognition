@@ -28,15 +28,18 @@ from .const import (
     CONF_SAMPLE,
     CONF_SAMPLES,
     CONF_STT_ENTITY,
+    CONF_USE_BASIC_DSP,
     CONF_USER,
     CONF_VOICE_SAMPLES,
     DEFAULT_BACKEND_URL,
     DEFAULT_MIN_CONFIDENCE,
+    DEFAULT_USE_BASIC_DSP,
     DOMAIN,
     ENTRY_TYPE_CONVERSATION,
     ENTRY_TYPE_MAIN,
     ENTRY_TYPE_STT,
     effective_backend_url,
+    effective_use_basic_dsp,
 )
 
 from .audio import decode_wav
@@ -146,8 +149,6 @@ class EnrollmentFlowMixin:
                     self.hass, user_input[CONF_SAMPLE]
                 )
             except Exception:
-                # Media sources can raise provider-specific Home Assistant errors.
-                # Keep the user on this sample so they can choose or upload again.
                 errors[CONF_SAMPLE] = "invalid_enrollment_sample"
             else:
                 media_item = user_input[CONF_SAMPLE]
@@ -357,6 +358,9 @@ class SpeakerRecognitionConfigFlow(EnrollmentFlowMixin, ConfigFlow, domain=DOMAI
                     data={
                         CONF_ENTRY_TYPE: ENTRY_TYPE_STT,
                         CONF_STT_ENTITY: stt_entity,
+                        CONF_USE_BASIC_DSP: user_input.get(
+                            CONF_USE_BASIC_DSP, DEFAULT_USE_BASIC_DSP
+                        ),
                     },
                 )
 
@@ -369,6 +373,9 @@ class SpeakerRecognitionConfigFlow(EnrollmentFlowMixin, ConfigFlow, domain=DOMAI
                             domain=Platform.STT,
                         ),
                     ),
+                    vol.Optional(
+                        CONF_USE_BASIC_DSP, default=DEFAULT_USE_BASIC_DSP
+                    ): selector.BooleanSelector(),
                 }
             ),
             errors=errors,
@@ -509,10 +516,18 @@ class SpeakerRecognitionOptionsFlow(EnrollmentFlowMixin, OptionsFlow):
                     title="",
                     data={
                         CONF_STT_ENTITY: user_input[CONF_STT_ENTITY],
+                        CONF_USE_BASIC_DSP: user_input.get(
+                            CONF_USE_BASIC_DSP, DEFAULT_USE_BASIC_DSP
+                        ),
                     },
                 )
 
-        current_stt_entity = self.config_entry.data.get(CONF_STT_ENTITY)
+        current_stt_entity = self.config_entry.options.get(
+            CONF_STT_ENTITY, self.config_entry.data.get(CONF_STT_ENTITY)
+        )
+        current_use_basic_dsp = effective_use_basic_dsp(
+            self.config_entry.data, self.config_entry.options
+        )
 
         return self.async_show_form(
             step_id="stt_options",
@@ -525,6 +540,9 @@ class SpeakerRecognitionOptionsFlow(EnrollmentFlowMixin, OptionsFlow):
                             domain=Platform.STT,
                         ),
                     ),
+                    vol.Optional(
+                        CONF_USE_BASIC_DSP, default=current_use_basic_dsp
+                    ): selector.BooleanSelector(),
                 }
             ),
             errors=errors,

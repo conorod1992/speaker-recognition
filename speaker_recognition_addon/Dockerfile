@@ -14,16 +14,15 @@ RUN apt-get update \
 
 COPY requirements.txt ./
 RUN /opt/speaker-recognition/bin/pip install --no-cache-dir -r requirements.txt
-# Install the wheel only as a carrier for its bundled architecture-specific
-# librnnoise.so. Runtime code loads that library directly with ctypes and does
-# not import pyrnnoise's high-level package or its optional audio/plotting stack.
+# Keep the RNNoise runtime packaged for future experimentation, but production
+# startup/API code does not import it or allocate RNNoise state.
 RUN /opt/speaker-recognition/bin/pip install --no-cache-dir --no-deps pyrnnoise==0.4.3
 
 
 FROM ghcr.io/home-assistant/base-debian:bookworm
 
 ARG BUILD_ARCH="unknown"
-ARG BUILD_VERSION="2.5.0"
+ARG BUILD_VERSION="2.6.0"
 
 LABEL \
     io.hass.type="app" \
