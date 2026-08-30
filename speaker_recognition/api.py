@@ -26,12 +26,15 @@ from speaker_recognition.warmup import WarmupStatus, warm_encoder
 _LOGGER = logging.getLogger(__name__)
 _RECOGNIZER_LOCK = Lock()
 _WARMUP_STATUS: WarmupStatus = warm_encoder(recognizer)
+_TRUSTED_LOCAL_HOSTS = {"172.30.32.1"}
 
 
-def _is_loopback(host: str | None) -> bool:
-    """Return whether a request source is a literal loopback address."""
+def _is_trusted_local(host: str | None) -> bool:
+    """Return whether a request source is local to the service/HA host."""
     if not host:
         return False
+    if host in _TRUSTED_LOCAL_HOSTS:
+        return True
     try:
         return ip_address(host).is_loopback
     except ValueError:
@@ -60,9 +63,9 @@ async def require_api_access(
     request: Request,
     authorization: str | None = Header(default=None),
 ) -> None:
-    """Allow local callers, or require the configured token remotely."""
+    """Allow trusted local callers, or require the configured token remotely."""
     client_host = request.client.host if request.client is not None else None
-    if _is_loopback(client_host) or config.allow_insecure_remote:
+    if _is_trusted_local(client_host) or config.allow_insecure_remote:
         return
 
     expected = config.api_token.strip()
