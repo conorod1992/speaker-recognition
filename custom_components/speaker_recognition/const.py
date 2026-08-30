@@ -6,6 +6,7 @@ DOMAIN = "speaker_recognition"
 
 # Configuration keys
 CONF_BACKEND_URL = "backend_url"
+CONF_BACKEND_TOKEN = "backend_token"
 CONF_VOICE_SAMPLES = "voice_samples"
 CONF_USER = "user"
 CONF_SAMPLES = "samples"
@@ -38,6 +39,12 @@ def effective_backend_url(data: Mapping[str, Any], options: Mapping[str, Any]) -
     """Return the current backend URL using runtime precedence."""
     value = options.get(CONF_BACKEND_URL, data.get(CONF_BACKEND_URL))
     return value if isinstance(value, str) else DEFAULT_BACKEND_URL
+
+
+def effective_backend_token(data: Mapping[str, Any], options: Mapping[str, Any]) -> str:
+    """Return the optional API token for a remote standalone backend."""
+    value = options.get(CONF_BACKEND_TOKEN, data.get(CONF_BACKEND_TOKEN, ""))
+    return value if isinstance(value, str) else ""
 
 
 def effective_use_basic_dsp(data: Mapping[str, Any], options: Mapping[str, Any]) -> bool:

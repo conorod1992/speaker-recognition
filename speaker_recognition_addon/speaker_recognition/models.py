@@ -2,7 +2,7 @@
 
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from speaker_recognition.const import (
     DEFAULT_ACCESS_LOG,
@@ -14,6 +14,7 @@ from speaker_recognition.const import (
     DEFAULT_PORT,
     MAX_AUDIO_BASE64_CHARS,
     MAX_SAMPLE_RATE,
+    MAX_TRAINING_AUDIO_BYTES,
     MAX_TRAINING_SAMPLES,
     MIN_SAMPLE_RATE,
 )
@@ -66,6 +67,19 @@ class TrainingRequest(BaseModel):
         max_length=MAX_TRAINING_SAMPLES,
         description="List of voice samples",
     )
+
+    @model_validator(mode="after")
+    def validate_total_audio_budget(self) -> "TrainingRequest":
+        """Reject requests whose combined decoded audio can exhaust memory."""
+        estimated_bytes = sum(
+            (len(sample.audio.audio_data) * 3 + 3) // 4
+            for sample in self.voice_samples
+        )
+        if estimated_bytes > MAX_TRAINING_AUDIO_BYTES:
+            raise ValueError(
+                "Combined training audio exceeds the 64 MiB request budget"
+            )
+        return self
 
 
 class TrainingResult(BaseModel):

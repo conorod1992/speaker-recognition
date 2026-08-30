@@ -3,12 +3,25 @@
 from __future__ import annotations
 
 from io import BytesIO
+from pathlib import Path
 import wave
 
 UNSUPPORTED_WAV_MESSAGE = (
     "Only uncompressed 16-bit PCM WAV files are currently supported."
 )
 MAX_UPLOADED_WAV_SECONDS = 30
+MAX_LOCAL_WAV_BYTES = 16 * 1024 * 1024
+
+
+def read_bounded_wav(path: Path) -> bytes:
+    """Read a local WAV only after enforcing a stat-first size budget."""
+    if path.stat().st_size > MAX_LOCAL_WAV_BYTES:
+        raise ValueError("WAV file exceeds the 16 MiB upload limit")
+    with path.open("rb") as stream:
+        data = stream.read(MAX_LOCAL_WAV_BYTES + 1)
+    if len(data) > MAX_LOCAL_WAV_BYTES:
+        raise ValueError("WAV file exceeds the 16 MiB upload limit")
+    return data
 
 
 def decode_wav(

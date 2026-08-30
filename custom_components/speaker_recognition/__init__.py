@@ -18,6 +18,7 @@ from .const import (
     ENTRY_TYPE_CONVERSATION,
     ENTRY_TYPE_MAIN,
     ENTRY_TYPE_STT,
+    effective_backend_token,
     effective_backend_url,
 )
 from .enhancement_websocket import async_register_enhancement_websocket
@@ -134,8 +135,9 @@ async def async_setup_main_entry(
 ) -> bool:
     """Set up main config entry."""
     backend_url = effective_backend_url(entry.data, entry.options)
+    backend_token = effective_backend_token(entry.data, entry.options)
     voice_samples = entry.options.get(CONF_VOICE_SAMPLES, [])
-    recognition = SpeakerRecognition(hass, voice_samples, backend_url)
+    recognition = SpeakerRecognition(hass, voice_samples, backend_url, backend_token)
 
     pending_user_value = entry.options.get(CONF_PENDING_ENROLLMENT)
     pending_user = pending_user_value if isinstance(pending_user_value, str) else None

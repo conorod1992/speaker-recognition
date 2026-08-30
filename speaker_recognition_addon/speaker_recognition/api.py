@@ -11,7 +11,10 @@ from threading import Lock
 from typing import Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from starlette.responses import JSONResponse
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from speaker_recognition.const import MAX_REQUEST_BODY_BYTES
 from speaker_recognition.models import (
     ErrorResponse,
     HealthResponse,
@@ -30,6 +33,57 @@ _LOGGER = logging.getLogger(__name__)
 _RECOGNIZER_LOCK = Lock()
 _WARMUP_STATUS: WarmupStatus = warm_encoder(recognizer)
 _TRUSTED_LOCAL_HOSTS = {"172.30.32.1"}
+
+
+class RequestBodyTooLarge(Exception):
+    """Raised when an HTTP request exceeds the configured transport budget."""
+
+
+class RequestBodyLimitMiddleware:
+    """Reject oversized Content-Length and chunked HTTP request bodies."""
+
+    def __init__(self, app: ASGIApp, max_body_size: int) -> None:
+        self.app = app
+        self.max_body_size = max_body_size
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        headers = {key.lower(): value for key, value in scope.get("headers", [])}
+        content_length = headers.get(b"content-length")
+        if content_length is not None:
+            try:
+                if int(content_length) > self.max_body_size:
+                    response = JSONResponse(
+                        {"detail": "Request body exceeds the 96 MiB limit"},
+                        status_code=413,
+                    )
+                    await response(scope, receive, send)
+                    return
+            except ValueError:
+                pass
+
+        received = 0
+
+        async def limited_receive() -> Message:
+            nonlocal received
+            message = await receive()
+            if message.get("type") == "http.request":
+                received += len(message.get("body", b""))
+                if received > self.max_body_size:
+                    raise RequestBodyTooLarge
+            return message
+
+        try:
+            await self.app(scope, limited_receive, send)
+        except RequestBodyTooLarge:
+            response = JSONResponse(
+                {"detail": "Request body exceeds the 96 MiB limit"},
+                status_code=413,
+            )
+            await response(scope, receive, send)
 
 
 def _is_trusted_local(host: Optional[str]) -> bool:
@@ -86,6 +140,7 @@ app = FastAPI(
     version="2.8.0",
     dependencies=[Depends(require_api_access)],
 )
+app.add_middleware(RequestBodyLimitMiddleware, max_body_size=MAX_REQUEST_BODY_BYTES)
 
 
 @app.get("/health", response_model=HealthResponse, tags=["Health"])

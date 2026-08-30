@@ -13,7 +13,7 @@ from aiohttp import ClientError, ClientTimeout
 from homeassistant.components import media_source
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .audio import decode_wav
+from .audio import decode_wav, read_bounded_wav
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -67,6 +67,7 @@ class SpeakerRecognition:
         hass: HomeAssistant,
         voice_samples: list[dict],
         base_url: str = DEFAULT_ADDON_URL,
+        api_token: str = "",
     ) -> None:
         """Initialize speaker recognition."""
         self.hass = hass
@@ -74,6 +75,13 @@ class SpeakerRecognition:
         self._trained = False
         self._enrolled_users: set[str] = set()
         self._base_url = base_url.rstrip("/")
+        self._api_token = api_token.strip()
+
+    def _request_headers(self) -> dict[str, str]:
+        """Return authorization headers for a secured remote backend."""
+        if not self._api_token:
+            return {}
+        return {"Authorization": f"Bearer {self._api_token}"}
 
     @property
     def configured_users(self) -> set[str]:
@@ -100,6 +108,7 @@ class SpeakerRecognition:
         async with session.post(
             f"{self._base_url}{path}",
             json=payload,
+            headers=self._request_headers(),
             timeout=ClientTimeout(total=timeout_seconds),
         ) as response:
             response.raise_for_status()
@@ -112,7 +121,9 @@ class SpeakerRecognition:
         """Read lightweight status from the local Speaker Recognition app."""
         session = async_get_clientsession(self.hass)
         async with session.get(
-            f"{self._base_url}{path}", timeout=ClientTimeout(total=10)
+            f"{self._base_url}{path}",
+            headers=self._request_headers(),
+            timeout=ClientTimeout(total=10),
         ) as response:
             response.raise_for_status()
             data = await response.json()
@@ -127,7 +138,7 @@ class SpeakerRecognition:
         )
         if resolved_media.path is None:
             raise ValueError("Selected media source does not provide a local file")
-        return await self.hass.async_add_executor_job(resolved_media.path.read_bytes)
+        return await self.hass.async_add_executor_job(read_bounded_wav, resolved_media.path)
 
     async def async_refresh_status(self) -> bool:
         """Refresh recognition availability from persisted backend profiles."""

@@ -445,6 +445,7 @@ The recognition backend can be run as a standalone Docker container:
 ```bash
 docker run -d \
   -p 8099:8099 \
+  -e API_TOKEN="replace-with-a-long-random-token" \
   -v ./embeddings:/app/embeddings \
   ghcr.io/conorod1992/speaker-recognition:latest
 ```
@@ -455,6 +456,11 @@ server, for example:
 ```text
 http://192.168.1.50:8099
 ```
+
+Enter the same value from `API_TOKEN` in the integration's **Backend API token**
+field. Remote standalone backends reject unauthenticated requests by default.
+The Home Assistant OS/Supervised add-on path does not require this token because
+the Supervisor gateway is trusted locally.
 
 ---
 
