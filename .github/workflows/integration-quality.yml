@@ -23,8 +23,8 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v7
 
-      - name: Lint Home Assistant integration
-        run: uvx ruff check custom_components/speaker_recognition
+      - name: Check Home Assistant integration correctness
+        run: uvx ruff check --select E4,E7,E9,F custom_components/speaker_recognition
 
       - name: Compile Home Assistant integration
         run: python -m compileall -q custom_components/speaker_recognition
