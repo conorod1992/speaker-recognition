@@ -6,10 +6,16 @@ from pydantic import BaseModel, Field
 
 from speaker_recognition.const import (
     DEFAULT_ACCESS_LOG,
+    DEFAULT_ALLOW_INSECURE_REMOTE,
+    DEFAULT_API_TOKEN,
     DEFAULT_EMBEDDINGS_DIR,
     DEFAULT_HOST,
     DEFAULT_LOG_LEVEL,
     DEFAULT_PORT,
+    MAX_AUDIO_BASE64_CHARS,
+    MAX_SAMPLE_RATE,
+    MAX_TRAINING_SAMPLES,
+    MIN_SAMPLE_RATE,
 )
 
 
@@ -21,6 +27,8 @@ class Config(BaseModel):
     log_level: str = DEFAULT_LOG_LEVEL
     access_log: bool = DEFAULT_ACCESS_LOG
     embeddings_directory: str = DEFAULT_EMBEDDINGS_DIR
+    api_token: str = DEFAULT_API_TOKEN
+    allow_insecure_remote: bool = DEFAULT_ALLOW_INSECURE_REMOTE
 
     class ConfigDict:
         """Pydantic configuration."""
@@ -31,21 +39,36 @@ class Config(BaseModel):
 class AudioInput(BaseModel):
     """Audio input data model."""
 
-    audio_data: str = Field(..., description="Base64 encoded audio data")
-    sample_rate: int = Field(16000, description="Audio sample rate in Hz")
+    audio_data: str = Field(
+        ...,
+        min_length=1,
+        max_length=MAX_AUDIO_BASE64_CHARS,
+        description="Base64 encoded audio data",
+    )
+    sample_rate: int = Field(
+        16000,
+        ge=MIN_SAMPLE_RATE,
+        le=MAX_SAMPLE_RATE,
+        description="Audio sample rate in Hz",
+    )
 
 
 class VoiceSample(BaseModel):
     """Audio sample associated with one user."""
 
-    user: str = Field(..., description="User identifier")
+    user: str = Field(..., min_length=1, max_length=256, description="User identifier")
     audio: AudioInput = Field(..., description="Audio input for voice sample")
 
 
 class TrainingRequest(BaseModel):
     """Training request data model."""
 
-    voice_samples: list[VoiceSample] = Field(..., description="List of voice samples")
+    voice_samples: list[VoiceSample] = Field(
+        ...,
+        min_length=1,
+        max_length=MAX_TRAINING_SAMPLES,
+        description="List of voice samples",
+    )
 
 
 class TrainingResult(BaseModel):
