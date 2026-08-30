@@ -242,9 +242,9 @@ class SpeakerRecognizer:
                 target = self._profile_path(user_id)
                 if target.exists():
                     target.unlink()
-                backup = backups.get(user_id)
-                if backup is not None and backup.exists():
-                    backup.replace(target)
+                restored_backup = backups.get(user_id)
+                if restored_backup is not None and restored_backup.exists():
+                    restored_backup.replace(target)
             for user_id, backup in backups.items():
                 target = self._profile_path(user_id)
                 if user_id not in committed and backup.exists() and not target.exists():
