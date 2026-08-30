@@ -41,6 +41,7 @@ from .const import (
     effective_backend_url,
     effective_use_basic_dsp,
 )
+from .proxy import proxy_unique_id, validate_proxy_source
 
 from .audio import decode_wav
 
@@ -346,11 +347,12 @@ class SpeakerRecognitionConfigFlow(EnrollmentFlowMixin, ConfigFlow, domain=DOMAI
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            if not user_input[CONF_STT_ENTITY].startswith("stt."):
-                errors["base"] = "not_stt_entity"
+            stt_entity = user_input[CONF_STT_ENTITY]
+            source_error = validate_proxy_source(self.hass, ENTRY_TYPE_STT, stt_entity)
+            if source_error is not None:
+                errors["base"] = source_error
             else:
-                stt_entity = user_input[CONF_STT_ENTITY]
-                await self.async_set_unique_id(f"{ENTRY_TYPE_STT}_{stt_entity}")
+                await self.async_set_unique_id(proxy_unique_id(ENTRY_TYPE_STT, stt_entity))
                 self._abort_if_unique_id_configured()
 
                 return self.async_create_entry(
@@ -388,12 +390,15 @@ class SpeakerRecognitionConfigFlow(EnrollmentFlowMixin, ConfigFlow, domain=DOMAI
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            if not user_input[CONF_CONVERSATION_ENTITY].startswith("conversation."):
-                errors["base"] = "not_conversation_entity"
+            conversation_entity = user_input[CONF_CONVERSATION_ENTITY]
+            source_error = validate_proxy_source(
+                self.hass, ENTRY_TYPE_CONVERSATION, conversation_entity
+            )
+            if source_error is not None:
+                errors["base"] = source_error
             else:
-                conversation_entity = user_input[CONF_CONVERSATION_ENTITY]
                 await self.async_set_unique_id(
-                    f"{ENTRY_TYPE_CONVERSATION}_{conversation_entity}"
+                    proxy_unique_id(ENTRY_TYPE_CONVERSATION, conversation_entity)
                 )
                 self._abort_if_unique_id_configured()
 
@@ -509,13 +514,20 @@ class SpeakerRecognitionOptionsFlow(EnrollmentFlowMixin, OptionsFlow):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            if not user_input[CONF_STT_ENTITY].startswith("stt."):
-                errors["base"] = "not_stt_entity"
+            stt_entity = user_input[CONF_STT_ENTITY]
+            source_error = validate_proxy_source(
+                self.hass,
+                ENTRY_TYPE_STT,
+                stt_entity,
+                exclude_entry_id=self.config_entry.entry_id,
+            )
+            if source_error is not None:
+                errors["base"] = source_error
             else:
                 return self.async_create_entry(
                     title="",
                     data={
-                        CONF_STT_ENTITY: user_input[CONF_STT_ENTITY],
+                        CONF_STT_ENTITY: stt_entity,
                         CONF_USE_BASIC_DSP: user_input.get(
                             CONF_USE_BASIC_DSP, DEFAULT_USE_BASIC_DSP
                         ),
@@ -555,22 +567,31 @@ class SpeakerRecognitionOptionsFlow(EnrollmentFlowMixin, OptionsFlow):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            if not user_input[CONF_CONVERSATION_ENTITY].startswith("conversation."):
-                errors["base"] = "not_conversation_entity"
+            conversation_entity = user_input[CONF_CONVERSATION_ENTITY]
+            source_error = validate_proxy_source(
+                self.hass,
+                ENTRY_TYPE_CONVERSATION,
+                conversation_entity,
+                exclude_entry_id=self.config_entry.entry_id,
+            )
+            if source_error is not None:
+                errors["base"] = source_error
             else:
                 return self.async_create_entry(
                     title="",
                     data={
-                        CONF_CONVERSATION_ENTITY: user_input[CONF_CONVERSATION_ENTITY],
+                        CONF_CONVERSATION_ENTITY: conversation_entity,
                         CONF_MIN_CONFIDENCE: user_input[CONF_MIN_CONFIDENCE],
                     },
                 )
 
-        current_conversation_entity = self.config_entry.data.get(
-            CONF_CONVERSATION_ENTITY
+        current_conversation_entity = self.config_entry.options.get(
+            CONF_CONVERSATION_ENTITY,
+            self.config_entry.data.get(CONF_CONVERSATION_ENTITY),
         )
-        current_min_confidence = self.config_entry.data.get(
-            CONF_MIN_CONFIDENCE, DEFAULT_MIN_CONFIDENCE
+        current_min_confidence = self.config_entry.options.get(
+            CONF_MIN_CONFIDENCE,
+            self.config_entry.data.get(CONF_MIN_CONFIDENCE, DEFAULT_MIN_CONFIDENCE),
         )
 
         return self.async_show_form(

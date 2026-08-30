@@ -11,7 +11,7 @@
       "add_stt": {"title": "Set up STT proxy", "description": "Select the STT provider to augment with speaker recognition. Basic DSP is optional and affects only the audio sent to speech-to-text; speaker and whisper recognition continue to use the original audio.", "data": {"stt_entity": "Speech-to-text entity", "use_basic_dsp": "Use basic DSP for speech-to-text"}, "data_description": {"use_basic_dsp": "Apply conservative streaming cleanup for hum and low-level background noise. Off by default because filtering can occasionally reduce speech detail."}},
       "add_conversation": {"title": "Set up Conversation proxy", "description": "Configure the conversation agent and minimum confidence threshold.", "data": {"conversation_entity": "Conversation agent", "min_confidence": "Minimum confidence"}}
     },
-    "error": {"not_stt_entity": "The selected entity is not a speech-to-text entity", "not_conversation_entity": "The selected entity is not a conversation agent", "invalid_enrollment_sample": "Select a local, uncompressed 16-bit PCM WAV recording containing at least 0.5 seconds of audio"}
+    "error": {"not_stt_entity": "The selected entity is not a speech-to-text entity", "not_conversation_entity": "The selected entity is not a conversation agent", "speaker_recognition_proxy_source": "Select the original provider, not another Speaker Recognition proxy", "proxy_source_already_wrapped": "That provider is already wrapped by another Speaker Recognition proxy", "invalid_enrollment_sample": "Select a local, uncompressed 16-bit PCM WAV recording containing at least 0.5 seconds of audio"}
   },
   "options": {
     "step": {
@@ -24,6 +24,6 @@
       "stt_options": {"title": "Configure STT proxy", "description": "Basic DSP affects only the stream forwarded to the selected speech-to-text provider. Speaker recognition and whisper detection always receive the original unfiltered audio.", "data": {"stt_entity": "Speech-to-text entity", "use_basic_dsp": "Use basic DSP for speech-to-text"}, "data_description": {"use_basic_dsp": "Apply conservative streaming cleanup for hum and low-level background noise. Off by default because filtering can occasionally reduce speech detail."}},
       "conversation_options": {"title": "Configure Conversation proxy", "data": {"conversation_entity": "Conversation agent", "min_confidence": "Minimum confidence"}}
     },
-    "error": {"not_stt_entity": "The selected entity is not a speech-to-text entity", "not_conversation_entity": "The selected entity is not a conversation agent", "invalid_enrollment_sample": "Select a local, uncompressed 16-bit PCM WAV recording containing at least 0.5 seconds of audio"}
+    "error": {"not_stt_entity": "The selected entity is not a speech-to-text entity", "not_conversation_entity": "The selected entity is not a conversation agent", "speaker_recognition_proxy_source": "Select the original provider, not another Speaker Recognition proxy", "proxy_source_already_wrapped": "That provider is already wrapped by another Speaker Recognition proxy", "invalid_enrollment_sample": "Select a local, uncompressed 16-bit PCM WAV recording containing at least 0.5 seconds of audio"}
   }
 }

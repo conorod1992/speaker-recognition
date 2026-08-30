@@ -58,7 +58,10 @@ async def async_setup_entry(
 ) -> None:
     """Set up Speaker Recognition Conversation platform via config entry."""
     registry = er.async_get(hass)
-    conversation_entity_id = config_entry.data[CONF_CONVERSATION_ENTITY]
+    configured_conversation = config_entry.options.get(
+        CONF_CONVERSATION_ENTITY, config_entry.data[CONF_CONVERSATION_ENTITY]
+    )
+    conversation_entity_id = str(configured_conversation)
     entity_id = er.async_validate_entity_id(registry, conversation_entity_id)
 
     main_entry = _get_main_entry(hass)
@@ -137,7 +140,12 @@ class SpeakerRecognitionConversationEntity(
     @property
     def min_confidence(self) -> float:
         """Get minimum confidence threshold."""
-        return self._config_entry.data.get(CONF_MIN_CONFIDENCE, DEFAULT_MIN_CONFIDENCE)
+        return float(
+            self._config_entry.options.get(
+                CONF_MIN_CONFIDENCE,
+                self._config_entry.data.get(CONF_MIN_CONFIDENCE, DEFAULT_MIN_CONFIDENCE),
+            )
+        )
 
     @callback
     def _async_update_properties(self) -> None:
@@ -202,10 +210,7 @@ class SpeakerRecognitionConversationEntity(
 
         speaker_data = take_correlated_recognition()
         if speaker_data is not None:
-            min_confidence = self._config_entry.options.get(
-                CONF_MIN_CONFIDENCE,
-                self._config_entry.data.get(CONF_MIN_CONFIDENCE, DEFAULT_MIN_CONFIDENCE),
-            )
+            min_confidence = self.min_confidence
             identity_eligible = bool(
                 speaker_data.accepted
                 and speaker_data.confidence >= min_confidence
