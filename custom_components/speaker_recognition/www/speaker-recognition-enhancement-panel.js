@@ -44,45 +44,32 @@ Panel.prototype._renderLiveResult = function(result) {
 
   let comparison;
   if (this._enhancementSequence !== result.utterance_sequence || this._enhancementBusy) {
-    comparison = `<div class="result"><strong>Audio comparison</strong><p class="muted">Preparing original, basic DSP, RNNoise-only and combined playback…</p></div>`;
+    comparison = `<div class="result"><strong>Audio comparison</strong><p class="muted">Preparing original and basic DSP playback…</p></div>`;
   } else if (this._enhancementError) {
     comparison = `<div class="result"><strong>Audio comparison</strong><p class="muted">${this._escape(this._enhancementError)}</p></div>`;
   } else if (this._enhancementPreview) {
     const preview = this._enhancementPreview;
     const basicMs = Math.round(Number(preview.basic_processing_seconds ?? preview.processing_seconds ?? 0) * 1000);
-    const rnnoiseMs = Math.round(Number(preview.rnnoise_processing_seconds || 0) * 1000);
-    const comboMs = Math.round(Number(preview.neural_processing_seconds || 0) * 1000);
-    const engine = this._escape(preview.neural_engine || "RNNoise");
-    const rnnoisePlayer = preview.rnnoise_wav_base64
-      ? `<div><b>RNNoise only</b><small>${engine} directly on the original HA audio</small><audio controls preload="metadata" src="data:audio/wav;base64,${preview.rnnoise_wav_base64}"></audio></div>`
-      : `<div><b>RNNoise only</b><small>Direct neural denoise</small><p class="muted">${this._escape(preview.neural_error || "Neural preview unavailable")}</p></div>`;
-    const comboPlayer = preview.neural_wav_base64
-      ? `<div><b>Basic DSP + RNNoise</b><small>Current DSP preprocessing followed by ${engine}</small><audio controls preload="metadata" src="data:audio/wav;base64,${preview.neural_wav_base64}"></audio></div>`
-      : `<div><b>Basic DSP + RNNoise</b><small>Combined path</small><p class="muted">${this._escape(preview.neural_error || "Neural preview unavailable")}</p></div>`;
     const metrics = preview.comparison_metrics || {};
 
     comparison = `<div class="result">
-      <strong>Audio comparison · Neural denoise benchmark</strong>
-      <p class="muted">All four players use the same live Assist utterance. RNNoise-only now receives the untouched Home Assistant PCM, so this test separates RNNoise quality from any effect caused by the basic DSP preprocessing. Production STT is still unchanged.</p>
+      <strong>Audio comparison · Basic DSP</strong>
+      <p class="muted">Both players use the same live Assist utterance. This lets you hear the conservative cleanup used by the optional STT DSP setting. Speaker recognition and whisper detection continue to use the original unfiltered audio.</p>
       <div class="audioCompare">
         <div><b>Original from Home Assistant</b><small>No extra processing</small><audio controls preload="metadata" src="data:audio/wav;base64,${preview.original_wav_base64}"></audio></div>
         <div><b>Basic DSP</b><small>High-pass, mains notches and conservative attenuation</small><audio controls preload="metadata" src="data:audio/wav;base64,${preview.enhanced_wav_base64}"></audio></div>
-        ${rnnoisePlayer}
-        ${comboPlayer}
       </div>
-      <p class="muted">Basic DSP: ${basicMs} ms${preview.rnnoise_wav_base64 ? ` · RNNoise-only: ${rnnoiseMs} ms · Combined RNNoise stage: ${comboMs} ms` : ""} · Audio: ${Number(preview.audio_seconds || 0).toFixed(1)} s at ${preview.sample_rate} Hz.</p>
+      <p class="muted">Basic DSP: ${basicMs} ms · Audio: ${Number(preview.audio_seconds || 0).toFixed(1)} s at ${preview.sample_rate} Hz.</p>
       <div class="metricTableWrap">
         <table class="metricTable">
           <thead><tr><th>Path</th><th>Estimated noise floor</th><th>Speech level</th><th>Estimated SNR</th></tr></thead>
           <tbody>
             ${this._renderEnhancementMetric("Original", metrics.original)}
             ${this._renderEnhancementMetric("Basic DSP", metrics.basic)}
-            ${this._renderEnhancementMetric("RNNoise only", metrics.rnnoise)}
-            ${this._renderEnhancementMetric("DSP + RNNoise", metrics.combo)}
           </tbody>
         </table>
       </div>
-      <p class="muted">The noise/SNR figures are diagnostic estimates from quiet and speech-heavy 20 ms frames, not laboratory measurements. They are most useful for comparing the four versions of this same utterance.</p>
+      <p class="muted">The noise/SNR figures are diagnostic estimates from quiet and speech-heavy 20 ms frames, not laboratory measurements. They are most useful for comparing these two versions of the same utterance.</p>
     </div>`;
   } else {
     comparison = "";
