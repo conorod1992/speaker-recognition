@@ -83,7 +83,7 @@ async def require_api_access(
 app = FastAPI(
     title="Speaker Recognition Service",
     description="API for training and recognizing speakers using voice samples",
-    version="2.7.0",
+    version="2.8.0",
     dependencies=[Depends(require_api_access)],
 )
 
