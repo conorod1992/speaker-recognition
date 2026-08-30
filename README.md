@@ -1,6 +1,6 @@
 # Speaker Recognition for Home Assistant
 
-![Python Version](https://img.shields.io/badge/python-3.8%20%7C%203.9-blue)
+![Python Version](https://img.shields.io/badge/python-3.9-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-integration-blue)
 
@@ -565,7 +565,7 @@ To include the recognition server dependencies:
 python -m pip install ".[server]"
 ```
 
-The package currently supports Python 3.8 and 3.9.
+The package currently supports Python 3.9.
 
 Release builds also attach the source archive and wheel to the corresponding
 GitHub Release for advanced users who prefer a packaged artifact.
@@ -633,7 +633,7 @@ For server development:
 - Python 3.9
 - [uv](https://github.com/astral-sh/uv)
 
-The packaged backend/client currently supports Python 3.8 and 3.9.
+The packaged backend/client currently supports Python 3.9.
 
 ## Set up the development environment
 

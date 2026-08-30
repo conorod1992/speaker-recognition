@@ -17,6 +17,15 @@ def test_manual_release_uses_builtin_token_and_tracked_version() -> None:
     assert "pyproject.toml" in workflow
 
 
+def test_manual_release_is_hard_pinned_to_master() -> None:
+    workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    assert "if: github.ref == 'refs/heads/master'" in workflow
+    assert "ref: master" in workflow
+    assert 'sha=$(git rev-parse HEAD)' in workflow
+    assert '--target "$SOURCE_SHA"' in workflow
+    assert '--target "$GITHUB_SHA"' not in workflow
+
+
 def test_publish_jobs_checkout_immutable_release_tag() -> None:
     workflow = (ROOT / ".github/workflows/publish.yml").read_text(encoding="utf-8")
     assert workflow.count("ref: ${{ needs.version.outputs.version }}") == 3
@@ -36,6 +45,15 @@ def test_addon_consumes_the_images_publish_builds() -> None:
         "${{ matrix.arch }}-speaker-recognition-addon"
     )
     assert image_name in publish
+
+
+def test_compose_uses_fork_image_and_requires_authentication() -> None:
+    compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    assert "ghcr.io/conorod1992/speaker-recognition:latest" in compose
+    assert "ghcr.io/eulemitkeule/speaker-recognition" not in compose
+    assert "API_TOKEN=${API_TOKEN:?" in compose
+    assert "ALLOW_INSECURE_REMOTE=false" in compose
+    assert "./embeddings:/data/embeddings" in compose
 
 
 def test_standalone_container_has_valid_package_metadata_and_persistent_volume() -> None:
@@ -61,6 +79,8 @@ def test_readme_examples_match_current_api_and_storage_contract() -> None:
     assert "Authorization: Bearer YOUR_TOKEN" in readme
     assert 'api_token="replace-with-the-backend-token"' in readme
     assert "[MIT License](LICENSE.md)" in readme
+    assert "python-3.9-blue" in readme
+    assert "supports Python 3.9." in readme
 
 
 def test_packaged_client_can_authenticate_remote_backend() -> None:
