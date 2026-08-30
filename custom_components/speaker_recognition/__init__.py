@@ -21,6 +21,7 @@ from .const import (
     effective_backend_url,
 )
 from .enhancement_websocket import async_register_enhancement_websocket
+from .enrollment import async_cleanup_managed_samples
 from .frontend import async_register_frontend
 from .lifecycle import (
     EnrollmentUpdateFailed,
@@ -195,6 +196,7 @@ async def async_update_main_listener(
 ) -> None:
     """Handle main config options update."""
     voice_samples = entry.options.get(CONF_VOICE_SAMPLES, [])
+    previous_samples = list(entry.runtime_data.voice_samples)
     try:
         changed_users = await async_apply_enrollment_update(
             entry.runtime_data, voice_samples
@@ -205,6 +207,9 @@ async def async_update_main_listener(
         hass.config_entries.async_update_entry(entry, options=updated_options)
         _resolve_enrollment_commits(hass, error.changed_users, False)
         return
+
+    if changed_users:
+        await async_cleanup_managed_samples(hass, previous_samples, changed_users)
 
     staged = hass.data.get(DOMAIN, {}).get("enrollment_staged")
     if changed_users and isinstance(staged, dict):

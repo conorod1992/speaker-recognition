@@ -27,3 +27,13 @@ def test_update_listener_reports_training_success_or_failure() -> None:
     assert "def _resolve_enrollment_commits(" in source
     assert "_resolve_enrollment_commits(hass, error.changed_users, False)" in source
     assert "_resolve_enrollment_commits(hass, changed_users, True)" in source
+
+
+def test_superseded_managed_recordings_are_cleaned_only_after_success() -> None:
+    enrollment = (HA / "enrollment.py").read_text(encoding="utf-8")
+    setup = (HA / "__init__.py").read_text(encoding="utf-8")
+    assert "async def async_cleanup_managed_samples(" in enrollment
+    assert "previous_samples = list(entry.runtime_data.voice_samples)" in setup
+    cleanup = "await async_cleanup_managed_samples(hass, previous_samples, changed_users)"
+    assert cleanup in setup
+    assert setup.index(cleanup) > setup.index("changed_users = await async_apply_enrollment_update")

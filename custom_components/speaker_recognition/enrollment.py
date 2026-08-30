@@ -77,6 +77,57 @@ def _write_wav(path: Path, pcm_data: bytes, sample_rate: int) -> None:
         wav_file.writeframes(pcm_data)
 
 
+def _managed_media_path(hass: HomeAssistant, media_id: str) -> Path | None:
+    """Resolve only enrollment media created and owned by this integration."""
+    for media_key, media_root in hass.config.media_dirs.items():
+        prefix = f"media-source://media_source/{media_key}/"
+        if not media_id.startswith(prefix):
+            continue
+        relative = media_id[len(prefix) :]
+        if not relative.startswith(f"{_MEDIA_SUBDIR}/"):
+            return None
+        root = (Path(media_root) / _MEDIA_SUBDIR).resolve()
+        candidate = (Path(media_root) / relative).resolve()
+        try:
+            candidate.relative_to(root)
+        except ValueError:
+            return None
+        return candidate
+    return None
+
+
+def _delete_paths(paths: list[Path]) -> None:
+    """Delete integration-owned enrollment files without failing lifecycle updates."""
+    for path in paths:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            continue
+
+
+async def async_cleanup_managed_samples(
+    hass: HomeAssistant, voice_samples: list[dict], user_ids: set[str]
+) -> None:
+    """Remove superseded panel recordings after a successful profile update."""
+    paths: list[Path] = []
+    for user_sample in voice_samples:
+        if user_sample.get("user") not in user_ids:
+            continue
+        samples = user_sample.get("samples", [])
+        items = samples if isinstance(samples, list) else [samples]
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            media_id = item.get("media_content_id")
+            if not isinstance(media_id, str):
+                continue
+            path = _managed_media_path(hass, media_id)
+            if path is not None:
+                paths.append(path)
+    if paths:
+        await hass.async_add_executor_job(_delete_paths, paths)
+
+
 async def async_stage_pcm_sample(
     hass: HomeAssistant,
     user_id: str,
