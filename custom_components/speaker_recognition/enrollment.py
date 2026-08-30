@@ -58,7 +58,11 @@ def _sample_location(
         raise ValueError("Home Assistant has no local media directory configured")
     media_key, media_root = next(iter(hass.config.media_dirs.items()))
     safe_user = "".join(ch for ch in user_id if ch.isalnum() or ch in "-_")
-    relative = f"{_MEDIA_SUBDIR}/{safe_user}/sample_{sample_index + 1}.wav"
+    generation = secrets.token_urlsafe(8)
+    relative = (
+        f"{_MEDIA_SUBDIR}/{safe_user}/"
+        f"sample_{sample_index + 1}_{generation}.wav"
+    )
     path = Path(media_root) / relative
     media_id = f"media-source://media_source/{media_key}/{relative}"
     return path, media_id
