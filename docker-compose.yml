@@ -1,6 +1,6 @@
 services:
   speaker-recognition:
-    image: ghcr.io/eulemitkeule/speaker-recognition:latest
+    image: ghcr.io/conorod1992/speaker-recognition:latest
     container_name: speaker-recognition
     restart: unless-stopped
     ports:
@@ -16,6 +16,10 @@ services:
 
       # Storage configuration
       - EMBEDDINGS_DIR=/data/embeddings
+
+      # Remote API security. Compose fails fast if API_TOKEN is not set.
+      - API_TOKEN=${API_TOKEN:?Set API_TOKEN before starting Speaker Recognition}
+      - ALLOW_INSECURE_REMOTE=false
     volumes:
       # Persist embeddings data
       - ./embeddings:/data/embeddings
