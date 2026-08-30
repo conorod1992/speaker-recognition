@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 from typing import Any
 
@@ -435,8 +436,8 @@ def websocket_start_live_test(
     }
 )
 @websocket_api.require_admin
-@callback
-def websocket_commit_enrollment(
+@websocket_api.async_response
+async def websocket_commit_enrollment(
     hass: HomeAssistant,
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
@@ -459,11 +460,45 @@ def websocket_commit_enrollment(
         )
         return
 
+    user_id = msg["user_id"]
+    domain_data = hass.data.setdefault(DOMAIN, {})
+    waiters = domain_data.setdefault("enrollment_commit_waiters", {})
+    existing_waiter = waiters.get(user_id)
+    if existing_waiter is not None and not existing_waiter.done():
+        connection.send_error(
+            msg["id"], "commit_in_progress", "Enrollment is already being committed"
+        )
+        return
+
+    completion = hass.loop.create_future()
+    waiters[user_id] = completion
     options = dict(entry.options)
     options[CONF_VOICE_SAMPLES] = _replace_user_samples(
-        list(options.get(CONF_VOICE_SAMPLES, [])), msg["user_id"], ordered
+        list(options.get(CONF_VOICE_SAMPLES, [])), user_id, ordered
     )
     hass.config_entries.async_update_entry(entry, options=options)
+
+    try:
+        succeeded = await asyncio.wait_for(asyncio.shield(completion), timeout=305)
+    except asyncio.TimeoutError:
+        connection.send_error(
+            msg["id"],
+            "training_timeout",
+            "Speaker training did not finish in time; the previous enrollment remains active",
+        )
+        return
+    finally:
+        if waiters.get(user_id) is completion:
+            waiters.pop(user_id, None)
+
+    if not succeeded:
+        connection.send_error(
+            msg["id"],
+            "training_failed",
+            "Speaker training failed; the previous enrollment remains active",
+        )
+        return
+
     connection.send_result(msg["id"], {"committed": True, "samples": len(ordered)})
 
 

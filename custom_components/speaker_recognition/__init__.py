@@ -21,6 +21,7 @@ from .const import (
     effective_backend_url,
 )
 from .enhancement_websocket import async_register_enhancement_websocket
+from .enrollment import async_cleanup_managed_samples
 from .frontend import async_register_frontend
 from .lifecycle import (
     EnrollmentUpdateFailed,
@@ -45,6 +46,19 @@ def _get_main_entry(hass: HomeAssistant) -> ConfigEntry | None:
         if entry.data.get(CONF_ENTRY_TYPE) == ENTRY_TYPE_MAIN:
             return entry
     return None
+
+
+def _resolve_enrollment_commits(
+    hass: HomeAssistant, user_ids: set[str], succeeded: bool
+) -> None:
+    """Resolve sidebar enrollment commits after backend training finishes."""
+    waiters = hass.data.get(DOMAIN, {}).get("enrollment_commit_waiters")
+    if not isinstance(waiters, dict):
+        return
+    for user_id in user_ids:
+        completion = waiters.get(user_id)
+        if completion is not None and not completion.done():
+            completion.set_result(succeeded)
 
 
 def _prepare_proxy_entry(
@@ -182,6 +196,7 @@ async def async_update_main_listener(
 ) -> None:
     """Handle main config options update."""
     voice_samples = entry.options.get(CONF_VOICE_SAMPLES, [])
+    previous_samples = list(entry.runtime_data.voice_samples)
     try:
         changed_users = await async_apply_enrollment_update(
             entry.runtime_data, voice_samples
@@ -190,13 +205,18 @@ async def async_update_main_listener(
         updated_options = dict(entry.options)
         updated_options[CONF_VOICE_SAMPLES] = error.previous_samples
         hass.config_entries.async_update_entry(entry, options=updated_options)
+        _resolve_enrollment_commits(hass, error.changed_users, False)
         return
+
+    if changed_users:
+        await async_cleanup_managed_samples(hass, previous_samples, changed_users)
 
     staged = hass.data.get(DOMAIN, {}).get("enrollment_staged")
     if changed_users and isinstance(staged, dict):
         for user_id in changed_users:
             staged.pop(user_id, None)
 
+    _resolve_enrollment_commits(hass, changed_users, True)
     await hass.config_entries.async_reload(entry.entry_id)
 
 
