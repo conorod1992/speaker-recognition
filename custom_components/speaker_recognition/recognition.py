@@ -256,15 +256,17 @@ class SpeakerRecognition:
 
             request_started = perf_counter()
             try:
-                response = await self._async_post(
-                    "/recognize",
-                    {
-                        "audio": {
-                            "audio_data": audio_base64,
-                            "sample_rate": sample_rate,
-                        }
-                    },
-                    timeout_seconds=RECOGNITION_TIMEOUT_SECONDS,
+                response = await asyncio.wait_for(
+                    self._async_post(
+                        "/recognize",
+                        {
+                            "audio": {
+                                "audio_data": audio_base64,
+                                "sample_rate": sample_rate,
+                            }
+                        },
+                    ),
+                    timeout=RECOGNITION_TIMEOUT_SECONDS,
                 )
             finally:
                 _LOGGER.debug(
