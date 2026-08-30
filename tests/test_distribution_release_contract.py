@@ -31,7 +31,11 @@ def test_addon_consumes_the_images_publish_builds() -> None:
     )
     publish = (ROOT / ".github/workflows/publish.yml").read_text(encoding="utf-8")
     assert "image: ghcr.io/conorod1992/{arch}-speaker-recognition-addon" in config
-    assert "ghcr.io/${{ github.repository_owner }}/${{ matrix.arch }}-speaker-recognition-addon" in publish
+    image_name = (
+        "ghcr.io/${{ github.repository_owner }}/"
+        "${{ matrix.arch }}-speaker-recognition-addon"
+    )
+    assert image_name in publish
 
 
 def test_standalone_container_has_valid_package_metadata_and_persistent_volume() -> None:
@@ -47,6 +51,16 @@ def test_environment_example_matches_runtime_names_and_secure_defaults() -> None
     assert "EMBEDDINGS_PATH=" not in env_example
     assert "API_TOKEN=" in env_example
     assert "ALLOW_INSECURE_REMOTE=false" in env_example
+
+
+def test_readme_examples_match_current_api_and_storage_contract() -> None:
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "./embeddings:/data/embeddings" in readme
+    assert "./embeddings:/app/embeddings" not in readme
+    assert '"audio_input"' not in readme
+    assert "Authorization: Bearer YOUR_TOKEN" in readme
+    assert 'api_token="replace-with-the-backend-token"' in readme
+    assert "[MIT License](LICENSE.md)" in readme
 
 
 def test_packaged_client_can_authenticate_remote_backend() -> None:
