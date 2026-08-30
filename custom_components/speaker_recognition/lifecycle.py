@@ -11,11 +11,22 @@ class RecognitionLifecycle(Protocol):
 
     voice_samples: list[dict[str, Any]]
 
+    @property
+    def enrolled_users(self) -> set[str]:
+        """Return persisted backend profile IDs."""
+
+    @property
+    def configured_users(self) -> set[str]:
+        """Return configured enrollment user IDs."""
+
     async def async_refresh_status(self) -> bool:
         """Refresh availability from persisted backend profiles."""
 
     async def async_train(self, user_ids: set[str] | None = None) -> bool:
         """Train configured samples for selected users."""
+
+    async def async_sync_profiles(self) -> bool:
+        """Remove persisted profiles not present in current configuration."""
 
     def update_voice_samples(self, voice_samples: list[dict[str, Any]]) -> None:
         """Replace configured media references."""
@@ -34,6 +45,10 @@ class EnrollmentUpdateFailed(RuntimeError):
         self.previous_samples = previous_samples
 
 
+class ProfileReconciliationFailed(RuntimeError):
+    """Raised when configured profiles cannot be restored at startup."""
+
+
 def _samples_by_user(
     voice_samples: Iterable[dict[str, Any]],
 ) -> dict[str, dict[str, Any]]:
@@ -48,21 +63,30 @@ def _samples_by_user(
 async def async_initialize_recognition(
     recognition: RecognitionLifecycle, pending_user: str | None = None
 ) -> bool:
-    """Load backend status and process only a newly completed enrollment.
-
-    Return whether there is no pending enrollment left to retry.
-    """
+    """Reconcile configured users with persisted backend profiles."""
     await recognition.async_refresh_status()
-    if pending_user is None:
-        return True
-    return await recognition.async_train({pending_user})
+    configured = recognition.configured_users
+    missing = configured - recognition.enrolled_users
+    if pending_user is not None and pending_user in configured:
+        missing.add(pending_user)
+
+    if missing and not await recognition.async_train(missing):
+        raise ProfileReconciliationFailed(
+            "Configured speaker profiles could not be restored"
+        )
+
+    # Stale profiles are not allowed to remain identity candidates. If cleanup
+    # itself fails, runtime identity validation still rejects unconfigured IDs,
+    # and the next setup/update retries synchronization.
+    await recognition.async_sync_profiles()
+    return pending_user is None or pending_user in recognition.enrolled_users
 
 
 async def async_apply_enrollment_update(
     recognition: RecognitionLifecycle,
     voice_samples: list[dict[str, Any]],
 ) -> set[str]:
-    """Train only users whose configured samples actually changed."""
+    """Train changed users, then synchronize removed profiles."""
     previous_samples = recognition.voice_samples
     previous = _samples_by_user(previous_samples)
     current = _samples_by_user(voice_samples)
@@ -71,8 +95,14 @@ async def async_apply_enrollment_update(
         for user_id, sample in current.items()
         if previous.get(user_id) != sample
     }
+
     recognition.update_voice_samples(voice_samples)
     if changed_users and not await recognition.async_train(changed_users):
         recognition.update_voice_samples(previous_samples)
         raise EnrollmentUpdateFailed(changed_users, previous_samples)
-    return changed_users
+
+    # Do not roll back a successfully trained configuration merely because stale
+    # profile cleanup failed. The new profile is already authoritative, and
+    # unconfigured backend identities are rejected by runtime validation.
+    await recognition.async_sync_profiles()
+    return changed_users | (set(previous) - set(current))
