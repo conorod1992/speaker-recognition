@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import Event, HomeAssistant, callback
@@ -13,6 +15,7 @@ from .const import (
     CONF_PENDING_ENROLLMENT,
     CONF_VOICE_SAMPLES,
     DOMAIN,
+    ENTRY_TYPE_CONVERSATION,
     ENTRY_TYPE_MAIN,
     ENTRY_TYPE_STT,
     effective_backend_url,
@@ -25,9 +28,12 @@ from .lifecycle import (
     async_apply_enrollment_update,
     async_initialize_recognition,
 )
+from .proxy import effective_proxy_source, sync_proxy_unique_id, validate_proxy_source
 from .recognition import RecognitionBackendUnavailable, SpeakerRecognition
 from .telemetry import async_setup_decision_history
 from .websocket import async_register_websocket_commands
+
+_LOGGER = logging.getLogger(__name__)
 
 SpeakerRecognitionConfigEntry = ConfigEntry[SpeakerRecognition]
 
@@ -39,6 +45,39 @@ def _get_main_entry(hass: HomeAssistant) -> ConfigEntry | None:
         if entry.data.get(CONF_ENTRY_TYPE) == ENTRY_TYPE_MAIN:
             return entry
     return None
+
+
+def _prepare_proxy_entry(
+    hass: HomeAssistant, entry: ConfigEntry, entry_type: str
+) -> bool:
+    """Validate a persisted proxy source and synchronize its unique ID."""
+    source = effective_proxy_source(entry, entry_type)
+    if source is None:
+        _LOGGER.error("Speaker Recognition proxy %s has no configured source", entry.entry_id)
+        return False
+
+    source_error = validate_proxy_source(
+        hass,
+        entry_type,
+        source,
+        exclude_entry_id=entry.entry_id,
+    )
+    if source_error is not None:
+        _LOGGER.error(
+            "Refusing unsafe Speaker Recognition proxy source %s for entry %s: %s",
+            source,
+            entry.entry_id,
+            source_error,
+        )
+        return False
+
+    if not sync_proxy_unique_id(hass, entry, entry_type):
+        _LOGGER.error(
+            "Could not synchronize Speaker Recognition proxy unique ID for %s",
+            entry.entry_id,
+        )
+        return False
+    return True
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
@@ -108,6 +147,8 @@ async def async_setup_stt_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool
     main_entry = _get_main_entry(hass)
     if main_entry is None:
         return False
+    if not _prepare_proxy_entry(hass, entry, ENTRY_TYPE_STT):
+        return False
     await hass.config_entries.async_forward_entry_setups(entry, [Platform.STT])
     entry.async_on_unload(entry.add_update_listener(async_update_stt_listener))
     return True
@@ -119,6 +160,8 @@ async def async_setup_conversation_entry(
     """Set up Conversation proxy entry."""
     main_entry = _get_main_entry(hass)
     if main_entry is None:
+        return False
+    if not _prepare_proxy_entry(hass, entry, ENTRY_TYPE_CONVERSATION):
         return False
     await hass.config_entries.async_forward_entry_setups(entry, [Platform.CONVERSATION])
     entry.async_on_unload(entry.add_update_listener(async_update_conversation_listener))
