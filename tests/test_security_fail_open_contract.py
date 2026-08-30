@@ -53,7 +53,8 @@ def test_recognition_has_short_fail_open_deadline() -> None:
     recognition = (HA / "recognition.py").read_text(encoding="utf-8")
 
     assert "RECOGNITION_TIMEOUT_SECONDS = 4.0" in recognition
-    assert "timeout_seconds=RECOGNITION_TIMEOUT_SECONDS" in recognition
+    assert "response = await asyncio.wait_for(" in recognition
+    assert "timeout=RECOGNITION_TIMEOUT_SECONDS" in recognition
     assert "except asyncio.TimeoutError:" in recognition
     assert "continuing Assist without identity" in recognition
 
