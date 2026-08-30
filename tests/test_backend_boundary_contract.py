@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from speaker_recognition.const import MAX_TRAINING_AUDIO_BYTES
+from speaker_recognition.const import MAX_AUDIO_BASE64_CHARS
 from speaker_recognition.models import AudioInput, TrainingRequest, VoiceSample
 
 ROOT = Path(__file__).parents[1]
@@ -13,10 +13,18 @@ HA = ROOT / "custom_components" / "speaker_recognition"
 
 
 def test_training_request_has_aggregate_audio_budget() -> None:
-    encoded = "A" * (((MAX_TRAINING_AUDIO_BYTES // 2) * 4 // 3) + 1024)
-    sample = VoiceSample(user="alice", audio=AudioInput(audio_data=encoded, sample_rate=16000))
-    with pytest.raises(ValidationError):
-        TrainingRequest(voice_samples=[sample, sample, sample])
+    # Each sample remains within the existing 12 MiB decoded per-sample budget,
+    # while six maximum-sized samples exceed the 64 MiB aggregate budget.
+    encoded = "A" * MAX_AUDIO_BASE64_CHARS
+    samples = [
+        VoiceSample(
+            user=f"user-{index}",
+            audio=AudioInput(audio_data=encoded, sample_rate=16000),
+        )
+        for index in range(6)
+    ]
+    with pytest.raises(ValidationError, match="Combined training audio"):
+        TrainingRequest(voice_samples=samples)
 
 
 def test_remote_backend_token_is_first_class_ha_configuration() -> None:
