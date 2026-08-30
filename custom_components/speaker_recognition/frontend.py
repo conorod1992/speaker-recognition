@@ -10,6 +10,7 @@ from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN
 from .enhancement_websocket import async_register_enhancement_websocket
+from .settings_websocket import async_register_settings_websocket
 
 PANEL_URL_PATH = "speaker-recognition"
 PANEL_ELEMENT = "speaker-recognition-calibration-panel"
@@ -23,6 +24,7 @@ async def async_register_frontend(hass: HomeAssistant) -> None:
         [StaticPathConfig(STATIC_URL, str(www_path), False)]
     )
     async_register_enhancement_websocket(hass)
+    async_register_settings_websocket(hass)
     await panel_custom.async_register_panel(
         hass,
         webcomponent_name=PANEL_ELEMENT,
