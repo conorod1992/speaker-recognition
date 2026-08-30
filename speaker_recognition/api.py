@@ -12,9 +12,9 @@ from typing import Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from starlette.responses import JSONResponse
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from speaker_recognition.const import MAX_REQUEST_BODY_BYTES
-
 from speaker_recognition.models import (
     ErrorResponse,
     HealthResponse,
@@ -42,11 +42,11 @@ class RequestBodyTooLarge(Exception):
 class RequestBodyLimitMiddleware:
     """Reject oversized Content-Length and chunked HTTP request bodies."""
 
-    def __init__(self, app, max_body_size: int) -> None:
+    def __init__(self, app: ASGIApp, max_body_size: int) -> None:
         self.app = app
         self.max_body_size = max_body_size
 
-    async def __call__(self, scope, receive, send) -> None:
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope.get("type") != "http":
             await self.app(scope, receive, send)
             return
@@ -67,7 +67,7 @@ class RequestBodyLimitMiddleware:
 
         received = 0
 
-        async def limited_receive():
+        async def limited_receive() -> Message:
             nonlocal received
             message = await receive()
             if message.get("type") == "http.request":
