@@ -18,6 +18,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import selector
 
 from .const import (
+    CONF_BACKEND_TOKEN,
     CONF_BACKEND_URL,
     CONF_CONVERSATION_ENTITY,
     CONF_ENTRY_TYPE,
@@ -38,12 +39,13 @@ from .const import (
     ENTRY_TYPE_CONVERSATION,
     ENTRY_TYPE_MAIN,
     ENTRY_TYPE_STT,
+    effective_backend_token,
     effective_backend_url,
     effective_use_basic_dsp,
 )
 from .proxy import proxy_unique_id, validate_proxy_source
 
-from .audio import decode_wav
+from .audio import decode_wav, read_bounded_wav
 
 ENROLLMENT_PHRASES = (
     "The morning light is warm across the kitchen table.",
@@ -83,7 +85,7 @@ async def _async_validate_enrollment_sample(
     resolved_media = await media_source.async_resolve_media(hass, media_id, None)
     if resolved_media.path is None:
         raise ValueError("Selected media must be a local Home Assistant media file")
-    audio_data = await hass.async_add_executor_job(resolved_media.path.read_bytes)
+    audio_data = await hass.async_add_executor_job(read_bounded_wav, resolved_media.path)
     pcm_data, sample_rate = await hass.async_add_executor_job(decode_wav, audio_data)
     if sample_rate <= 0 or len(pcm_data) < sample_rate:
         raise ValueError("Enrollment sample must contain at least 0.5 seconds of audio")
@@ -258,6 +260,7 @@ class SpeakerRecognitionConfigFlow(EnrollmentFlowMixin, ConfigFlow, domain=DOMAI
     MINOR_VERSION = 0
 
     _pending_backend_url: str
+    _pending_backend_token: str
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -289,6 +292,7 @@ class SpeakerRecognitionConfigFlow(EnrollmentFlowMixin, ConfigFlow, domain=DOMAI
             await self.async_set_unique_id(ENTRY_TYPE_MAIN)
             self._abort_if_unique_id_configured()
             self._pending_backend_url = user_input[CONF_BACKEND_URL]
+            self._pending_backend_token = user_input.get(CONF_BACKEND_TOKEN, "")
             return await self.async_step_enrollment_menu()
 
         return self.async_show_form(
@@ -298,6 +302,7 @@ class SpeakerRecognitionConfigFlow(EnrollmentFlowMixin, ConfigFlow, domain=DOMAI
                     vol.Required(
                         CONF_BACKEND_URL, default=DEFAULT_BACKEND_URL
                     ): selector.TextSelector(),
+                    vol.Optional(CONF_BACKEND_TOKEN, default=""): selector.TextSelector(),
                 }
             ),
             errors=errors,
@@ -336,6 +341,7 @@ class SpeakerRecognitionConfigFlow(EnrollmentFlowMixin, ConfigFlow, domain=DOMAI
             data={
                 CONF_ENTRY_TYPE: ENTRY_TYPE_MAIN,
                 CONF_BACKEND_URL: self._pending_backend_url,
+                CONF_BACKEND_TOKEN: self._pending_backend_token,
             },
             options=options,
         )
@@ -470,6 +476,7 @@ class SpeakerRecognitionOptionsFlow(EnrollmentFlowMixin, OptionsFlow):
                 title="",
                 data={
                     CONF_BACKEND_URL: user_input[CONF_BACKEND_URL],
+                    CONF_BACKEND_TOKEN: user_input.get(CONF_BACKEND_TOKEN, ""),
                     CONF_VOICE_SAMPLES: self.config_entry.options.get(
                         CONF_VOICE_SAMPLES, []
                     ),
@@ -479,12 +486,18 @@ class SpeakerRecognitionOptionsFlow(EnrollmentFlowMixin, OptionsFlow):
         current_url = effective_backend_url(
             self.config_entry.data, self.config_entry.options
         )
+        current_token = effective_backend_token(
+            self.config_entry.data, self.config_entry.options
+        )
         return self.async_show_form(
             step_id="main_options",
             data_schema=vol.Schema(
                 {
                     vol.Required(
                         CONF_BACKEND_URL, default=current_url
+                    ): selector.TextSelector(),
+                    vol.Optional(
+                        CONF_BACKEND_TOKEN, default=current_token
                     ): selector.TextSelector(),
                 }
             ),
@@ -495,10 +508,14 @@ class SpeakerRecognitionOptionsFlow(EnrollmentFlowMixin, OptionsFlow):
         current_url = effective_backend_url(
             self.config_entry.data, self.config_entry.options
         )
+        current_token = effective_backend_token(
+            self.config_entry.data, self.config_entry.options
+        )
         return self.async_create_entry(
             title="",
             data={
                 CONF_BACKEND_URL: current_url,
+                CONF_BACKEND_TOKEN: current_token,
                 CONF_VOICE_SAMPLES: _replace_enrolled_user(
                     current_voice_samples,
                     self._enrollment_user_id,
