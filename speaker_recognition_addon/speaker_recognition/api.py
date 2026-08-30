@@ -23,7 +23,7 @@ _WARMUP_STATUS = warm_encoder(recognizer)
 app = FastAPI(
     title="Speaker Recognition Service",
     description="API for training and recognizing speakers using voice samples",
-    version="2.6.0",
+    version="2.7.0",
 )
 
 

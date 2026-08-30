@@ -18,17 +18,21 @@ def test_websocket_exposes_analysis_and_manual_apply() -> None:
 
 def test_frontend_requires_explicit_apply_and_explains_limitations() -> None:
     frontend = (ROOT / "frontend.py").read_text(encoding="utf-8")
-    panel = (ROOT / "www" / "speaker-recognition-calibration-panel.js").read_text(
-        encoding="utf-8"
-    )
+    settings_panel = (
+        ROOT / "www" / "speaker-recognition-settings-panel.js"
+    ).read_text(encoding="utf-8")
+    calibration_panel = (
+        ROOT / "www" / "speaker-recognition-calibration-panel.js"
+    ).read_text(encoding="utf-8")
 
-    assert 'PANEL_ELEMENT = "speaker-recognition-calibration-panel"' in frontend
-    assert "speaker-recognition-calibration-panel.js" in frontend
-    assert "More labelled decisions needed" in panel
-    assert "Apply suggested threshold" in panel
-    assert "apply_recommended_threshold" in panel
-    assert "Changing the HA threshold cannot fix" in panel
-    assert "wrong person ×" in panel
+    assert 'PANEL_ELEMENT = "speaker-recognition-settings-panel"' in frontend
+    assert "speaker-recognition-settings-panel.js" in frontend
+    assert 'import "./speaker-recognition-calibration-panel.js"' in settings_panel
+    assert "More labelled decisions needed" in calibration_panel
+    assert "Apply suggested threshold" in calibration_panel
+    assert "apply_recommended_threshold" in calibration_panel
+    assert "Changing the HA threshold cannot fix" in calibration_panel
+    assert "wrong person ×" in calibration_panel
 
 
 def test_changed_python_modules_compile() -> None:
