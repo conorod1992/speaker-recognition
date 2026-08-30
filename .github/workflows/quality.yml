@@ -94,7 +94,7 @@ jobs:
           cache-suffix: uv-${{ runner.os }}-3.9
 
       - name: Install dependecies
-        run: uv sync --all-groups
+        run: uv sync --locked --all-groups
 
   ruff:
     needs: cache
@@ -111,7 +111,7 @@ jobs:
           cache-suffix: uv-${{ runner.os }}-3.9
 
       - name: Install dependecies
-        run: uv sync --all-groups
+        run: uv sync --locked --all-groups
 
       - name: Run ruff
         run: |
@@ -132,7 +132,7 @@ jobs:
           cache-suffix: uv-${{ runner.os }}-3.9
 
       - name: Install dependecies
-        run: uv sync --all-groups
+        run: uv sync --locked --all-groups
 
       - name: Run mypy
         run: |
@@ -153,7 +153,7 @@ jobs:
           cache-suffix: uv-${{ runner.os }}-3.9
 
       - name: Install dependecies
-        run: uv sync --all-groups
+        run: uv sync --locked --all-groups
 
       - name: Run tests
         run: |
@@ -230,7 +230,7 @@ jobs:
           platforms: ${{ matrix.platform }}
           build-args: |
             BUILD_ARCH=${{ matrix.arch }}
-            BUILD_VERSION=2.7.0
+            BUILD_VERSION=2.8.0
           load: ${{ matrix.arch == 'amd64' }}
           push: false
           tags: speaker-recognition-addon:test
