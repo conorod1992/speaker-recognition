@@ -28,9 +28,11 @@ def test_live_test_is_claimed_from_selected_satellite_during_stt() -> None:
 
     assert "claim_live_test_turn" in stt_source
     assert "record_live_test_result" in stt_source
-    assert 'state.state != "listening"' in diagnostics_source
+    assert 'hass.states.async_all("assist_satellite")' in diagnostics_source
+    assert "listening == [satellite_id]" in diagnostics_source
     assert "claimed_utterance_sequence" in diagnostics_source
     assert "claimed_match" in diagnostics_source
+    assert "if satellite_id != session.satellite_id:" in diagnostics_source
     assert 'f"{DOMAIN}/start_live_test"' in websocket_source
     assert "start_conversation" not in websocket_source.split(
         "def websocket_start_live_test", 1
