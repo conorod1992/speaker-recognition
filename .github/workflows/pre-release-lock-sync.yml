@@ -1,0 +1,31 @@
+name: Pre-release lock sync
+
+on:
+  push:
+    branches:
+      - fix/final-pre-release-sweep
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: fix/final-pre-release-sweep
+      - uses: astral-sh/setup-uv@v7
+      - name: Regenerate lock from pyproject range
+        run: uv lock
+      - name: Commit lockfile
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add uv.lock
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m "chore: align lock with Python support range"
+          git push origin HEAD:fix/final-pre-release-sweep
