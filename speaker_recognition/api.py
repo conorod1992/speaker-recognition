@@ -8,6 +8,7 @@ from ipaddress import ip_address
 import logging
 import secrets
 from threading import Lock
+from typing import Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 
@@ -29,7 +30,7 @@ _WARMUP_STATUS: WarmupStatus = warm_encoder(recognizer)
 _TRUSTED_LOCAL_HOSTS = {"172.30.32.1"}
 
 
-def _is_trusted_local(host: str | None) -> bool:
+def _is_trusted_local(host: Optional[str]) -> bool:
     """Return whether a request source is local to the service/HA host."""
     if not host:
         return False
@@ -41,7 +42,7 @@ def _is_trusted_local(host: str | None) -> bool:
         return False
 
 
-def _authorization_token(authorization: str | None) -> str:
+def _authorization_token(authorization: Optional[str]) -> str:
     """Extract a bearer token or a token supplied via HTTP Basic credentials."""
     if not authorization:
         return ""
@@ -61,7 +62,7 @@ def _authorization_token(authorization: str | None) -> str:
 
 async def require_api_access(
     request: Request,
-    authorization: str | None = Header(default=None),
+    authorization: Optional[str] = Header(default=None),
 ) -> None:
     """Allow trusted local callers, or require the configured token remotely."""
     client_host = request.client.host if request.client is not None else None
