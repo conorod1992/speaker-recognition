@@ -44,7 +44,11 @@ def test_rnnoise_is_not_invoked_or_exposed_by_live_diagnostics() -> None:
     assert "Basic DSP" in frontend
 
 
-def test_backend_neural_capability_is_retained_for_future_use() -> None:
+def test_backend_neural_capability_is_retained_but_dormant() -> None:
     backend_api = _text(ROOT / "speaker_recognition" / "api.py")
+    neural_module = _text(ROOT / "speaker_recognition" / "neural_denoise.py")
 
-    assert "/denoise" in backend_api
+    assert "denoise_pcm_rnnoise" in neural_module
+    assert "rnnoise_process_frame" in neural_module
+    assert "neural_denoise" not in backend_api
+    assert '"/denoise"' not in backend_api
