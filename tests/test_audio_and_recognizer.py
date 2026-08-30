@@ -158,7 +158,7 @@ def test_multiple_samples_are_averaged_and_centroid_is_normalized(
 ) -> None:
     recognizer = recognizer_factory()
     recognizer._encoder = _SequenceEncoder(
-        [[3.0, 0.0], [3.0, 0.0], [0.0, 1.0]]
+        [[3.0, 0.0], [2.9, 0.1], [2.8, 0.2]]
     )
     sample = _audio_input([100, 200])
     result = recognizer.train(
