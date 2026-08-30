@@ -21,6 +21,7 @@ from .enhancement_websocket import async_register_enhancement_websocket
 from .frontend import async_register_frontend
 from .lifecycle import (
     EnrollmentUpdateFailed,
+    ProfileReconciliationFailed,
     async_apply_enrollment_update,
     async_initialize_recognition,
 )
@@ -68,7 +69,6 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Speaker Recognition from a config entry."""
     entry_type = entry.data.get(CONF_ENTRY_TYPE, ENTRY_TYPE_MAIN)
-
     if entry_type == ENTRY_TYPE_MAIN:
         return await async_setup_main_entry(hass, entry)
     if entry_type == ENTRY_TYPE_STT:
@@ -82,18 +82,15 @@ async def async_setup_main_entry(
     """Set up main config entry."""
     backend_url = effective_backend_url(entry.data, entry.options)
     voice_samples = entry.options.get(CONF_VOICE_SAMPLES, [])
-
     recognition = SpeakerRecognition(hass, voice_samples, backend_url)
 
     pending_user_value = entry.options.get(CONF_PENDING_ENROLLMENT)
     pending_user = pending_user_value if isinstance(pending_user_value, str) else None
     try:
-        pending_succeeded = await async_initialize_recognition(
-            recognition, pending_user
-        )
-    except RecognitionBackendUnavailable as error:
+        pending_succeeded = await async_initialize_recognition(recognition, pending_user)
+    except (RecognitionBackendUnavailable, ProfileReconciliationFailed) as error:
         raise ConfigEntryNotReady(
-            "Speaker Recognition backend is not ready"
+            "Speaker Recognition profiles are not ready"
         ) from error
 
     if CONF_PENDING_ENROLLMENT in entry.options and pending_succeeded:
@@ -103,7 +100,6 @@ async def async_setup_main_entry(
 
     entry.runtime_data = recognition
     entry.async_on_unload(entry.add_update_listener(async_update_main_listener))
-
     return True
 
 
@@ -112,10 +108,8 @@ async def async_setup_stt_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool
     main_entry = _get_main_entry(hass)
     if main_entry is None:
         return False
-
     await hass.config_entries.async_forward_entry_setups(entry, [Platform.STT])
     entry.async_on_unload(entry.add_update_listener(async_update_stt_listener))
-
     return True
 
 
@@ -126,23 +120,17 @@ async def async_setup_conversation_entry(
     main_entry = _get_main_entry(hass)
     if main_entry is None:
         return False
-
     await hass.config_entries.async_forward_entry_setups(entry, [Platform.CONVERSATION])
     entry.async_on_unload(entry.add_update_listener(async_update_conversation_listener))
-
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     entry_type = entry.data.get(CONF_ENTRY_TYPE, ENTRY_TYPE_MAIN)
-
     if entry_type == ENTRY_TYPE_MAIN:
         return True
-
-    platforms = (
-        [Platform.STT] if entry_type == ENTRY_TYPE_STT else [Platform.CONVERSATION]
-    )
+    platforms = [Platform.STT] if entry_type == ENTRY_TYPE_STT else [Platform.CONVERSATION]
     return await hass.config_entries.async_unload_platforms(entry, platforms)
 
 
