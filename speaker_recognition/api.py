@@ -15,6 +15,8 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from speaker_recognition.models import (
     ErrorResponse,
     HealthResponse,
+    ProfileSyncRequest,
+    ProfileSyncResult,
     RecognitionRequest,
     RecognitionResult,
     TrainingRequest,
@@ -68,12 +70,10 @@ async def require_api_access(
     client_host = request.client.host if request.client is not None else None
     if _is_trusted_local(client_host) or config.allow_insecure_remote:
         return
-
     expected = config.api_token.strip()
     supplied = _authorization_token(authorization)
     if expected and supplied and secrets.compare_digest(supplied, expected):
         return
-
     raise HTTPException(
         status_code=401,
         detail="Speaker Recognition API authentication required",
@@ -116,7 +116,6 @@ def train(request: TrainingRequest) -> TrainingResult:
     try:
         with _RECOGNIZER_LOCK:
             return recognizer.train(request)
-
     except ValueError as error:
         _LOGGER.error("Validation error during training: %s", error)
         raise HTTPException(status_code=400, detail=str(error)) from error
@@ -125,6 +124,29 @@ def train(request: TrainingRequest) -> TrainingResult:
         raise HTTPException(
             status_code=500,
             detail="Speaker recognition training failed",
+        ) from error
+
+
+@app.post(
+    "/profiles/sync",
+    response_model=ProfileSyncResult,
+    responses={500: {"model": ErrorResponse}},
+    tags=["Training"],
+)
+def sync_profiles(request: ProfileSyncRequest) -> ProfileSyncResult:
+    """Remove persisted profiles no longer present in HA configuration."""
+    try:
+        with _RECOGNIZER_LOCK:
+            removed_users = recognizer.sync_profiles(set(request.desired_users))
+            return ProfileSyncResult(
+                enrolled_users=recognizer.enrolled_users,
+                removed_users=removed_users,
+            )
+    except Exception as error:
+        _LOGGER.exception("Error synchronizing speaker profiles")
+        raise HTTPException(
+            status_code=500,
+            detail="Speaker profile synchronization failed",
         ) from error
 
 
@@ -139,7 +161,6 @@ def recognize(request: RecognitionRequest) -> RecognitionResult:
     try:
         with _RECOGNIZER_LOCK:
             return recognizer.recognize(request)
-
     except (ValueError, RuntimeError) as error:
         _LOGGER.error("Recognition error: %s", error)
         raise HTTPException(status_code=400, detail=str(error)) from error
