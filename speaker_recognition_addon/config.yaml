@@ -21,9 +21,13 @@ options:
   log_level: "info"
   access_log: true
   embeddings_dir: "/share/speaker_recognition/embeddings"
+  api_token: ""
+  allow_insecure_remote: false
 schema:
   host: str
   port: port
   log_level: list(debug|info|warning|error|critical)
   access_log: bool
   embeddings_dir: str
+  api_token: password
+  allow_insecure_remote: bool
