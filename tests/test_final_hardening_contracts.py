@@ -40,6 +40,7 @@ def test_frontend_polling_does_not_reschedule_while_detached() -> None:
         INTEGRATION / "www" / "speaker-recognition-settings-panel.js"
     ).read_text(encoding="utf-8")
 
-    assert panel.count("if (!this.isConnected) return;") >= 4
+    assert "if (!this.isConnected || !this._status) return;" in panel
+    assert panel.count("if (!this.isConnected) return;") >= 3
     assert "if (this.isConnected) this._pollTimer = setTimeout" in panel
     assert "if (this.isConnected) this._livePollTimer = setTimeout" in panel
