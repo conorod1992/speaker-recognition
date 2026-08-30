@@ -242,8 +242,8 @@ jobs:
             "${RUNNER_TEMP}/speaker-recognition/data" \
             "${RUNNER_TEMP}/speaker-recognition/share" \
             "${RUNNER_TEMP}/speaker-recognition/supervisor/addons/self/options"
-          printf '%s\n' '{"host":"0.0.0.0","port":8099,"log_level":"info","access_log":true,"embeddings_dir":"/share/speaker_recognition/embeddings"}' > "${RUNNER_TEMP}/speaker-recognition/data/options.json"
-          printf '%s\n' '{"result":"ok","data":{"host":"0.0.0.0","port":8099,"log_level":"info","access_log":true,"embeddings_dir":"/share/speaker_recognition/embeddings"}}' > "${RUNNER_TEMP}/speaker-recognition/supervisor/addons/self/options/config"
+          printf '%s\n' '{"host":"0.0.0.0","port":8099,"log_level":"info","access_log":true,"embeddings_dir":"/share/speaker_recognition/embeddings","api_token":"smoke-api-token","allow_insecure_remote":false}' > "${RUNNER_TEMP}/speaker-recognition/data/options.json"
+          printf '%s\n' '{"result":"ok","data":{"host":"0.0.0.0","port":8099,"log_level":"info","access_log":true,"embeddings_dir":"/share/speaker_recognition/embeddings","api_token":"smoke-api-token","allow_insecure_remote":false}}' > "${RUNNER_TEMP}/speaker-recognition/supervisor/addons/self/options/config"
 
       - name: Start mock Supervisor API
         if: matrix.arch == 'amd64'
@@ -272,7 +272,7 @@ jobs:
         if: matrix.arch == 'amd64'
         run: |
           for attempt in {1..90}; do
-            if curl --fail --silent http://127.0.0.1:18099/health | grep --quiet '"status":"healthy"'; then
+            if curl --fail --silent --user 'smoke-api-token:' http://127.0.0.1:18099/health | grep --quiet '"status":"healthy"'; then
               exit 0
             fi
             if ! docker inspect --format '{{.State.Running}}' speaker-recognition-smoke | grep --quiet true; then

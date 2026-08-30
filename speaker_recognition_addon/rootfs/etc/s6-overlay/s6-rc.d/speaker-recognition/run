@@ -9,6 +9,8 @@ export PORT=$(bashio::config 'port')
 export LOG_LEVEL=$(bashio::config 'log_level' | tr '[:lower:]' '[:upper:]')
 export ACCESS_LOG=$(bashio::config 'access_log')
 export EMBEDDINGS_DIR=$(bashio::config 'embeddings_dir')
+export API_TOKEN=$(bashio::config 'api_token')
+export ALLOW_INSECURE_REMOTE=$(bashio::config 'allow_insecure_remote')
 
 bashio::log.info "Configuration:"
 bashio::log.info "  Host: ${HOST}"
@@ -16,6 +18,7 @@ bashio::log.info "  Port: ${PORT}"
 bashio::log.info "  Log Level: ${LOG_LEVEL}"
 bashio::log.info "  Access Log: ${ACCESS_LOG}"
 bashio::log.info "  Embeddings Directory: ${EMBEDDINGS_DIR}"
+bashio::log.info "  Remote API: $([[ "${ALLOW_INSECURE_REMOTE}" == "true" ]] && echo 'insecure override enabled' || ([[ -n "${API_TOKEN}" ]] && echo 'token protected' || echo 'trusted local callers only'))"
 
 mkdir -p "${EMBEDDINGS_DIR}"
 

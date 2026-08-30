@@ -12,11 +12,15 @@ warnings.filterwarnings("ignore", category=UserWarning, module="webrtcvad")
 from speaker_recognition.api import app  # noqa: E402
 from speaker_recognition.const import (  # noqa: E402
     DEFAULT_ACCESS_LOG,
+    DEFAULT_ALLOW_INSECURE_REMOTE,
+    DEFAULT_API_TOKEN,
     DEFAULT_EMBEDDINGS_DIR,
     DEFAULT_HOST,
     DEFAULT_LOG_LEVEL,
     DEFAULT_PORT,
     ENV_ACCESS_LOG,
+    ENV_ALLOW_INSECURE_REMOTE,
+    ENV_API_TOKEN,
     ENV_EMBEDDINGS_DIR,
     ENV_HOST,
     ENV_LOG_LEVEL,
@@ -68,6 +72,19 @@ def serve(
         help="Directory to store voice embeddings",
         envvar=ENV_EMBEDDINGS_DIR,
     ),
+    api_token: str = typer.Option(
+        DEFAULT_API_TOKEN,
+        "--api-token",
+        help="Bearer token required for non-loopback API clients",
+        envvar=ENV_API_TOKEN,
+        show_default=False,
+    ),
+    allow_insecure_remote: bool = typer.Option(
+        DEFAULT_ALLOW_INSECURE_REMOTE,
+        "--allow-insecure-remote/--no-allow-insecure-remote",
+        help="Explicitly permit unauthenticated non-loopback API clients",
+        envvar=ENV_ALLOW_INSECURE_REMOTE,
+    ),
 ) -> None:
     """Start the Speaker Recognition Service."""
 
@@ -76,16 +93,24 @@ def serve(
     config.log_level = log_level.upper()
     config.access_log = access_log
     config.embeddings_directory = embeddings_dir
+    config.api_token = api_token
+    config.allow_insecure_remote = allow_insecure_remote
 
     recognizer.embeddings_directory = config.embeddings_directory
 
     configure_logging(config.log_level)
 
     _LOGGER.info("Starting Speaker Recognition Service...")
-    _LOGGER.info(f"Host: {config.host}")
-    _LOGGER.info(f"Port: {config.port}")
-    _LOGGER.info(f"Log Level: {config.log_level}")
-    _LOGGER.info(f"Embeddings Directory: {config.embeddings_directory}")
+    _LOGGER.info("Host: %s", config.host)
+    _LOGGER.info("Port: %s", config.port)
+    _LOGGER.info("Log Level: %s", config.log_level)
+    _LOGGER.info("Embeddings Directory: %s", config.embeddings_directory)
+    _LOGGER.info(
+        "Remote API authentication: %s",
+        "disabled by explicit override"
+        if config.allow_insecure_remote
+        else ("bearer token configured" if config.api_token else "loopback only"),
+    )
 
     uvicorn.run(
         app,

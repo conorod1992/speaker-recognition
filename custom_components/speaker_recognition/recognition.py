@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 from dataclasses import dataclass
@@ -20,6 +21,7 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 DEFAULT_ADDON_URL = "http://localhost:8099"
+RECOGNITION_TIMEOUT_SECONDS = 4.0
 
 
 class RecognitionBackendUnavailable(RuntimeError):
@@ -125,7 +127,7 @@ class SpeakerRecognition:
                 raise ValueError(
                     "Invalid enrolled user list from Speaker Recognition app"
                 )
-        except (ClientError, OSError, ValueError, TypeError) as error:
+        except (ClientError, OSError, ValueError, TypeError, asyncio.TimeoutError) as error:
             self._trained = False
             _LOGGER.warning("Unable to read speaker recognition status: %s", error)
             raise RecognitionBackendUnavailable(
@@ -225,7 +227,7 @@ class SpeakerRecognition:
                 )
             result = TrainingResult(users_trained=trained_users)
 
-        except (ClientError, OSError, ValueError, TypeError) as error:
+        except (ClientError, OSError, ValueError, TypeError, asyncio.TimeoutError) as error:
             _LOGGER.error(
                 "Speaker recognition training failed; existing profiles remain usable: %s",
                 error,
@@ -242,7 +244,7 @@ class SpeakerRecognition:
     async def async_recognize(
         self, audio_data: bytes, sample_rate: int = 16000
     ) -> RecognitionResult | None:
-        """Recognize speaker from audio data."""
+        """Recognize speaker from audio data without delaying Assist indefinitely."""
         if not self._trained:
             _LOGGER.warning(
                 "Speaker recognition is not trained; skipping recognition request"
@@ -254,14 +256,17 @@ class SpeakerRecognition:
 
             request_started = perf_counter()
             try:
-                response = await self._async_post(
-                    "/recognize",
-                    {
-                        "audio": {
-                            "audio_data": audio_base64,
-                            "sample_rate": sample_rate,
-                        }
-                    },
+                response = await asyncio.wait_for(
+                    self._async_post(
+                        "/recognize",
+                        {
+                            "audio": {
+                                "audio_data": audio_base64,
+                                "sample_rate": sample_rate,
+                            }
+                        },
+                    ),
+                    timeout=RECOGNITION_TIMEOUT_SECONDS,
                 )
             finally:
                 _LOGGER.debug(
@@ -310,6 +315,12 @@ class SpeakerRecognition:
                 all_scores={user: float(score) for user, score in all_scores.items()},
             )
 
+        except asyncio.TimeoutError:
+            _LOGGER.warning(
+                "Speaker recognition exceeded %.1fs; continuing Assist without identity",
+                RECOGNITION_TIMEOUT_SECONDS,
+            )
+            return None
         except (ClientError, OSError, ValueError, TypeError) as error:
             _LOGGER.error("Error during recognition: %s", error)
             return None
