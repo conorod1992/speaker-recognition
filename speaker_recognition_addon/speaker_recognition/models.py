@@ -2,7 +2,7 @@
 
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from speaker_recognition.const import (
     DEFAULT_ACCESS_LOG,
@@ -22,6 +22,8 @@ from speaker_recognition.const import (
 class Config(BaseModel):
     """Application configuration."""
 
+    model_config = ConfigDict(validate_assignment=True)
+
     host: str = DEFAULT_HOST
     port: int = DEFAULT_PORT
     log_level: str = DEFAULT_LOG_LEVEL
@@ -29,11 +31,6 @@ class Config(BaseModel):
     embeddings_directory: str = DEFAULT_EMBEDDINGS_DIR
     api_token: str = DEFAULT_API_TOKEN
     allow_insecure_remote: bool = DEFAULT_ALLOW_INSECURE_REMOTE
-
-    class ConfigDict:
-        """Pydantic configuration."""
-
-        validate_assignment = True
 
 
 class AudioInput(BaseModel):

@@ -25,6 +25,7 @@ from .const import (
     effective_backend_url,
     effective_use_basic_dsp,
 )
+from .proxy import validate_proxy_source
 
 
 def _entries(hass: HomeAssistant) -> list[ConfigEntry]:
@@ -41,6 +42,45 @@ def _conversation_threshold(entry: ConfigEntry) -> float:
         entry.data.get(CONF_MIN_CONFIDENCE, DEFAULT_MIN_CONFIDENCE),
     )
     return float(value)
+
+
+def _validate_proxy_setting(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+    entry: ConfigEntry,
+    entry_type: str,
+    source_entity_id: object,
+) -> str | None:
+    """Validate a frontend-edited proxy source through the shared safety rules."""
+    if not isinstance(source_entity_id, str):
+        error = (
+            "not_stt_entity"
+            if entry_type == ENTRY_TYPE_STT
+            else "not_conversation_entity"
+        )
+    else:
+        error = validate_proxy_source(
+            hass,
+            entry_type,
+            source_entity_id,
+            exclude_entry_id=entry.entry_id,
+        )
+    if error is None:
+        return source_entity_id
+
+    messages = {
+        "not_stt_entity": "Choose a valid STT entity",
+        "not_conversation_entity": "Choose a valid Conversation entity",
+        "speaker_recognition_proxy_source": (
+            "Choose the original provider, not a Speaker Recognition proxy"
+        ),
+        "proxy_source_already_wrapped": (
+            "That provider is already wrapped by another Speaker Recognition proxy"
+        ),
+    }
+    connection.send_error(msg["id"], error, messages.get(error, "Invalid proxy source"))
+    return None
 
 
 @websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/settings"})
@@ -139,25 +179,29 @@ def websocket_update_settings(
         options[CONF_BACKEND_URL] = backend_url.strip()
 
     elif entry_type == ENTRY_TYPE_STT:
-        stt_entity = msg.get("stt_entity")
-        if not isinstance(stt_entity, str) or not stt_entity.startswith("stt."):
-            connection.send_error(
-                msg["id"], "invalid_stt_entity", "Choose a valid STT entity"
-            )
+        stt_entity = _validate_proxy_setting(
+            hass,
+            connection,
+            msg,
+            entry,
+            ENTRY_TYPE_STT,
+            msg.get("stt_entity"),
+        )
+        if stt_entity is None:
             return
         options[CONF_STT_ENTITY] = stt_entity
         options[CONF_USE_BASIC_DSP] = bool(msg.get("use_basic_dsp", False))
 
     elif entry_type == ENTRY_TYPE_CONVERSATION:
-        conversation_entity = msg.get("conversation_entity")
-        if not isinstance(conversation_entity, str) or not conversation_entity.startswith(
-            "conversation."
-        ):
-            connection.send_error(
-                msg["id"],
-                "invalid_conversation_entity",
-                "Choose a valid Conversation entity",
-            )
+        conversation_entity = _validate_proxy_setting(
+            hass,
+            connection,
+            msg,
+            entry,
+            ENTRY_TYPE_CONVERSATION,
+            msg.get("conversation_entity"),
+        )
+        if conversation_entity is None:
             return
         options[CONF_CONVERSATION_ENTITY] = conversation_entity
         threshold = msg.get("min_confidence")
