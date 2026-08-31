@@ -19,7 +19,7 @@ def test_panel_separates_major_tasks_into_tabs() -> None:
     assert '["diagnostics", "Diagnostics"]' in source
     assert '["calibration", "Calibration"]' in source
     assert '["settings", "Settings"]' in source
-    assert 'role="tablist"' in source
+    assert 'tabs.setAttribute("role", "tablist")' in source
     assert 'data-panel-section' in source
 
 
