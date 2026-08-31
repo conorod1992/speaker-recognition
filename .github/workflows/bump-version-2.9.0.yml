@@ -1,0 +1,85 @@
+name: Bump version to 2.9.0
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - ".github/workflows/bump-version-2.9.0.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  bump-version:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out master
+        uses: actions/checkout@v6
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Update release version
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          replacements = {
+              Path(".github/workflows/quality.yml"): [
+                  ("BUILD_VERSION=2.8.1", "BUILD_VERSION=2.9.0"),
+              ],
+              Path("custom_components/speaker_recognition/manifest.json"): [
+                  ('"version": "2.8.1"', '"version": "2.9.0"'),
+              ],
+              Path("pyproject.toml"): [
+                  ('version = "2.8.1"', 'version = "2.9.0"'),
+              ],
+              Path("speaker_recognition/api.py"): [
+                  ('version="2.8.1"', 'version="2.9.0"'),
+              ],
+              Path("speaker_recognition_addon/Dockerfile"): [
+                  ('ARG BUILD_VERSION="2.8.1"', 'ARG BUILD_VERSION="2.9.0"'),
+              ],
+              Path("speaker_recognition_addon/config.yaml"): [
+                  ('version: "2.8.1"', 'version: "2.9.0"'),
+              ],
+              Path("speaker_recognition_addon/speaker_recognition/api.py"): [
+                  ('version="2.8.1"', 'version="2.9.0"'),
+              ],
+              Path("tests/test_release_state_contract.py"): [
+                  ("test_release_version_is_2_8_1", "test_release_version_is_2_9_0"),
+                  ("staged as 2.8.1", "staged as 2.9.0"),
+                  ('version = "2.8.1"', 'version = "2.9.0"'),
+              ],
+              Path("uv.lock"): [
+                  ('name = "hass-speaker-recognition"\nversion = "2.8.1"', 'name = "hass-speaker-recognition"\nversion = "2.9.0"'),
+              ],
+          }
+
+          for path, pairs in replacements.items():
+              text = path.read_text(encoding="utf-8")
+              for old, new in pairs:
+                  count = text.count(old)
+                  if count != 1:
+                      raise SystemExit(f"Expected exactly one occurrence of {old!r} in {path}, found {count}")
+                  text = text.replace(old, new, 1)
+              path.write_text(text, encoding="utf-8")
+          PY
+
+      - name: Remove one-off workflow and commit
+        run: |
+          git rm .github/workflows/bump-version-2.9.0.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/workflows/quality.yml \
+            custom_components/speaker_recognition/manifest.json \
+            pyproject.toml \
+            speaker_recognition/api.py \
+            speaker_recognition_addon/Dockerfile \
+            speaker_recognition_addon/config.yaml \
+            speaker_recognition_addon/speaker_recognition/api.py \
+            tests/test_release_state_contract.py \
+            uv.lock
+          git commit -m "chore: bump version to 2.9.0"
+          git push origin HEAD:master
