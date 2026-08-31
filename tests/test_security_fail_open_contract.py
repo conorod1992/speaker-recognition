@@ -33,9 +33,55 @@ def test_remote_api_requires_authentication_by_default() -> None:
     assert "secrets.compare_digest" in api
     assert 'authorization.startswith("Bearer ")' in api
     assert 'authorization.startswith("Basic ")' in api
-    assert '_TRUSTED_LOCAL_HOSTS = {"172.30.32.1"}' in api
+    assert 'os.environ.get("TRUSTED_LOCAL_HOSTS", "172.30.32.1")' in api
+    assert "str(address) in _TRUSTED_LOCAL_HOSTS" in api
     assert "allow_insecure_remote: false" in addon_config
     assert "api_token: password" in addon_config
+
+
+def test_addon_discovers_same_host_addresses_without_trusting_the_whole_lan() -> None:
+    """HAOS published-port calls trust only addresses Supervisor says belong to HA."""
+    addon = ROOT / "speaker_recognition_addon"
+    run = (
+        addon
+        / "rootfs"
+        / "etc"
+        / "s6-overlay"
+        / "s6-rc.d"
+        / "speaker-recognition"
+        / "run"
+    ).read_text(encoding="utf-8")
+    config = (addon / "config.yaml").read_text(encoding="utf-8")
+
+    assert "hassio_api: true" in config
+    assert "hassio_role: default" in config
+    assert "http://supervisor/network/info" in run
+    assert "SUPERVISOR_TOKEN" in run
+    assert 'hosts = {"172.30.32.1"}' in run
+    assert "ipaddress.ip_interface(value).ip" in run
+    assert "export TRUSTED_LOCAL_HOSTS" in run
+    assert "Trusted local hosts:" in run
+    assert "192.168.0.0/16" not in run
+    assert "is_private" not in run
+
+
+def test_authentication_logging_matches_dynamic_local_trust() -> None:
+    """Startup logs must not claim an add-on with trusted HA hosts is loopback-only."""
+    main = (BACKEND / "__main__.py").read_text(encoding="utf-8")
+    run = (
+        ROOT
+        / "speaker_recognition_addon"
+        / "rootfs"
+        / "etc"
+        / "s6-overlay"
+        / "s6-rc.d"
+        / "speaker-recognition"
+        / "run"
+    ).read_text(encoding="utf-8")
+
+    assert "trusted local hosts only" in main
+    assert "loopback only" not in main
+    assert "trusted local callers only" in run
 
 
 def test_addon_smoke_exercises_authenticated_health() -> None:
