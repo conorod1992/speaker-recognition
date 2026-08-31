@@ -12,12 +12,68 @@ export EMBEDDINGS_DIR=$(bashio::config 'embeddings_dir')
 export API_TOKEN=$(bashio::config 'api_token')
 export ALLOW_INSECURE_REMOTE=$(bashio::config 'allow_insecure_remote')
 
+# Home Assistant Core reaches a published app port through the HA host on some
+# Supervisor/HAOS network topologies. Discover the host's real interface
+# addresses so those same-host calls remain local/trusted without opening the
+# API to every RFC1918/LAN caller.
+if ! TRUSTED_LOCAL_HOSTS=$(python3 - <<'PY'
+import ipaddress
+import json
+import os
+import urllib.request
+
+hosts = {"172.30.32.1"}
+token = os.environ.get("SUPERVISOR_TOKEN", "")
+if not token:
+    raise SystemExit(1)
+
+request = urllib.request.Request(
+    "http://supervisor/network/info",
+    headers={"Authorization": f"Bearer {token}"},
+)
+with urllib.request.urlopen(request, timeout=5) as response:
+    payload = json.load(response)
+
+data = payload.get("data", payload)
+interfaces = data.get("interfaces", []) if isinstance(data, dict) else []
+if isinstance(interfaces, dict):
+    interfaces = interfaces.values()
+
+for interface in interfaces:
+    if not isinstance(interface, dict) or not interface.get("enabled", True):
+        continue
+    for family in ("ipv4", "ipv6"):
+        family_config = interface.get(family)
+        if not isinstance(family_config, dict):
+            continue
+        addresses = family_config.get("address", family_config.get("ip_address", []))
+        if isinstance(addresses, str):
+            addresses = [addresses]
+        if not isinstance(addresses, list):
+            continue
+        for value in addresses:
+            if not isinstance(value, str):
+                continue
+            try:
+                hosts.add(str(ipaddress.ip_interface(value).ip))
+            except ValueError:
+                continue
+
+print(",".join(sorted(hosts)))
+PY
+); then
+    bashio::log.warning "Unable to read Supervisor network info; falling back to the Supervisor gateway trust only"
+    TRUSTED_LOCAL_HOSTS="172.30.32.1"
+fi
+export TRUSTED_LOCAL_HOSTS
+
 bashio::log.info "Configuration:"
 bashio::log.info "  Host: ${HOST}"
 bashio::log.info "  Port: ${PORT}"
 bashio::log.info "  Log Level: ${LOG_LEVEL}"
 bashio::log.info "  Access Log: ${ACCESS_LOG}"
 bashio::log.info "  Embeddings Directory: ${EMBEDDINGS_DIR}"
+bashio::log.info "  Trusted local hosts: ${TRUSTED_LOCAL_HOSTS}"
 bashio::log.info "  Remote API: $([[ "${ALLOW_INSECURE_REMOTE}" == "true" ]] && echo 'insecure override enabled' || ([[ -n "${API_TOKEN}" ]] && echo 'token protected' || echo 'trusted local callers only'))"
 
 mkdir -p "${EMBEDDINGS_DIR}"

@@ -13,8 +13,9 @@ Arm (`aarch64`) Home Assistant systems.
 3. Find **Speaker Recognition**, select **Install**, and wait for the local image
    build to finish.
 4. Keep the default configuration for the first start, then select **Start**.
-5. Open **Logs**. A healthy start reports the selected configuration, loads the
-   Resemblyzer voice encoder, and starts Uvicorn on `0.0.0.0:8099`.
+5. Open **Logs**. A healthy start reports the selected configuration, the
+   Supervisor-discovered trusted local host addresses, loads the Resemblyzer
+   voice encoder, and starts Uvicorn on `0.0.0.0:8099`.
 
 The first installation can take several minutes because Supervisor builds the
 CPU-only machine-learning runtime locally.
@@ -65,14 +66,28 @@ Directory where voice embeddings are stored.
 - Default: `/share/speaker_recognition/embeddings`
 - Type: `string`
 
+### Option: `api_token`
+
+Optional token for clients that are not running on the Home Assistant host.
+The normal Home Assistant OS/Supervised integration path does not need a token:
+the app asks Supervisor for the host's active interface addresses and trusts
+only those same-host callers plus loopback/the Supervisor gateway. Arbitrary LAN
+addresses are not trusted automatically.
+
+Keep `allow_insecure_remote` disabled unless you intentionally want to expose
+the API without authentication.
+
 ## API
 
-The service exposes `/health`, `/train`, and `/recognize` on the configured
-port. From a device on the same network, open
-`http://HOME_ASSISTANT_IP:8099/health`; a healthy service returns
-`{"status":"healthy","trained":false,"enrolled_users":[]}`. The profile fields
-let the integration restore recognition availability without retraining on each
-Home Assistant restart.
+The service exposes `/health`, `/train`, `/profiles/sync`, and `/recognize` on
+the configured port. Requests originating from Home Assistant itself are
+accepted without an API token. Requests from other LAN or remote devices require
+the configured `api_token` and an `Authorization: Bearer ...` header (HTTP Basic
+with the token as username or password is also supported).
+
+The `/health` response includes `status`, `trained`, `enrolled_users`, and encoder
+warm-up information. The profile fields let the integration restore recognition
+availability without retraining on each Home Assistant restart.
 
 ## Data persistence
 
@@ -94,7 +109,11 @@ choose **Speaker Recognition**. Set the backend URL to
 `http://HOME_ASSISTANT_IP:8099`; do not use `localhost`, because Home Assistant
 Core and the app run in different containers.
 
-Verify `/health` and the app logs before configuring voice samples.
+For the normal Home Assistant OS/Supervised app path, leave **Backend API token**
+blank. If you instead point the integration at a standalone backend on another
+machine, configure `API_TOKEN` there and enter the same value in the integration.
+
+Verify `/health` in the app logs before configuring voice samples.
 
 ## Development
 

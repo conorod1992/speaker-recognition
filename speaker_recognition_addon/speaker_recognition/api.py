@@ -6,6 +6,7 @@ import base64
 import binascii
 from ipaddress import ip_address
 import logging
+import os
 import secrets
 from threading import Lock
 from typing import Optional
@@ -32,7 +33,24 @@ from speaker_recognition.warmup import WarmupStatus, warm_encoder
 _LOGGER = logging.getLogger(__name__)
 _RECOGNIZER_LOCK = Lock()
 _WARMUP_STATUS: WarmupStatus = warm_encoder(recognizer)
-_TRUSTED_LOCAL_HOSTS = {"172.30.32.1"}
+
+
+def _configured_trusted_local_hosts() -> set[str]:
+    """Return normalized local host addresses supplied by the runtime."""
+    configured = os.environ.get("TRUSTED_LOCAL_HOSTS", "172.30.32.1")
+    trusted: set[str] = set()
+    for value in configured.split(","):
+        candidate = value.strip()
+        if not candidate:
+            continue
+        try:
+            trusted.add(str(ip_address(candidate)))
+        except ValueError:
+            continue
+    return trusted or {"172.30.32.1"}
+
+
+_TRUSTED_LOCAL_HOSTS = _configured_trusted_local_hosts()
 
 
 class RequestBodyTooLarge(Exception):
@@ -90,12 +108,11 @@ def _is_trusted_local(host: Optional[str]) -> bool:
     """Return whether a request source is local to the service/HA host."""
     if not host:
         return False
-    if host in _TRUSTED_LOCAL_HOSTS:
-        return True
     try:
-        return ip_address(host).is_loopback
+        address = ip_address(host)
     except ValueError:
         return False
+    return address.is_loopback or str(address) in _TRUSTED_LOCAL_HOSTS
 
 
 def _authorization_token(authorization: Optional[str]) -> str:

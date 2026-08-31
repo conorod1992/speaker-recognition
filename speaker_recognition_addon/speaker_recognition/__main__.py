@@ -109,7 +109,11 @@ def serve(
         "Remote API authentication: %s",
         "disabled by explicit override"
         if config.allow_insecure_remote
-        else ("bearer token configured" if config.api_token else "loopback only"),
+        else (
+            "bearer token configured"
+            if config.api_token
+            else "trusted local hosts only"
+        ),
     )
 
     uvicorn.run(
