@@ -54,7 +54,7 @@ def test_addon_discovers_same_host_addresses_without_trusting_the_whole_lan() ->
     config = (addon / "config.yaml").read_text(encoding="utf-8")
 
     assert "hassio_api: true" in config
-    assert "hassio_role: default" in config
+    assert "hassio_role:" not in config
     assert "http://supervisor/network/info" in run
     assert "SUPERVISOR_TOKEN" in run
     assert 'hosts = {"172.30.32.1"}' in run
