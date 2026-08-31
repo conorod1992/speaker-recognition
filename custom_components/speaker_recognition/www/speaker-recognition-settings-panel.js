@@ -212,10 +212,11 @@ class SpeakerRecognitionSettingsPanel extends BasePanel {
   }
 
   _panelSectionForCard(card) {
+    if (card.classList.contains("enrollment-card")) return "enrollment";
     const heading = card.querySelector("h2");
     const title = heading ? heading.textContent.trim() : "";
-    if (title === "Enroll or retrain a voice") return "enrollment";
-    if (title === "Profile diagnostics" || title === "Live satellite test") return "diagnostics";
+    if (title === "Enroll or retrain a voice" || title === "Voice enrollment") return "enrollment";
+    if (title === "Profile diagnostics" || title === "Profiles" || title === "Live satellite test") return "diagnostics";
     if (title === "Recognition calibration" || title === "Threshold guidance") return "calibration";
     if (title === "Settings") return "settings";
     return "diagnostics";
