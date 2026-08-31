@@ -1,10 +1,9 @@
-name: Publish
+name: Republish release
 
+# Recovery-only workflow. Normal releases build and verify every package/image
+# in release.yml before master advertises the new add-on version.
 on:
   workflow_dispatch:
-  release:
-    types:
-      - published
 
 permissions:
   contents: write
@@ -17,13 +16,7 @@ jobs:
     env:
       VERSION: ""
     steps:
-      - name: Get version from release
-        if: github.event_name == 'release'
-        run: |
-          echo "VERSION=${{ github.event.release.tag_name }}" >> "$GITHUB_ENV"
-
       - name: Get latest release from API
-        if: github.event_name == 'workflow_dispatch'
         id: release_api
         uses: octokit/request-action@v2.x
         with:
@@ -32,7 +25,6 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
 
       - name: Parse API response
-        if: github.event_name == 'workflow_dispatch'
         run: |
           echo "VERSION=${{ fromJson(steps.release_api.outputs.data).tag_name }}" >> "$GITHUB_ENV"
 

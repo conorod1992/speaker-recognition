@@ -2,15 +2,27 @@ name: Release
 
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (X.Y.Z)"
+        required: true
+        type: string
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  release:
+  prepare:
     if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
-    concurrency: release
+    outputs:
+      current_version: ${{ steps.version.outputs.current_version }}
+      version: ${{ steps.version.outputs.version }}
+      source_sha: ${{ steps.source.outputs.sha }}
     steps:
       - name: Checkout master
         uses: actions/checkout@v6
@@ -18,69 +30,293 @@ jobs:
           ref: master
           fetch-depth: 0
 
-      - name: Read and verify release version
+      - name: Validate target release version
         id: version
-        shell: python
+        env:
+          TARGET_VERSION: ${{ inputs.version }}
         run: |
-          from pathlib import Path
-          import json
-          import os
+          CURRENT_VERSION="$(python scripts/set_release_version.py --check)"
+          python - "$CURRENT_VERSION" "$TARGET_VERSION" <<'PY'
           import re
+          import sys
 
-          pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
-          match = re.search(r'(?m)^version = "([^"]+)"$', pyproject)
-          if match is None:
-              raise RuntimeError("Could not find project version in pyproject.toml")
-          version = match.group(1)
-
-          manifest = json.loads(
-              Path("custom_components/speaker_recognition/manifest.json").read_text(
-                  encoding="utf-8"
+          current, target = sys.argv[1:3]
+          pattern = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
+          if not pattern.fullmatch(target):
+              raise SystemExit(f"Release version must use X.Y.Z format, got {target!r}")
+          if not pattern.fullmatch(current):
+              raise SystemExit(f"Current tracked version is not X.Y.Z: {current!r}")
+          if tuple(map(int, target.split("."))) <= tuple(map(int, current.split("."))):
+              raise SystemExit(
+                  f"Release version {target} must be newer than current release {current}"
               )
-          )
-          if manifest.get("version") != version:
-              raise RuntimeError("Home Assistant manifest version does not match pyproject.toml")
+          PY
+          echo "current_version=$CURRENT_VERSION" >> "$GITHUB_OUTPUT"
+          echo "version=$TARGET_VERSION" >> "$GITHUB_OUTPUT"
 
-          addon = Path("speaker_recognition_addon/config.yaml").read_text(encoding="utf-8")
-          if f'version: "{version}"' not in addon:
-              raise RuntimeError("Add-on version does not match pyproject.toml")
-
-          for path in (
-              Path("speaker_recognition/api.py"),
-              Path("speaker_recognition_addon/speaker_recognition/api.py"),
-              Path("speaker_recognition_addon/Dockerfile"),
-          ):
-              if version not in path.read_text(encoding="utf-8"):
-                  raise RuntimeError(f"{path} does not contain release version {version}")
-
-          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-              output.write(f"version={version}\n")
+      - name: Verify master still represents the latest published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CURRENT_VERSION: ${{ steps.version.outputs.current_version }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          LATEST_RELEASE="$(gh api "repos/${{ github.repository }}/releases/latest" --jq .tag_name)"
+          if [[ "$LATEST_RELEASE" != "$CURRENT_VERSION" ]]; then
+            echo "master is staged as $CURRENT_VERSION but the latest published release is $LATEST_RELEASE"
+            echo "Do not pre-bump version files on master; the Release workflow owns the version bump."
+            exit 1
+          fi
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            echo "Release $VERSION already exists"
+            exit 1
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/$VERSION" >/dev/null 2>&1; then
+            echo "Tag $VERSION already exists"
+            exit 1
+          fi
 
       - name: Capture checked-out master commit
         id: source
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Ensure release does not already exist
+  package:
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout immutable release source
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.source_sha }}
+
+      - name: Stage target version locally
+        run: python scripts/set_release_version.py "${{ needs.prepare.outputs.version }}"
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.9"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.9"
+          enable-cache: true
+          cache-suffix: release-${{ runner.os }}-3.9
+
+      - name: Install dependencies
+        run: uv sync --locked --all-groups
+
+      - name: Build package
+        run: uv build
+
+      - name: Preserve release packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-packages
+          path: dist/*
+          if-no-files-found: error
+
+  docker:
+    needs: prepare
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout immutable release source
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.source_sha }}
+
+      - name: Stage target version locally
+        run: python scripts/set_release_version.py "${{ needs.prepare.outputs.version }}"
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and publish versioned Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ghcr.io/${{ github.repository }}:${{ needs.prepare.outputs.version }}
+          cache-from: type=gha,scope=speaker-recognition-release
+          cache-to: type=gha,mode=max,scope=speaker-recognition-release
+
+  build-addon:
+    needs: prepare
+    runs-on: ubuntu-latest
+    name: Build ${{ matrix.arch }} add-on
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+          - arch: aarch64
+            platform: linux/arm64
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout immutable release source
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.source_sha }}
+
+      - name: Stage target version locally
+        run: python scripts/set_release_version.py "${{ needs.prepare.outputs.version }}"
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and publish versioned add-on image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./speaker_recognition_addon
+          platforms: ${{ matrix.platform }}
+          build-args: |
+            BUILD_ARCH=${{ matrix.arch }}
+            BUILD_VERSION=${{ needs.prepare.outputs.version }}
+          cache-from: type=gha,scope=speaker-recognition-addon-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=speaker-recognition-addon-${{ matrix.arch }}
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/${{ matrix.arch }}-speaker-recognition-addon:${{ needs.prepare.outputs.version }}
+
+  finalize:
+    needs:
+      - prepare
+      - package
+      - docker
+      - build-addon
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - name: Checkout master for finalization
+        uses: actions/checkout@v6
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Refuse to publish from a stale source commit
         env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.version.outputs.version }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
         run: |
-          if gh release view "$VERSION" >/dev/null 2>&1; then
-            echo "Release $VERSION already exists"
+          git fetch origin master
+          MASTER_SHA="$(git rev-parse origin/master)"
+          if [[ "$MASTER_SHA" != "$SOURCE_SHA" ]]; then
+            echo "master moved from $SOURCE_SHA to $MASTER_SHA while release artifacts were building"
+            echo "No version bump or GitHub release has been published. Re-run Release from current master."
             exit 1
           fi
-          if git rev-parse "$VERSION" >/dev/null 2>&1; then
-            echo "Tag $VERSION already exists"
+          git checkout -B master origin/master
+
+      - name: Stage target version for the release commit
+        run: |
+          python scripts/set_release_version.py "${{ needs.prepare.outputs.version }}"
+          python scripts/sync_addon_sources.py --check
+          python scripts/set_release_version.py --check
+          git diff --check
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Verify published image manifests
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          images=(
+            "ghcr.io/${{ github.repository }}:$VERSION"
+            "ghcr.io/${{ github.repository_owner }}/amd64-speaker-recognition-addon:$VERSION"
+            "ghcr.io/${{ github.repository_owner }}/aarch64-speaker-recognition-addon:$VERSION"
+          )
+          for image in "${images[@]}"; do
+            found=false
+            for attempt in {1..12}; do
+              if docker buildx imagetools inspect "$image" >/dev/null 2>&1; then
+                found=true
+                break
+              fi
+              sleep 5
+            done
+            if [[ "$found" != true ]]; then
+              echo "Required release image is not available: $image"
+              echo "master remains on the previous add-on version."
+              exit 1
+            fi
+            echo "Verified $image"
+          done
+
+      - name: Promote standalone latest tag
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          docker buildx imagetools create \
+            --tag "ghcr.io/${{ github.repository }}:latest" \
+            "ghcr.io/${{ github.repository }}:$VERSION"
+
+      - name: Commit version only after installable images exist
+        id: release_commit
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            pyproject.toml \
+            uv.lock \
+            custom_components/speaker_recognition/manifest.json \
+            speaker_recognition/api.py \
+            speaker_recognition_addon/config.yaml \
+            speaker_recognition_addon/Dockerfile \
+            speaker_recognition_addon/speaker_recognition/api.py
+          if git diff --cached --quiet; then
+            echo "Target version produced no release metadata changes"
             exit 1
           fi
+          git commit -m "chore: bump version to $VERSION"
+          git push origin HEAD:master
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore packaged release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-packages
+          path: dist
 
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.version.outputs.version }}
-          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          RELEASE_SHA: ${{ steps.release_commit.outputs.sha }}
         run: |
-          gh release create "$VERSION" \
-            --target "$SOURCE_SHA" \
+          gh release create "$VERSION" dist/* \
+            --target "$RELEASE_SHA" \
             --title "$VERSION" \
             --generate-notes
