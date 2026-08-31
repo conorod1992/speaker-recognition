@@ -10,7 +10,6 @@ arch:
 init: false
 startup: services
 hassio_api: true
-hassio_role: default
 ports:
   8099/tcp: 8099
 ports_description:
