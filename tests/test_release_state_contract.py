@@ -18,7 +18,7 @@ def test_uv_lock_python_range_matches_pyproject() -> None:
     assert project_range.group(1).replace(" ", "") == lock_range.group(1).replace(" ", "")
 
 
-def test_release_version_is_2_8_1() -> None:
-    """The post-sweep release is consistently staged as 2.8.1."""
+def test_release_version_is_2_9_0() -> None:
+    """The post-sweep release is consistently staged as 2.9.0."""
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert 'version = "2.8.1"' in pyproject
+    assert 'version = "2.9.0"' in pyproject
