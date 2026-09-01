@@ -16,10 +16,15 @@ services:
 
       # Storage configuration
       - EMBEDDINGS_DIR=/data/embeddings
+      - MODEL_CACHE_DIR=/data/models
+
+      # Experimental model comparison. Keep disabled for normal operation.
+      - SHADOW_ENGINE=${SHADOW_ENGINE:-none}
 
       # Remote API security. Compose fails fast if API_TOKEN is not set.
       - API_TOKEN=${API_TOKEN:?Set API_TOKEN before starting Speaker Recognition}
       - ALLOW_INSECURE_REMOTE=false
     volumes:
-      # Persist embeddings data
+      # Persist embeddings and optional downloaded shadow models.
       - ./embeddings:/data/embeddings
+      - ./models:/data/models

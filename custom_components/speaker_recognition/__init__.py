@@ -32,6 +32,8 @@ from .lifecycle import (
 )
 from .proxy import effective_proxy_source, sync_proxy_unique_id, validate_proxy_source
 from .recognition import RecognitionBackendUnavailable, SpeakerRecognition
+from .shadow_evaluation import async_setup_shadow_evaluation
+from .shadow_websocket import async_register_shadow_websocket
 from .telemetry import async_setup_decision_history
 from .websocket import async_register_websocket_commands
 
@@ -100,6 +102,12 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     await async_register_frontend(hass)
     history = await async_setup_decision_history(hass)
     domain_data = hass.data.setdefault(DOMAIN, {})
+
+    # Register the shadow observer before the ordinary history listener. It can
+    # enrich the same authoritative turn with backend engine/latency metadata,
+    # then launch experimental scoring as a separate Home Assistant task.
+    async_setup_shadow_evaluation(hass, history)
+
     if "decision_history_event_unsub" not in domain_data:
 
         @callback
@@ -117,6 +125,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         )
     async_register_websocket_commands(hass)
     async_register_enhancement_websocket(hass)
+    async_register_shadow_websocket(hass)
     return True
 
 

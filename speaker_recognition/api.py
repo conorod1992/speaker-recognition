@@ -9,6 +9,7 @@ import logging
 import os
 import secrets
 from threading import Lock
+from time import perf_counter
 from typing import Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
@@ -23,15 +24,18 @@ from speaker_recognition.models import (
     ProfileSyncResult,
     RecognitionRequest,
     RecognitionResult,
+    ShadowRecognitionScores,
     TrainingRequest,
     TrainingResult,
     config,
 )
 from speaker_recognition.recognizer import recognizer
+from speaker_recognition.shadow import shadow_service
 from speaker_recognition.warmup import WarmupStatus, warm_encoder
 
 _LOGGER = logging.getLogger(__name__)
 _RECOGNIZER_LOCK = Lock()
+_SHADOW_LOCK = Lock()
 _WARMUP_STATUS: WarmupStatus = warm_encoder(recognizer)
 
 
@@ -162,21 +166,49 @@ app.add_middleware(RequestBodyLimitMiddleware, max_body_size=MAX_REQUEST_BODY_BY
 
 @app.get("/health", response_model=HealthResponse, tags=["Health"])
 def health_check() -> HealthResponse:
-    """Health check endpoint, retrying a failed startup warm-up."""
+    """Health check endpoint, retrying only the authoritative encoder warm-up."""
     global _WARMUP_STATUS
     with _RECOGNIZER_LOCK:
         if not _WARMUP_STATUS.ready:
             _WARMUP_STATUS = warm_encoder(recognizer)
-        return HealthResponse(
-            status="healthy" if _WARMUP_STATUS.ready else "degraded",
-            trained=recognizer.is_trained,
-            enrolled_users=recognizer.enrolled_users,
-            encoder_ready=_WARMUP_STATUS.ready,
-            warmup_seconds=_WARMUP_STATUS.seconds,
-            warmup_error=_WARMUP_STATUS.error,
-            engine_id=recognizer.engine_id,
-            engine_name=recognizer.engine_name,
-        )
+        trained = recognizer.is_trained
+        enrolled_users = recognizer.enrolled_users
+        engine_id = recognizer.engine_id
+        engine_name = recognizer.engine_name
+    # Never wait for the experimental lock in /health. A first ECAPA model
+    # download or shadow training run may take much longer than the container
+    # health-check timeout, but it must not make the authoritative service unhealthy.
+    if shadow_service.enabled:
+        shadow = shadow_service.recognizer
+        shadow_engine_id = shadow.engine_id
+        shadow_engine_name = shadow.engine_name
+        shadow_trained = shadow.is_trained
+        try:
+            shadow_enrolled_users = shadow.enrolled_users
+        except RuntimeError:
+            shadow_enrolled_users = []
+    else:
+        shadow_engine_id = None
+        shadow_engine_name = None
+        shadow_trained = False
+        shadow_enrolled_users = []
+    shadow_error = shadow_service.last_error
+
+    return HealthResponse(
+        status="healthy" if _WARMUP_STATUS.ready else "degraded",
+        trained=trained,
+        enrolled_users=enrolled_users,
+        encoder_ready=_WARMUP_STATUS.ready,
+        warmup_seconds=_WARMUP_STATUS.seconds,
+        warmup_error=_WARMUP_STATUS.error,
+        engine_id=engine_id,
+        engine_name=engine_name,
+        shadow_engine_id=shadow_engine_id,
+        shadow_engine_name=shadow_engine_name,
+        shadow_trained=shadow_trained,
+        shadow_enrolled_users=shadow_enrolled_users,
+        shadow_error=shadow_error,
+    )
 
 
 @app.post(
@@ -186,7 +218,7 @@ def health_check() -> HealthResponse:
     tags=["Training"],
 )
 def train(request: TrainingRequest) -> TrainingResult:
-    """Train the speaker recognition model."""
+    """Train the authoritative speaker recognition model."""
     try:
         with _RECOGNIZER_LOCK:
             return recognizer.train(request)
@@ -202,13 +234,38 @@ def train(request: TrainingRequest) -> TrainingResult:
 
 
 @app.post(
+    "/shadow/train",
+    response_model=TrainingResult,
+    responses={409: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+    tags=["Experimental"],
+)
+def train_shadow(request: TrainingRequest) -> TrainingResult:
+    """Train the optional shadow engine without touching authoritative profiles."""
+    if not shadow_service.enabled:
+        raise HTTPException(status_code=409, detail="No shadow engine is configured")
+    try:
+        with _SHADOW_LOCK:
+            result = shadow_service.recognizer.train(request)
+            shadow_service.clear_error()
+            return result
+    except ValueError as error:
+        _LOGGER.warning("Shadow training rejected samples: %s", error)
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except Exception as error:
+        with _SHADOW_LOCK:
+            shadow_service.record_error(error)
+        _LOGGER.exception("Experimental shadow training failed")
+        raise HTTPException(status_code=500, detail="Shadow training failed") from error
+
+
+@app.post(
     "/profiles/sync",
     response_model=ProfileSyncResult,
     responses={500: {"model": ErrorResponse}},
     tags=["Training"],
 )
 def sync_profiles(request: ProfileSyncRequest) -> ProfileSyncResult:
-    """Remove persisted profiles no longer present in HA configuration."""
+    """Remove authoritative profiles no longer present in HA configuration."""
     try:
         with _RECOGNIZER_LOCK:
             removed_users = recognizer.sync_profiles(set(request.desired_users))
@@ -225,16 +282,45 @@ def sync_profiles(request: ProfileSyncRequest) -> ProfileSyncResult:
 
 
 @app.post(
+    "/shadow/profiles/sync",
+    response_model=ProfileSyncResult,
+    responses={409: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+    tags=["Experimental"],
+)
+def sync_shadow_profiles(request: ProfileSyncRequest) -> ProfileSyncResult:
+    """Synchronize shadow profiles independently of authoritative profiles."""
+    if not shadow_service.enabled:
+        raise HTTPException(status_code=409, detail="No shadow engine is configured")
+    try:
+        with _SHADOW_LOCK:
+            shadow = shadow_service.recognizer
+            removed_users = shadow.sync_profiles(set(request.desired_users))
+            shadow_service.clear_error()
+            return ProfileSyncResult(
+                enrolled_users=shadow.enrolled_users,
+                removed_users=removed_users,
+            )
+    except Exception as error:
+        with _SHADOW_LOCK:
+            shadow_service.record_error(error)
+        _LOGGER.exception("Error synchronizing experimental shadow profiles")
+        raise HTTPException(status_code=500, detail="Shadow profile sync failed") from error
+
+
+@app.post(
     "/recognize",
     response_model=RecognitionResult,
     responses={400: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
     tags=["Recognition"],
 )
 def recognize(request: RecognitionRequest) -> RecognitionResult:
-    """Recognize speaker from audio data."""
+    """Recognize speaker using only the authoritative engine."""
+    started = perf_counter()
     try:
         with _RECOGNIZER_LOCK:
-            return recognizer.recognize(request)
+            result = recognizer.recognize(request)
+        result.processing_seconds = perf_counter() - started
+        return result
     except (ValueError, RuntimeError) as error:
         _LOGGER.error("Recognition error: %s", error)
         raise HTTPException(status_code=400, detail=str(error)) from error
@@ -244,3 +330,41 @@ def recognize(request: RecognitionRequest) -> RecognitionResult:
             status_code=500,
             detail="Speaker recognition failed",
         ) from error
+
+
+@app.post(
+    "/shadow/recognize",
+    response_model=ShadowRecognitionScores,
+    responses={409: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+    tags=["Experimental"],
+)
+def recognize_shadow(request: RecognitionRequest) -> ShadowRecognitionScores:
+    """Score audio with the shadow engine without applying an identity decision."""
+    if not shadow_service.enabled:
+        raise HTTPException(status_code=409, detail="No shadow engine is configured")
+    started = perf_counter()
+    try:
+        with _SHADOW_LOCK:
+            shadow = shadow_service.recognizer
+            if not shadow.is_trained:
+                raise HTTPException(status_code=409, detail="Shadow engine is not trained")
+            scores = shadow.score(request)
+            shadow_service.clear_error()
+    except HTTPException:
+        raise
+    except (ValueError, RuntimeError) as error:
+        _LOGGER.warning("Experimental shadow scoring failed: %s", error)
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except Exception as error:
+        with _SHADOW_LOCK:
+            shadow_service.record_error(error)
+        _LOGGER.exception("Experimental shadow scoring failed")
+        raise HTTPException(status_code=500, detail="Shadow scoring failed") from error
+    return ShadowRecognitionScores(
+        engine_id=scores.engine_id,
+        candidate_user_id=scores.candidate_user_id,
+        similarity=scores.similarity,
+        margin=scores.margin,
+        all_scores=scores.all_scores,
+        processing_seconds=perf_counter() - started,
+    )

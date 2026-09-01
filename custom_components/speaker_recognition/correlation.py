@@ -19,6 +19,8 @@ class CorrelatedRecognition:
     all_scores: dict[str, float]
     stt_entity_id: str | None
     utterance_sequence: int
+    engine_id: str = "resemblyzer"
+    backend_processing_seconds: float = 0.0
     whispering: bool = False
     whisper_score: float = 0.0
     whisper_available: bool = False

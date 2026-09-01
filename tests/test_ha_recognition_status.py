@@ -28,6 +28,7 @@ def _load_recognition_module(monkeypatch: pytest.MonkeyPatch):
             self.total = total
 
     aiohttp.ClientError = ClientError
+    aiohttp.ClientResponseError = ClientError
     aiohttp.ClientTimeout = ClientTimeout
     homeassistant = ModuleType("homeassistant")
     components = ModuleType("homeassistant.components")

@@ -12,7 +12,9 @@ from speaker_recognition.const import (
     DEFAULT_ENGINE_ID,
     DEFAULT_HOST,
     DEFAULT_LOG_LEVEL,
+    DEFAULT_MODEL_CACHE_DIR,
     DEFAULT_PORT,
+    DEFAULT_SHADOW_ENGINE,
     MAX_AUDIO_BASE64_CHARS,
     MAX_SAMPLE_RATE,
     MAX_TRAINING_AUDIO_BYTES,
@@ -31,6 +33,8 @@ class Config(BaseModel):
     log_level: str = DEFAULT_LOG_LEVEL
     access_log: bool = DEFAULT_ACCESS_LOG
     embeddings_directory: str = DEFAULT_EMBEDDINGS_DIR
+    model_cache_directory: str = DEFAULT_MODEL_CACHE_DIR
+    shadow_engine: str = DEFAULT_SHADOW_ENGINE
     api_token: str = DEFAULT_API_TOKEN
     allow_insecure_remote: bool = DEFAULT_ALLOW_INSECURE_REMOTE
 
@@ -125,12 +129,19 @@ class RecognitionScores(BaseModel):
     all_scores: dict[str, float]
 
 
+class ShadowRecognitionScores(RecognitionScores):
+    """Raw scores from a non-authoritative shadow engine."""
+
+    processing_seconds: float
+
+
 class RecognitionResult(RecognitionScores):
     """Result of recognition operation after acceptance policy."""
 
     user_id: Optional[str]
     confidence: float
     accepted: bool
+    processing_seconds: float = 0.0
 
 
 class DenoiseRequest(BaseModel):
@@ -159,6 +170,11 @@ class HealthResponse(BaseModel):
     warmup_error: Optional[str] = None
     engine_id: str = DEFAULT_ENGINE_ID
     engine_name: str = "Resemblyzer"
+    shadow_engine_id: Optional[str] = None
+    shadow_engine_name: Optional[str] = None
+    shadow_trained: bool = False
+    shadow_enrolled_users: list[str] = Field(default_factory=list)
+    shadow_error: Optional[str] = None
 
 
 class ErrorResponse(BaseModel):

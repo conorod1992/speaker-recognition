@@ -17,18 +17,23 @@ from speaker_recognition.const import (  # noqa: E402
     DEFAULT_EMBEDDINGS_DIR,
     DEFAULT_HOST,
     DEFAULT_LOG_LEVEL,
+    DEFAULT_MODEL_CACHE_DIR,
     DEFAULT_PORT,
+    DEFAULT_SHADOW_ENGINE,
     ENV_ACCESS_LOG,
     ENV_ALLOW_INSECURE_REMOTE,
     ENV_API_TOKEN,
     ENV_EMBEDDINGS_DIR,
     ENV_HOST,
     ENV_LOG_LEVEL,
+    ENV_MODEL_CACHE_DIR,
     ENV_PORT,
+    ENV_SHADOW_ENGINE,
 )
 from speaker_recognition.logging_config import configure_logging  # noqa: E402
 from speaker_recognition.models import config  # noqa: E402
 from speaker_recognition.recognizer import recognizer  # noqa: E402
+from speaker_recognition.shadow import shadow_service  # noqa: E402
 
 load_dotenv()
 cli = typer.Typer(name="speaker-recognition", help="Speaker Recognition Service")
@@ -72,6 +77,18 @@ def serve(
         help="Directory to store voice embeddings",
         envvar=ENV_EMBEDDINGS_DIR,
     ),
+    model_cache_dir: str = typer.Option(
+        DEFAULT_MODEL_CACHE_DIR,
+        "--model-cache-dir",
+        help="Directory used to persist optional downloaded model files",
+        envvar=ENV_MODEL_CACHE_DIR,
+    ),
+    shadow_engine: str = typer.Option(
+        DEFAULT_SHADOW_ENGINE,
+        "--shadow-engine",
+        help="Optional experimental shadow engine (none or ecapa_tdnn)",
+        envvar=ENV_SHADOW_ENGINE,
+    ),
     api_token: str = typer.Option(
         DEFAULT_API_TOKEN,
         "--api-token",
@@ -93,10 +110,13 @@ def serve(
     config.log_level = log_level.upper()
     config.access_log = access_log
     config.embeddings_directory = embeddings_dir
+    config.model_cache_directory = model_cache_dir
+    config.shadow_engine = shadow_engine
     config.api_token = api_token
     config.allow_insecure_remote = allow_insecure_remote
 
     recognizer.embeddings_directory = config.embeddings_directory
+    shadow_service.configure(config)
 
     configure_logging(config.log_level)
 
@@ -105,6 +125,11 @@ def serve(
     _LOGGER.info("Port: %s", config.port)
     _LOGGER.info("Log Level: %s", config.log_level)
     _LOGGER.info("Embeddings Directory: %s", config.embeddings_directory)
+    _LOGGER.info("Model Cache Directory: %s", config.model_cache_directory)
+    _LOGGER.info(
+        "Experimental shadow engine: %s",
+        shadow_service.engine_name or "disabled",
+    )
     _LOGGER.info(
         "Remote API authentication: %s",
         "disabled by explicit override"
