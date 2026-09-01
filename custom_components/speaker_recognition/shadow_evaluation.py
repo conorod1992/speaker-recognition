@@ -9,6 +9,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import Event, HomeAssistant, callback
 
 from .const import CONF_ENTRY_TYPE, DOMAIN, ENTRY_TYPE_MAIN
+from .live_evaluation import get_live_model_evaluation
 from .recognition import SpeakerRecognition
 from .telemetry import DecisionHistory
 
@@ -82,11 +83,6 @@ def async_setup_shadow_evaluation(
         if not isinstance(sequence, int):
             return
 
-        # Live diagnostic turns are deliberately excluded from calibration/history.
-        excluded = domain_data.setdefault("calibration_excluded_utterances", set())
-        if sequence in excluded:
-            return
-
         cache = domain_data.get("utterance_audio")
         if not isinstance(cache, dict):
             return
@@ -106,13 +102,28 @@ def async_setup_shadow_evaluation(
 
         # Register the authoritative result before the ordinary history listener runs.
         # This preserves backend engine/latency metadata without changing the STT event
-        # schema or putting any experimental work on the Assist critical path.
+        # schema or putting ordinary experimental work on the Assist critical path.
         enriched = dict(event.data)
         diagnostics = recognition.pop_authoritative_diagnostics(pcm_audio)
         if diagnostics is not None:
             enriched["engine_id"] = diagnostics[0]
             enriched["backend_processing_seconds"] = diagnostics[1]
         history.record_event(enriched)
+
+        # Dedicated live evaluation starts its shadow request at the same post-EOF
+        # moment as the authoritative recognizer. Bind the later Assist timing here
+        # and do not launch a duplicate background ECAPA request for that turn.
+        live_evaluation = get_live_model_evaluation(hass)
+        if live_evaluation is not None and live_evaluation.attach_assist_timing(
+            pcm_audio, dict(event.data)
+        ):
+            return
+
+        # Live diagnostic/enrollment turns are deliberately excluded from ordinary
+        # background calibration/history shadow work.
+        excluded = domain_data.setdefault("calibration_excluded_utterances", set())
+        if sequence in excluded:
+            return
 
         if not recognition.shadow_ready:
             return
