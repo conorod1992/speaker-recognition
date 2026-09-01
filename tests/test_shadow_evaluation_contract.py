@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+import sys
 
 
 def _load_calibration_module():
@@ -11,6 +12,7 @@ def _load_calibration_module():
     spec = importlib.util.spec_from_file_location("speaker_recognition_calibration_test", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
