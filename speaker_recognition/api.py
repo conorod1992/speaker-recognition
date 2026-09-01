@@ -174,6 +174,8 @@ def health_check() -> HealthResponse:
             encoder_ready=_WARMUP_STATUS.ready,
             warmup_seconds=_WARMUP_STATUS.seconds,
             warmup_error=_WARMUP_STATUS.error,
+            engine_id=recognizer.engine_id,
+            engine_name=recognizer.engine_name,
         )
 
 

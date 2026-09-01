@@ -1,4 +1,4 @@
-"""Startup warm-up for the speaker embedding encoder."""
+"""Startup warm-up for speaker embedding engines."""
 
 from __future__ import annotations
 
@@ -18,14 +18,14 @@ _WARMUP_SECONDS = 0.8
 
 @dataclass(frozen=True)
 class WarmupStatus:
-    """Result of the one-time encoder warm-up."""
+    """Result of the one-time embedding-engine warm-up."""
 
     ready: bool
     seconds: float
     error: Optional[str] = None
 
 
-def warm_encoder(recognizer: Any) -> WarmupStatus:
+def warm_engine(engine: Any) -> WarmupStatus:
     """Run one deterministic embedding before the API starts accepting traffic."""
     if os.environ.get("SPEAKER_RECOGNITION_SKIP_WARMUP") == "1":
         _LOGGER.debug("Skipping speaker encoder warm-up by environment request")
@@ -41,7 +41,14 @@ def warm_encoder(recognizer: Any) -> WarmupStatus:
             + 0.04 * np.sin(2.0 * math.pi * 360.0 * time_axis)
             + 0.02 * np.sin(2.0 * math.pi * 720.0 * time_axis)
         ) * envelope
-        embedding = np.asarray(recognizer._encoder.embed_utterance(waveform), dtype=np.float32)
+        if hasattr(engine, "embed_prepared"):
+            raw_embedding = engine.embed_prepared(waveform)
+        else:
+            encoder = getattr(engine, "_encoder", None)
+            if encoder is None:
+                raise AttributeError("embedding engine does not expose an embedding method")
+            raw_embedding = encoder.embed_utterance(waveform)
+        embedding = np.asarray(raw_embedding, dtype=np.float32)
         if embedding.ndim != 1 or embedding.size == 0 or not np.isfinite(embedding).all():
             raise ValueError("encoder returned an invalid warm-up embedding")
     except Exception as error:  # Warm-up failure must not make the service unusable.
@@ -53,3 +60,8 @@ def warm_encoder(recognizer: Any) -> WarmupStatus:
     elapsed = perf_counter() - started
     _LOGGER.info("Speaker encoder warm-up completed in %.3fs", elapsed)
     return WarmupStatus(ready=True, seconds=elapsed)
+
+
+def warm_encoder(recognizer: Any) -> WarmupStatus:
+    """Compatibility wrapper accepting a recognizer or legacy encoder holder."""
+    return warm_engine(getattr(recognizer, "engine", recognizer))

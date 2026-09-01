@@ -9,6 +9,7 @@ from speaker_recognition.const import (
     DEFAULT_ALLOW_INSECURE_REMOTE,
     DEFAULT_API_TOKEN,
     DEFAULT_EMBEDDINGS_DIR,
+    DEFAULT_ENGINE_ID,
     DEFAULT_HOST,
     DEFAULT_LOG_LEVEL,
     DEFAULT_PORT,
@@ -88,6 +89,7 @@ class TrainingResult(BaseModel):
     status: str
     trained_users: list[str]
     count: int
+    engine_id: str = DEFAULT_ENGINE_ID
     accepted_samples: dict[str, int] = Field(default_factory=dict)
     rejected_samples: dict[str, int] = Field(default_factory=dict)
     profile_consistency: dict[str, float] = Field(default_factory=dict)
@@ -113,16 +115,22 @@ class RecognitionRequest(BaseModel):
     audio: AudioInput = Field(..., description="Audio input for recognition")
 
 
-class RecognitionResult(BaseModel):
-    """Result of recognition operation."""
+class RecognitionScores(BaseModel):
+    """Raw per-profile scores before the open-set acceptance policy."""
 
-    user_id: Optional[str]
+    engine_id: str = DEFAULT_ENGINE_ID
     candidate_user_id: str
-    confidence: float
     similarity: float
     margin: Optional[float] = None
-    accepted: bool
     all_scores: dict[str, float]
+
+
+class RecognitionResult(RecognitionScores):
+    """Result of recognition operation after acceptance policy."""
+
+    user_id: Optional[str]
+    confidence: float
+    accepted: bool
 
 
 class DenoiseRequest(BaseModel):
@@ -149,6 +157,8 @@ class HealthResponse(BaseModel):
     encoder_ready: bool = False
     warmup_seconds: Optional[float] = None
     warmup_error: Optional[str] = None
+    engine_id: str = DEFAULT_ENGINE_ID
+    engine_name: str = "Resemblyzer"
 
 
 class ErrorResponse(BaseModel):
