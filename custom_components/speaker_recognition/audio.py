@@ -52,6 +52,21 @@ def decode_wav(
         raise ValueError(UNSUPPORTED_WAV_MESSAGE) from error
 
 
+def decode_persisted_training_wav(audio_data: bytes) -> tuple[bytes, int]:
+    """Decode persisted enrollment media while tolerating legacy long recordings.
+
+    New enrollment uploads remain subject to ``MAX_UPLOADED_WAV_SECONDS`` via
+    ``decode_wav``. Existing configured media may predate that validation, so
+    rebuilds decode the bounded local file and cap only the in-memory PCM sent to
+    the backend. The original WAV on disk is never modified.
+    """
+    pcm_data, sample_rate = decode_wav(audio_data, max_duration_seconds=None)
+    if sample_rate <= 0:
+        return pcm_data, sample_rate
+    max_pcm_bytes = sample_rate * 2 * MAX_UPLOADED_WAV_SECONDS
+    return pcm_data[:max_pcm_bytes], sample_rate
+
+
 def prepare_live_pcm(
     audio_data: bytes, sample_rate: int, channels: int
 ) -> tuple[bytes, int]:
