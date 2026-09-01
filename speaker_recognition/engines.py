@@ -11,7 +11,7 @@ from typing import Any, Protocol
 import numpy as np
 from numpy.typing import NDArray
 import resemblyzer  # type: ignore[import-untyped]
-from scipy.signal import resample_poly
+from scipy.signal import resample_poly  # type: ignore[import-untyped]
 
 from speaker_recognition.const import (
     DEFAULT_ENGINE_ID,
@@ -105,12 +105,8 @@ class EcapaTdnnEngine:
         if self._classifier is not None:
             return self._classifier
         try:
-            from speechbrain.inference.classifiers import (
-                EncoderClassifier,  # type: ignore[import-not-found]
-            )
-            from speechbrain.utils.fetching import (
-                FetchConfig,  # type: ignore[import-not-found]
-            )
+            from speechbrain.inference.classifiers import EncoderClassifier  # type: ignore[import-not-found]
+            from speechbrain.utils.fetching import FetchConfig  # type: ignore[import-not-found]
         except ImportError as error:
             raise RuntimeError(
                 "ECAPA shadow evaluation requires the optional SpeechBrain runtime"
