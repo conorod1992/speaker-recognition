@@ -14,7 +14,7 @@ from aiohttp import ClientError, ClientResponseError, ClientTimeout
 from homeassistant.components import media_source
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .audio import decode_wav, read_bounded_wav
+from .audio import decode_persisted_training_wav, read_bounded_wav
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -223,7 +223,7 @@ class SpeakerRecognition:
                     continue
                 audio_data = await self._async_read_media(media_id)
                 pcm_data, sample_rate = await self.hass.async_add_executor_job(
-                    decode_wav, audio_data
+                    decode_persisted_training_wav, audio_data
                 )
                 voice_sample_models.append(
                     {

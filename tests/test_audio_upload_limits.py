@@ -41,6 +41,15 @@ def test_uploaded_wav_rejects_more_than_thirty_seconds() -> None:
         audio.decode_wav(_wav(31))
 
 
+def test_persisted_training_wav_accepts_and_caps_legacy_long_sample() -> None:
+    audio = _load_audio_module()
+
+    pcm, sample_rate = audio.decode_persisted_training_wav(_wav(31))
+
+    assert sample_rate == 8_000
+    assert len(pcm) == 30 * 8_000 * 2
+
+
 def test_live_wav_can_exceed_upload_limit() -> None:
     audio = _load_audio_module()
     wav_data = _wav(31)
@@ -49,3 +58,15 @@ def test_live_wav_can_exceed_upload_limit() -> None:
 
     assert sample_rate == 8_000
     assert len(pcm) == 31 * 8_000 * 2
+
+
+def test_profile_rebuild_uses_persisted_training_decoder() -> None:
+    recognition = (
+        Path(__file__).parents[1]
+        / "custom_components"
+        / "speaker_recognition"
+        / "recognition.py"
+    ).read_text(encoding="utf-8")
+
+    assert "decode_persisted_training_wav" in recognition
+    assert "decode_persisted_training_wav, audio_data" in recognition
