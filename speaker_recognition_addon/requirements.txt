@@ -4,7 +4,10 @@
 numpy>=1.26.0,<2.0.0
 scipy>=1.11.0,<2.0.0
 torch==2.8.0+cpu
-torchaudio==2.8.0+cpu
+# PyTorch's aarch64 CPU wheel is published as torchaudio 2.8.0 without the
+# local "+cpu" version suffix used by amd64. The plain pin accepts the matching
+# CPU-index wheel on both architectures while still fixing the release.
+torchaudio==2.8.0
 resemblyzer==0.1.4
 # Optional ECAPA shadow engine runtime. It stays dormant unless shadow_engine is enabled.
 speechbrain==1.1.0
