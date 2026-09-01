@@ -21,6 +21,7 @@ from .recognition import (
 _STORAGE_VERSION = 1
 _STORAGE_KEY = f"{DOMAIN}.live_model_evaluation"
 _SAVE_DELAY = 1
+_CURRENT_TIMEOUT_SECONDS = 30.0
 
 
 def _domain_data(hass: HomeAssistant) -> dict[str, Any]:
@@ -55,6 +56,14 @@ class LiveModelEvaluation:
     def records(self) -> list[dict[str, Any]]:
         return [dict(item) for item in self._records]
 
+    def _prune_stale_current(self) -> None:
+        current = self._current
+        if not isinstance(current, dict):
+            return
+        started = current.get("_pair_started_at")
+        if isinstance(started, (int, float)) and perf_counter() - started > _CURRENT_TIMEOUT_SECONDS:
+            self._current = None
+
     def start(self) -> None:
         self.running = True
 
@@ -67,18 +76,19 @@ class LiveModelEvaluation:
 
     def begin_pair(
         self,
-        recognition: SpeakerRecognition,
         *,
         audio_data: bytes,
-        sample_rate: int,
         started_at: float,
     ) -> str | None:
-        """Start shadow scoring beside the active engine for the next test turn."""
+        """Arm one live trial at the authoritative model-call start."""
+        self._prune_stale_current()
+        excluded = _domain_data(self.hass).get("calibration_excluded_utterances")
         if (
             not self.running
             or self.pending is not None
             or self._current is not None
-            or not recognition.shadow_ready
+            or isinstance(excluded, set)
+            and bool(excluded)
         ):
             return None
 
@@ -89,31 +99,10 @@ class LiveModelEvaluation:
             "_audio_key": key,
             "_pair_started_at": started_at,
         }
-
-        async def _run_shadow() -> None:
-            try:
-                result = await recognition.async_shadow_recognize(
-                    audio_data, sample_rate=sample_rate
-                )
-            except Exception as error:  # Experimental work must never affect Assist.
-                self._record_shadow_failure(key, str(error))
-                return
-            completed = perf_counter()
-            if result is None:
-                self._record_shadow_failure(key, "Experimental engine returned no score")
-                return
-            self._record_shadow_result(
-                key,
-                result,
-                call_seconds=completed - started_at,
-            )
-
-        self.hass.async_create_task(
-            _run_shadow(), "Speaker Recognition live model evaluation shadow score"
-        )
         return key
 
     def _current_for_key(self, key: str) -> dict[str, Any] | None:
+        self._prune_stale_current()
         current = self._current
         if not isinstance(current, dict) or current.get("_audio_key") != key:
             return None
@@ -144,6 +133,44 @@ class LiveModelEvaluation:
                 "call_seconds": max(0.0, call_seconds),
             }
         self._maybe_finalize(key)
+
+    def start_shadow_scoring(
+        self,
+        recognition: SpeakerRecognition,
+        *,
+        pcm_audio: bytes,
+        sample_rate: int,
+    ) -> bool:
+        """Score ECAPA after the Assist turn, avoiding benchmark CPU interference."""
+        key = _audio_key(pcm_audio)
+        current = self._current_for_key(key)
+        if current is None or current.get("_shadow_started"):
+            return False
+        current["_shadow_started"] = True
+
+        async def _run() -> None:
+            started = perf_counter()
+            try:
+                result = await recognition.async_shadow_recognize(
+                    pcm_audio, sample_rate=sample_rate
+                )
+            except Exception as error:  # Experimental work must never affect Assist.
+                self._record_shadow_failure(key, str(error))
+                return
+            completed = perf_counter()
+            if result is None:
+                self._record_shadow_failure(key, "Experimental engine returned no score")
+                return
+            self._record_shadow_result(
+                key,
+                result,
+                call_seconds=completed - started,
+            )
+
+        self.hass.async_create_task(
+            _run(), "Speaker Recognition live model evaluation shadow score"
+        )
+        return True
 
     def _record_shadow_failure(self, key: str, message: str) -> None:
         current = self._current_for_key(key)
@@ -209,11 +236,11 @@ class LiveModelEvaluation:
         ):
             return
 
-        # The model pair starts after PCM preparation at EOF. When the existing
+        # The model call starts after PCM preparation at EOF. When the existing
         # analysis finished after STT, its measured added latency lets us recover
-        # the exact amount of STT work that remained at the pair start. If STT won
-        # the race, we only know a lower bound on that remaining work, so a nonzero
-        # value is reported explicitly as an upper bound rather than false precision.
+        # the exact STT time that remained at that point. If STT won the race, we
+        # only know a lower bound, so any non-zero counterfactual is marked as an
+        # upper bound instead of pretending to false precision.
         post_prepare_analysis = max(0.0, recognition_seconds - preparation_seconds)
         if pipeline_added > 0:
             remaining_stt = max(0.0, post_prepare_analysis - pipeline_added)
@@ -247,6 +274,7 @@ class LiveModelEvaluation:
         current.pop("_audio_key", None)
         current.pop("_pair_started_at", None)
         current.pop("_timing_attached", None)
+        current.pop("_shadow_started", None)
         self.pending = current
         self._current = None
 
@@ -272,6 +300,7 @@ class LiveModelEvaluation:
         return True
 
     def status(self) -> dict[str, Any]:
+        self._prune_stale_current()
         return {
             "running": self.running,
             "waiting_for_utterance": self.running
@@ -284,7 +313,7 @@ class LiveModelEvaluation:
 
 
 class LiveEvaluationSpeakerRecognition(SpeakerRecognition):
-    """SpeakerRecognition runtime that can launch an opt-in parallel A/B score."""
+    """SpeakerRecognition runtime that timestamps opt-in A/B trials."""
 
     async def async_recognize(
         self, audio_data: bytes, sample_rate: int = 16000
@@ -293,12 +322,10 @@ class LiveEvaluationSpeakerRecognition(SpeakerRecognition):
         started = perf_counter()
         key = (
             evaluation.begin_pair(
-                self,
                 audio_data=audio_data,
-                sample_rate=sample_rate,
                 started_at=started,
             )
-            if evaluation is not None
+            if evaluation is not None and self.shadow_ready
             else None
         )
         result = await super().async_recognize(audio_data, sample_rate=sample_rate)
