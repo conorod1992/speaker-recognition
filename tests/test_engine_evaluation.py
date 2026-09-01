@@ -18,6 +18,7 @@ from speaker_recognition.evaluation import (
     decision_from_scores,
     evaluate_records,
     find_best_operating_point,
+    find_best_operating_points,
 )
 from speaker_recognition.models import AudioInput, Config, RecognitionRequest
 
@@ -166,8 +167,8 @@ def test_open_set_evaluation_distinguishes_error_types() -> None:
     assert metrics.trials == 5
 
 
-def test_engine_comparison_uses_identical_policy_per_engine() -> None:
-    """Shadow engines can be compared from the same labelled trial format."""
+def test_engine_comparison_uses_independent_operating_points() -> None:
+    """Shadow engines are compared without assuming equivalent raw score scales."""
     records = [
         EvaluationRecord("resemblyzer", {"alice": 0.70, "bob": 0.40}, "alice"),
         EvaluationRecord("ecapa", {"alice": 0.82, "bob": 0.20}, "alice"),
@@ -176,7 +177,11 @@ def test_engine_comparison_uses_identical_policy_per_engine() -> None:
     ]
 
     compared = compare_engines(
-        records, similarity_threshold=0.55, margin_threshold=0.05
+        records,
+        {
+            "resemblyzer": (0.55, 0.05),
+            "ecapa": (0.75, 0.05),
+        },
     )
 
     assert compared["resemblyzer"].correct == 2
@@ -207,3 +212,22 @@ def test_decision_recomputes_margin_from_raw_scores() -> None:
     scores = {"alice": 0.70, "bob": 0.68}
     assert decision_from_scores(scores, 0.55, 0.01) == "alice"
     assert decision_from_scores(scores, 0.55, 0.05) is None
+
+
+def test_operating_point_search_calibrates_engines_independently() -> None:
+    """Different embedding score scales get separate optimal thresholds."""
+    records = [
+        EvaluationRecord("resemblyzer", {"alice": 0.62, "bob": 0.30}, "alice"),
+        EvaluationRecord("resemblyzer", {"alice": 0.56, "bob": 0.30}, None),
+        EvaluationRecord("ecapa", {"alice": 0.88, "bob": 0.20}, "alice"),
+        EvaluationRecord("ecapa", {"alice": 0.76, "bob": 0.20}, None),
+    ]
+
+    best = find_best_operating_points(
+        records,
+        similarity_thresholds=[0.55, 0.60, 0.75, 0.80],
+        margin_thresholds=[0.0],
+    )
+
+    assert best["resemblyzer"].similarity_threshold == 0.60
+    assert best["ecapa"].similarity_threshold == 0.80

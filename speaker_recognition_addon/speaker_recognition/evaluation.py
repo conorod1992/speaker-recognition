@@ -147,19 +147,24 @@ def evaluate_records(
 
 def compare_engines(
     records: Iterable[EvaluationRecord],
-    similarity_threshold: float,
-    margin_threshold: float,
+    operating_points: Mapping[str, tuple[float, float]],
 ) -> dict[str, EvaluationMetrics]:
-    """Evaluate each engine independently under the same decision policy."""
+    """Evaluate engines using independently calibrated threshold/margin pairs."""
     grouped: dict[str, list[EvaluationRecord]] = {}
     for record in records:
         grouped.setdefault(record.engine_id, []).append(record)
-    return {
-        engine_id: evaluate_records(
+    missing = set(grouped) - set(operating_points)
+    if missing:
+        raise ValueError(
+            "Missing operating point for engine(s): " + ", ".join(sorted(missing))
+        )
+    result: dict[str, EvaluationMetrics] = {}
+    for engine_id, engine_records in sorted(grouped.items()):
+        similarity_threshold, margin_threshold = operating_points[engine_id]
+        result[engine_id] = evaluate_records(
             engine_records, similarity_threshold, margin_threshold
         )
-        for engine_id, engine_records in sorted(grouped.items())
-    }
+    return result
 
 
 def find_best_operating_point(
@@ -202,3 +207,28 @@ def find_best_operating_point(
             -item.margin_threshold,
         ),
     )
+
+
+def find_best_operating_points(
+    records: Iterable[EvaluationRecord],
+    similarity_thresholds: Iterable[float],
+    margin_thresholds: Iterable[float],
+    false_identification_weight: float = 5.0,
+    false_unknown_weight: float = 1.0,
+) -> dict[str, EvaluationOperatingPoint]:
+    """Optimize each engine independently so raw score scales are never conflated."""
+    grouped: dict[str, list[EvaluationRecord]] = {}
+    for record in records:
+        grouped.setdefault(record.engine_id, []).append(record)
+    similarities = tuple(similarity_thresholds)
+    margins = tuple(margin_thresholds)
+    return {
+        engine_id: find_best_operating_point(
+            engine_records,
+            similarities,
+            margins,
+            false_identification_weight=false_identification_weight,
+            false_unknown_weight=false_unknown_weight,
+        )
+        for engine_id, engine_records in sorted(grouped.items())
+    }
