@@ -18,4 +18,5 @@ def test_model_cache_is_persistent_in_supported_deployments() -> None:
     dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
     assert "/share/speaker_recognition/models" in addon_config
     assert "./models:/data/models" in compose
-    assert 'VOLUME ["/data/embeddings", "/data/models"]' in dockerfile
+    assert 'VOLUME ["/data/embeddings"]' in dockerfile
+    assert 'VOLUME ["/data/models"]' in dockerfile
