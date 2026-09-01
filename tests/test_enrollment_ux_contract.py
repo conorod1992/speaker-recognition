@@ -78,3 +78,46 @@ def test_interactive_enrollment_reuses_transactional_profile_update() -> None:
     assert "async_update_entry(entry, options=options)" in websocket_source
     assert "async_apply_enrollment_update" in init_source
     assert 'staged.pop(user_id, None)' in init_source
+
+
+def test_retake_cleans_the_superseded_staged_media_file() -> None:
+    """Replacing one staged phrase does not leak the previous managed WAV."""
+    enrollment_source = (ROOT / "enrollment.py").read_text(encoding="utf-8")
+
+    assert "previous = staged.get(sample_index)" in enrollment_source
+    assert "previous_path = _managed_media_path(hass, previous_media_id)" in enrollment_source
+    assert "previous_path != absolute_path" in enrollment_source
+    assert "_delete_paths, [previous_path]" in enrollment_source
+
+
+def test_enrollment_sample_bounds_follow_the_phrase_catalogue() -> None:
+    """Adding enrollment phrases does not require updating hard-coded API bounds."""
+    websocket_source = (ROOT / "websocket.py").read_text(encoding="utf-8")
+
+    assert "_ENROLLMENT_SAMPLE_INDEX = vol.All(" in websocket_source
+    assert "max=len(ENROLLMENT_PHRASES) - 1" in websocket_source
+    assert "vol.Range(min=0, max=5)" not in websocket_source
+    assert websocket_source.count(
+        'vol.Required("sample_index"): _ENROLLMENT_SAMPLE_INDEX'
+    ) == 2
+
+
+def test_commit_metadata_preserves_exact_staged_phrase_indexes() -> None:
+    """Non-contiguous staged samples retain the phrase they actually recorded."""
+    websocket_source = (ROOT / "websocket.py").read_text(encoding="utf-8")
+
+    assert "ordered = [(index, staged[index]) for index in sorted(staged)]" in websocket_source
+    assert '"sample_index": sample_index' in websocket_source
+    assert '"phrase": ENROLLMENT_PHRASES[sample_index]' in websocket_source
+    assert "ENROLLMENT_PHRASES[: len(samples)]" not in websocket_source
+
+
+def test_panel_advances_to_the_next_incomplete_phrase() -> None:
+    """Sparse staged indexes do not make the panel skip or revisit the wrong phrase."""
+    panel = (ROOT / "www" / "speaker-recognition-panel.js").read_text(encoding="utf-8")
+
+    assert "_nextIncompleteSample(afterIndex = -1)" in panel
+    assert "new Set(this._stagedIndexes())" in panel
+    assert "this._sampleIndex = this._nextIncompleteSample(savedIndex)" in panel
+    assert "this._sampleIndex = this._nextIncompleteSample(index)" in panel
+    assert "Math.min(staged.length" not in panel
