@@ -1,21 +1,24 @@
 """Speaker recognition logic."""
 
-import base64
+from __future__ import annotations
+
 from collections import defaultdict
 import hashlib
 import logging
 from pathlib import Path
-from typing import BinaryIO, Optional
+from typing import Any, BinaryIO, Optional
 
 import numpy as np
 from numpy.typing import NDArray
-from resemblyzer import VoiceEncoder, preprocess_wav  # type: ignore[import-untyped]
 
+from speaker_recognition.const import DEFAULT_ENGINE_ID
+from speaker_recognition.engines import SpeakerEmbeddingEngine, create_engine
 from speaker_recognition.models import (
     AudioInput,
     Config,
     RecognitionRequest,
     RecognitionResult,
+    RecognitionScores,
     TrainingRequest,
     TrainingResult,
     config,
@@ -27,21 +30,55 @@ MIN_ACCEPTED_SIMILARITY = 0.55
 MIN_ACCEPTED_MARGIN = 0.05
 PROFILE_SAMPLE_WEIGHT = 0.5
 OUTLIER_MIN_GAP = 0.10
-PROFILE_SCHEMA_VERSION = 1
+PROFILE_SCHEMA_VERSION = 2
+LEGACY_PROFILE_SCHEMA_VERSION = 1
 
 
 class SpeakerRecognizer:
-    """Handle speaker recognition operations."""
+    """Handle speaker recognition operations independently of embedding engine."""
 
-    def __init__(self, config: Config) -> None:
+    def __init__(
+        self,
+        config: Config,
+        engine: Optional[SpeakerEmbeddingEngine] = None,
+    ) -> None:
         """Initialize the speaker recognizer."""
-        self._encoder: VoiceEncoder = VoiceEncoder()
+        self._engine = engine or create_engine()
         self._reference_embeddings: dict[str, NDArray[np.float32]] = {}
         self._sample_embeddings: dict[str, NDArray[np.float32]] = {}
         self._is_trained = False
         self._config = config
         self._embeddings_directory = Path(config.embeddings_directory)
         self._load_embeddings()
+
+    @property
+    def engine(self) -> SpeakerEmbeddingEngine:
+        """Return the active speaker embedding engine."""
+        return self._engine
+
+    @property
+    def engine_id(self) -> str:
+        """Return the stable ID of the active embedding engine."""
+        return self._engine.info.engine_id
+
+    @property
+    def engine_name(self) -> str:
+        """Return the human-readable active embedding engine name."""
+        return self._engine.info.display_name
+
+    @property
+    def _encoder(self) -> Any:
+        """Expose the Resemblyzer encoder for compatibility with older tests/tools."""
+        encoder = getattr(self._engine, "encoder", None)
+        if encoder is None:
+            raise AttributeError("Active embedding engine does not expose an encoder")
+        return encoder
+
+    @_encoder.setter
+    def _encoder(self, value: Any) -> None:
+        if not hasattr(self._engine, "encoder"):
+            raise AttributeError("Active embedding engine does not expose an encoder")
+        setattr(self._engine, "encoder", value)
 
     @property
     def is_trained(self) -> bool:
@@ -65,8 +102,19 @@ class SpeakerRecognizer:
         self._embeddings_directory = Path(value)
         self._load_embeddings()
 
+    def _profile_engine_id(self, profile: Any, schema_version: int) -> str:
+        """Return the profile engine, treating schema v1 as Resemblyzer."""
+        if schema_version == LEGACY_PROFILE_SCHEMA_VERSION:
+            return DEFAULT_ENGINE_ID
+        if schema_version != PROFILE_SCHEMA_VERSION:
+            raise ValueError("unsupported profile schema version")
+        engine_id = str(profile["engine_id"].item())
+        if not engine_id:
+            raise ValueError("profile contains no embedding engine ID")
+        return engine_id
+
     def _load_embeddings(self) -> None:
-        """Load persisted profiles and reject incompatible profile dimensions."""
+        """Load persisted profiles compatible with the active embedding engine."""
         self._reference_embeddings = {}
         self._sample_embeddings = {}
         if not self._embeddings_directory.is_dir():
@@ -78,8 +126,8 @@ class SpeakerRecognizer:
             try:
                 with np.load(profile_path, allow_pickle=False) as profile:
                     schema_version = int(profile["schema_version"].item())
-                    if schema_version != PROFILE_SCHEMA_VERSION:
-                        raise ValueError("unsupported profile schema version")
+                    if self._profile_engine_id(profile, schema_version) != self.engine_id:
+                        continue
                     user_id = str(profile["user_id"].item())
                     embedding = self._normalize_embedding(profile["centroid"])
                     sample_embeddings = np.asarray(profile["sample_embeddings"])
@@ -102,26 +150,28 @@ class SpeakerRecognizer:
             except (KeyError, OSError, ValueError):
                 _LOGGER.warning("Ignoring invalid saved profile: %s", profile_path)
 
-        for embedding_path in self._embeddings_directory.glob("*_embedding.npy"):
-            user_id = embedding_path.name[: -len("_embedding.npy")]
-            if not user_id or user_id in self._reference_embeddings:
-                continue
-            try:
-                embedding = self._normalize_embedding(
-                    np.load(embedding_path, allow_pickle=False)
-                )
-                if expected_dimension is not None and embedding.size != expected_dimension:
-                    raise ValueError("legacy embedding dimension is incompatible")
-                expected_dimension = embedding.size
-                self._reference_embeddings[user_id] = embedding
-                self._sample_embeddings[user_id] = embedding.reshape(1, -1)
-            except (OSError, ValueError):
-                _LOGGER.warning("Ignoring invalid saved embedding: %s", embedding_path)
+        if self.engine_id == DEFAULT_ENGINE_ID:
+            for embedding_path in self._embeddings_directory.glob("*_embedding.npy"):
+                user_id = embedding_path.name[: -len("_embedding.npy")]
+                if not user_id or user_id in self._reference_embeddings:
+                    continue
+                try:
+                    embedding = self._normalize_embedding(
+                        np.load(embedding_path, allow_pickle=False)
+                    )
+                    if expected_dimension is not None and embedding.size != expected_dimension:
+                        raise ValueError("legacy embedding dimension is incompatible")
+                    expected_dimension = embedding.size
+                    self._reference_embeddings[user_id] = embedding
+                    self._sample_embeddings[user_id] = embedding.reshape(1, -1)
+                except (OSError, ValueError):
+                    _LOGGER.warning("Ignoring invalid saved embedding: %s", embedding_path)
 
         self._is_trained = bool(self._reference_embeddings)
         if self._is_trained:
             _LOGGER.info(
-                "Loaded saved embeddings for %d users from %s",
+                "Loaded saved %s embeddings for %d users from %s",
+                self.engine_name,
                 len(self._reference_embeddings),
                 self._embeddings_directory,
             )
@@ -195,17 +245,18 @@ class SpeakerRecognizer:
         digest = hashlib.sha256(user_id.encode("utf-8")).hexdigest()
         return self._embeddings_directory / f"{digest}_profile.npz"
 
-    @staticmethod
     def _write_profile(
+        self,
         profile_file: BinaryIO,
         user_id: str,
         centroid: NDArray[np.float32],
         sample_embeddings: NDArray[np.float32],
     ) -> None:
-        """Write a versioned profile archive to an open file."""
+        """Write a versioned profile archive with its embedding engine identity."""
         np.savez(
             profile_file,
             schema_version=np.array(PROFILE_SCHEMA_VERSION, dtype=np.int16),
+            engine_id=np.array(self.engine_id),
             user_id=np.array(user_id),
             centroid=centroid,
             sample_embeddings=sample_embeddings,
@@ -258,12 +309,13 @@ class SpeakerRecognizer:
         for backup in backups.values():
             if backup.exists():
                 backup.unlink()
-        for user_id in profiles:
-            legacy_name = f"{user_id}_embedding.npy"
-            if Path(legacy_name).name == legacy_name:
-                legacy = self._embeddings_directory / legacy_name
-                if legacy.exists():
-                    legacy.unlink()
+        if self.engine_id == DEFAULT_ENGINE_ID:
+            for user_id in profiles:
+                legacy_name = f"{user_id}_embedding.npy"
+                if Path(legacy_name).name == legacy_name:
+                    legacy = self._embeddings_directory / legacy_name
+                    if legacy.exists():
+                        legacy.unlink()
 
     def sync_profiles(self, desired_users: set[str]) -> list[str]:
         """Remove persisted profiles that are no longer configured."""
@@ -272,11 +324,12 @@ class SpeakerRecognizer:
             path = self._profile_path(user_id)
             if path.exists():
                 path.unlink()
-            legacy_name = f"{user_id}_embedding.npy"
-            if Path(legacy_name).name == legacy_name:
-                legacy = self._embeddings_directory / legacy_name
-                if legacy.exists():
-                    legacy.unlink()
+            if self.engine_id == DEFAULT_ENGINE_ID:
+                legacy_name = f"{user_id}_embedding.npy"
+                if Path(legacy_name).name == legacy_name:
+                    legacy = self._embeddings_directory / legacy_name
+                    if legacy.exists():
+                        legacy.unlink()
             self._reference_embeddings.pop(user_id, None)
             self._sample_embeddings.pop(user_id, None)
             removed.append(user_id)
@@ -284,18 +337,15 @@ class SpeakerRecognizer:
         return removed
 
     def process_audio_input(self, audio_input: AudioInput) -> NDArray[np.float32]:
-        """Process base64-encoded PCM audio into a waveform."""
-        audio_bytes = base64.b64decode(audio_input.audio_data)
-        audio_array_int16 = np.frombuffer(audio_bytes, dtype=np.int16).copy()
-        if audio_array_int16.size == 0:
-            raise ValueError("Empty audio data")
-        audio_array_float32 = audio_array_int16.astype(np.float32) / 32768.0
-        if float(np.max(np.abs(audio_array_float32))) < 1e-5:
-            raise ValueError("Audio data contains no usable speech signal")
-        result: NDArray[np.float32] = preprocess_wav(
-            audio_array_float32, source_sr=audio_input.sample_rate
+        """Prepare audio using the active embedding engine."""
+        return self._engine.prepare_audio(audio_input)
+
+    def _embed_audio(self, audio_input: AudioInput) -> NDArray[np.float32]:
+        """Return a validated embedding from the active engine."""
+        waveform = self.process_audio_input(audio_input)
+        return self._validate_embedding(
+            np.asarray(self._engine.embed_prepared(waveform), dtype=np.float32)
         )
-        return result
 
     def train(self, request: TrainingRequest) -> TrainingResult:
         """Build all requested profiles first, then commit them as one transaction."""
@@ -322,10 +372,7 @@ class SpeakerRecognizer:
             embeddings: list[NDArray[np.float32]] = []
             for sample_number, audio_input in enumerate(audio_inputs, start=1):
                 try:
-                    wav = self.process_audio_input(audio_input)
-                    embedding = self._validate_embedding(
-                        np.asarray(self._encoder.embed_utterance(wav))
-                    )
+                    embedding = self._embed_audio(audio_input)
                     if request_dimension is not None and embedding.size != request_dimension:
                         raise ValueError("sample embedding dimensions do not match profiles")
                     request_dimension = embedding.size
@@ -380,20 +427,18 @@ class SpeakerRecognizer:
             status="success",
             trained_users=updated_users,
             count=len(self._reference_embeddings),
+            engine_id=self.engine_id,
             accepted_samples=accepted_samples,
             rejected_samples=rejected_samples,
             profile_consistency=profile_consistency,
             outlier_samples=outlier_samples,
         )
 
-    def recognize(self, request: RecognitionRequest) -> RecognitionResult:
-        """Recognize or reject a speaker from audio data."""
+    def score(self, request: RecognitionRequest) -> RecognitionScores:
+        """Return raw speaker scores before applying acceptance thresholds."""
         if not self._is_trained or not self._reference_embeddings:
             raise RuntimeError("Model not trained")
-        wav = self.process_audio_input(request.audio)
-        chunk_embedding = self._normalize_embedding(
-            np.asarray(self._encoder.embed_utterance(wav))
-        )
+        chunk_embedding = self._normalize_embedding(self._embed_audio(request.audio))
         expected_dimension = next(iter(self._reference_embeddings.values())).size
         if chunk_embedding.size != expected_dimension:
             raise ValueError("Recognition embedding dimension does not match profiles")
@@ -412,17 +457,29 @@ class SpeakerRecognizer:
         ranked = sorted(scores.items(), key=lambda item: item[1], reverse=True)
         candidate_user_id, best_score = ranked[0]
         margin = best_score - ranked[1][1] if len(ranked) > 1 else None
-        accepted = best_score >= MIN_ACCEPTED_SIMILARITY and (
-            margin is None or margin >= MIN_ACCEPTED_MARGIN
-        )
-        return RecognitionResult(
-            user_id=candidate_user_id if accepted else None,
+        return RecognitionScores(
+            engine_id=self.engine_id,
             candidate_user_id=candidate_user_id,
-            confidence=best_score,
             similarity=best_score,
             margin=margin,
-            accepted=accepted,
             all_scores=scores,
+        )
+
+    def recognize(self, request: RecognitionRequest) -> RecognitionResult:
+        """Recognize or reject a speaker from audio data."""
+        scores = self.score(request)
+        accepted = scores.similarity >= MIN_ACCEPTED_SIMILARITY and (
+            scores.margin is None or scores.margin >= MIN_ACCEPTED_MARGIN
+        )
+        return RecognitionResult(
+            engine_id=scores.engine_id,
+            user_id=scores.candidate_user_id if accepted else None,
+            candidate_user_id=scores.candidate_user_id,
+            confidence=scores.similarity,
+            similarity=scores.similarity,
+            margin=scores.margin,
+            accepted=accepted,
+            all_scores=scores.all_scores,
         )
 
 
