@@ -13,7 +13,7 @@ from .enhancement_websocket import async_register_enhancement_websocket
 from .settings_websocket import async_register_settings_websocket
 
 PANEL_URL_PATH = "speaker-recognition"
-PANEL_ELEMENT = "speaker-recognition-settings-panel"
+PANEL_ELEMENT = "speaker-recognition-evaluation-panel"
 STATIC_URL = "/speaker-recognition-static"
 
 
@@ -29,7 +29,7 @@ async def async_register_frontend(hass: HomeAssistant) -> None:
         hass,
         webcomponent_name=PANEL_ELEMENT,
         frontend_url_path=PANEL_URL_PATH,
-        module_url=f"{STATIC_URL}/speaker-recognition-settings-panel.js",
+        module_url=f"{STATIC_URL}/speaker-recognition-evaluation-panel.js",
         sidebar_title="Speaker Recognition",
         sidebar_icon="mdi:account-voice",
         require_admin=True,
