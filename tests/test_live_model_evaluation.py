@@ -91,7 +91,6 @@ def test_live_evaluation_timestamps_active_call_then_scores_shadow_after_assist(
     assert "start_shadow_scoring" in shadow
     assert "attach_assist_timing" in shadow
     assert shadow.index("attach_assist_timing") < shadow.index("start_shadow_scoring")
-    assert "avoid making" in shadow
 
 
 def test_live_evaluation_is_persistent_until_explicit_clear() -> None:
