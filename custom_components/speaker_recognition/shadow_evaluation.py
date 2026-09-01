@@ -115,13 +115,19 @@ def async_setup_shadow_evaluation(
             enriched["backend_processing_seconds"] = diagnostics[1]
         history.record_event(enriched)
 
-        # Dedicated live evaluation starts its shadow request at the same post-EOF
-        # moment as the authoritative recognizer. Bind the later Assist timing here
-        # and do not launch a duplicate background ECAPA request for that turn.
+        # A dedicated live evaluation timestamps the real Resemblyzer/STT race first,
+        # then measures ECAPA immediately after the Assist turn on the identical PCM.
+        # Projecting that call duration onto the same model-start point avoids making
+        # the two CPU-heavy models interfere with each other during the benchmark.
         live_evaluation = get_live_model_evaluation(hass)
         if live_evaluation is not None and live_evaluation.attach_assist_timing(
             pcm_audio, dict(event.data)
         ):
+            live_evaluation.start_shadow_scoring(
+                recognition,
+                pcm_audio=pcm_audio,
+                sample_rate=sample_rate,
+            )
             return
 
         if not recognition.shadow_ready:
