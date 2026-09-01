@@ -20,6 +20,10 @@ For Docker Compose, set `SHADOW_ENGINE=ecapa_tdnn` before starting the service.
 
 ## Evaluate results
 
-The integration exposes the admin WebSocket command `speaker_recognition/shadow_comparison`. Once at least 15 paired decisions have been labelled in the normal Recognition Calibration history, it reports independently optimized similarity/margin operating points and open-set error counts for Resemblyzer and ECAPA. Raw score values are deliberately never compared using a shared threshold because the two embedding spaces have different score distributions.
+Open **Speaker Recognition → Evaluation** in the Home Assistant sidebar panel. The page shows whether ECAPA is disabled, preparing profiles, collecting evidence, or has sufficient evidence; how many labelled decisions have paired Resemblyzer/ECAPA scores; paired-data coverage; and the two engines side by side.
+
+The comparison reports correct decisions, wrong-speaker/false accepts, false unknowns, a weighted error score, independently optimized similarity and margin thresholds, and median backend processing time. Results are shown as preliminary until at least 15 paired labelled decisions have been collected. False identifications retain a 5x penalty relative to returning Unknown.
+
+The same data remains available through the admin WebSocket command `speaker_recognition/shadow_comparison`. Raw score values are deliberately never compared using a shared threshold because the two embedding spaces have different score distributions.
 
 This mode is intended for evaluation only. A later change can expose an engine selector if real Home Assistant hardware results justify making ECAPA authoritative.
