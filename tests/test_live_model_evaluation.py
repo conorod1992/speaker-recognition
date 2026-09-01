@@ -79,16 +79,19 @@ def test_live_analysis_has_no_minimum_trial_gate() -> None:
     assert result["shadow"] is not None
 
 
-def test_live_evaluation_pairs_models_before_normal_assist_returns() -> None:
-    """Shadow scoring starts beside the active call and is later bound to STT timing."""
+def test_live_evaluation_timestamps_active_call_then_scores_shadow_after_assist() -> None:
+    """The benchmark avoids making ECAPA compete with authoritative recognition."""
     source = (INTEGRATION / "live_evaluation.py").read_text(encoding="utf-8")
     shadow = (INTEGRATION / "shadow_evaluation.py").read_text(encoding="utf-8")
 
     subclass = source.split("class LiveEvaluationSpeakerRecognition", 1)[1]
     assert subclass.index("evaluation.begin_pair") < subclass.index("super().async_recognize")
-    assert "self.hass.async_create_task" in source
+    begin_pair = source.split("def begin_pair", 1)[1].split("def _current_for_key", 1)[0]
+    assert "async_shadow_recognize" not in begin_pair
+    assert "start_shadow_scoring" in shadow
     assert "attach_assist_timing" in shadow
-    assert "do not launch a duplicate" in shadow
+    assert shadow.index("attach_assist_timing") < shadow.index("start_shadow_scoring")
+    assert "avoid making" in shadow
 
 
 def test_live_evaluation_is_persistent_until_explicit_clear() -> None:
@@ -135,6 +138,14 @@ def test_live_evaluation_reports_parallel_latency_not_just_backend_time() -> Non
     assert "effective_added_latency_upper_bound" in source
     assert "Effective Assist latency" in frontend
     assert "STT and recognition running in parallel" in frontend
+
+
+def test_live_evaluation_skips_excluded_turns_and_recovers_stale_trials() -> None:
+    source = (INTEGRATION / "live_evaluation.py").read_text(encoding="utf-8")
+
+    assert '"calibration_excluded_utterances"' in source
+    assert "_CURRENT_TIMEOUT_SECONDS" in source
+    assert "_prune_stale_current" in source
 
 
 def test_new_evaluation_modules_compile() -> None:
