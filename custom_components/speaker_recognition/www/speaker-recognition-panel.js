@@ -46,7 +46,10 @@ class SpeakerRecognitionPanel extends HTMLElement {
     if (!this._hass) return;
     try {
       this._status = await this._call({ type: "speaker_recognition/status" });
-      if (!this._userId && this._status.users.length) this._userId = this._status.users[0].id;
+      if (!this._userId && this._status.users.length) {
+        this._userId = this._status.users[0].id;
+        this._sampleIndex = this._nextIncompleteSample(-1);
+      }
       if (!this._feedbackUserId && this._status.users.length) this._feedbackUserId = this._status.users[0].id;
       const enrollmentSatellites = this._status.enrollment_satellites || this._status.satellites || [];
       if (!this._satelliteId && enrollmentSatellites.length) {
@@ -55,10 +58,8 @@ class SpeakerRecognitionPanel extends HTMLElement {
       if (!this._liveSatelliteId && this._status.satellites.length) {
         this._liveSatelliteId = this._status.satellites[0].entity_id;
       }
-      const staged = (this._status.staged && this._status.staged[this._userId]) || [];
-      if (staged.length && !staged.includes(this._sampleIndex)) {
-        const next = Math.min(staged.length, this._status.phrases.length - 1);
-        this._sampleIndex = next;
+      if (this._sampleIndex >= this._status.phrases.length) {
+        this._sampleIndex = this._nextIncompleteSample(-1);
       }
       if (!silent) {
         this._message = "";
@@ -88,6 +89,17 @@ class SpeakerRecognitionPanel extends HTMLElement {
   _stagedIndexes() {
     if (!this._status || !this._status.staged) return [];
     return this._status.staged[this._userId] || [];
+  }
+
+  _nextIncompleteSample(afterIndex = -1) {
+    const count = this._status && this._status.phrases ? this._status.phrases.length : 0;
+    if (!count) return 0;
+    const staged = new Set(this._stagedIndexes());
+    for (let offset = 1; offset <= count; offset++) {
+      const index = (afterIndex + offset + count) % count;
+      if (!staged.has(index)) return index;
+    }
+    return Math.min(Math.max(afterIndex, 0), count - 1);
   }
 
   _canUseMicrophone() {
@@ -201,20 +213,21 @@ class SpeakerRecognitionPanel extends HTMLElement {
     this._message = "Saving sample…";
     this._render();
     try {
+      const savedIndex = this._sampleIndex;
       const quality = await this._call({
         type: "speaker_recognition/stage_sample",
         user_id: this._userId,
-        sample_index: this._sampleIndex,
+        sample_index: savedIndex,
         wav_base64: this._bytesToBase64(this._lastWav),
       });
       const warnings = [];
       if (quality.too_quiet) warnings.push("audio level was low");
       if (quality.clipping) warnings.push("some audio clipped");
-      this._message = `Sample ${this._sampleIndex + 1} saved (${quality.duration}s)` +
+      this._message = `Sample ${savedIndex + 1} saved (${quality.duration}s)` +
         (warnings.length ? `. Note: ${warnings.join(" and ")}.` : ".");
       this._lastWav = null;
       await this._refresh(true);
-      if (this._sampleIndex < this._status.phrases.length - 1) this._sampleIndex += 1;
+      this._sampleIndex = this._nextIncompleteSample(savedIndex);
     } catch (err) {
       this._message = this._errorText(err);
     } finally {
@@ -252,7 +265,7 @@ class SpeakerRecognitionPanel extends HTMLElement {
       if (completed.includes(sessionId)) {
         this._busy = false;
         this._message = `Sample ${index + 1} captured from the satellite.`;
-        if (this._sampleIndex < this._status.phrases.length - 1) this._sampleIndex += 1;
+        this._sampleIndex = this._nextIncompleteSample(index);
         this._render();
         return;
       }
@@ -540,7 +553,12 @@ class SpeakerRecognitionPanel extends HTMLElement {
 
   _bindEvents() {
     const $ = (id) => this.shadowRoot.getElementById(id);
-    if ($("userSelect")) $("userSelect").onchange = (e) => { this._userId = e.target.value; this._sampleIndex = 0; this._render(); };
+    if ($("userSelect")) $("userSelect").onchange = (e) => {
+      this._userId = e.target.value;
+      this._sampleIndex = this._nextIncompleteSample(-1);
+      this._lastWav = null;
+      this._render();
+    };
     if ($("feedbackUserSelect")) $("feedbackUserSelect").onchange = (e) => { this._feedbackUserId = e.target.value; };
     if ($("satelliteSelect")) $("satelliteSelect").onchange = (e) => { this._satelliteId = e.target.value; };
     if ($("liveSatelliteSelect")) $("liveSatelliteSelect").onchange = (e) => { this._liveSatelliteId = e.target.value; };

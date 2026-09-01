@@ -143,9 +143,20 @@ async def async_stage_pcm_sample(
     if len(pcm_data) > sample_rate * 2 * 30:
         raise ValueError("Enrollment sample is too long")
 
+    staged = staged_samples(hass, user_id)
+    previous = staged.get(sample_index)
+    previous_path: Path | None = None
+    if isinstance(previous, dict):
+        previous_media_id = previous.get("media_content_id")
+        if isinstance(previous_media_id, str):
+            previous_path = _managed_media_path(hass, previous_media_id)
+
     absolute_path, media_id = _sample_location(hass, user_id, sample_index)
     await hass.async_add_executor_job(_write_wav, absolute_path, pcm_data, sample_rate)
-    staged_samples(hass, user_id)[sample_index] = {"media_content_id": media_id}
+    staged[sample_index] = {"media_content_id": media_id}
+
+    if previous_path is not None and previous_path != absolute_path:
+        await hass.async_add_executor_job(_delete_paths, [previous_path])
 
     samples = array("h")
     samples.frombytes(pcm_data[: len(pcm_data) - (len(pcm_data) % 2)])

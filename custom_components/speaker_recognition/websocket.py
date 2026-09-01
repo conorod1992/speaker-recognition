@@ -40,6 +40,9 @@ from .enrollment import (
 from .telemetry import get_decision_history
 
 _FEEDBACK_VALUES = ("correct", "wrong_speaker", "missed_speaker")
+_ENROLLMENT_SAMPLE_INDEX = vol.All(
+    int, vol.Range(min=0, max=len(ENROLLMENT_PHRASES) - 1)
+)
 
 
 def _main_entry(hass: HomeAssistant) -> ConfigEntry | None:
@@ -68,15 +71,22 @@ def _conversation_threshold(entry: ConfigEntry) -> float:
 
 
 def _replace_user_samples(
-    existing: list[dict[str, Any]], user_id: str, samples: list[dict[str, str]]
+    existing: list[dict[str, Any]],
+    user_id: str,
+    indexed_samples: list[tuple[int, dict[str, str]]],
 ) -> list[dict[str, Any]]:
+    """Replace one user's samples while preserving their exact phrase indexes."""
     retained = [item for item in existing if item.get(CONF_USER) != user_id]
     retained.append(
         {
             CONF_USER: user_id,
-            CONF_SAMPLES: samples,
+            CONF_SAMPLES: [sample for _, sample in indexed_samples],
             "sample_metadata": [
-                {"phrase": phrase} for phrase in ENROLLMENT_PHRASES[: len(samples)]
+                {
+                    "sample_index": sample_index,
+                    "phrase": ENROLLMENT_PHRASES[sample_index],
+                }
+                for sample_index, _ in indexed_samples
             ],
         }
     )
@@ -312,7 +322,7 @@ async def websocket_decision_feedback(
     {
         vol.Required("type"): f"{DOMAIN}/stage_sample",
         vol.Required("user_id"): str,
-        vol.Required("sample_index"): vol.All(int, vol.Range(min=0, max=5)),
+        vol.Required("sample_index"): _ENROLLMENT_SAMPLE_INDEX,
         vol.Required("wav_base64"): str,
     }
 )
@@ -345,7 +355,7 @@ async def websocket_stage_sample(
         vol.Required("type"): f"{DOMAIN}/start_satellite_sample",
         vol.Required("user_id"): str,
         vol.Required("satellite_id"): str,
-        vol.Required("sample_index"): vol.All(int, vol.Range(min=0, max=5)),
+        vol.Required("sample_index"): _ENROLLMENT_SAMPLE_INDEX,
     }
 )
 @websocket_api.require_admin
@@ -451,7 +461,7 @@ async def websocket_commit_enrollment(
         return
 
     staged = staged_samples(hass, msg["user_id"])
-    ordered = [staged[index] for index in sorted(staged)]
+    ordered = [(index, staged[index]) for index in sorted(staged)]
     if len(ordered) < MIN_ENROLLMENT_SAMPLES:
         connection.send_error(
             msg["id"],
