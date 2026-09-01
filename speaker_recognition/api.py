@@ -158,7 +158,7 @@ async def require_api_access(
 app = FastAPI(
     title="Speaker Recognition Service",
     description="API for training and recognizing speakers using voice samples",
-    version="3.0.2",
+    version="3.0.3",
     dependencies=[Depends(require_api_access)],
 )
 app.add_middleware(RequestBodyLimitMiddleware, max_body_size=MAX_REQUEST_BODY_BYTES)
