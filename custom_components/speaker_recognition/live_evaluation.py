@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
 from time import perf_counter
 from typing import Any
 from uuid import uuid4
@@ -11,8 +12,11 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 
 from .const import DOMAIN
-from .correlation import CorrelatedRecognition
-from .recognition import ShadowRecognitionResult, SpeakerRecognition
+from .recognition import (
+    RecognitionResult,
+    ShadowRecognitionResult,
+    SpeakerRecognition,
+)
 
 _STORAGE_VERSION = 1
 _STORAGE_KEY = f"{DOMAIN}.live_model_evaluation"
@@ -21,6 +25,10 @@ _SAVE_DELAY = 1
 
 def _domain_data(hass: HomeAssistant) -> dict[str, Any]:
     return hass.data.setdefault(DOMAIN, {})
+
+
+def _audio_key(audio_data: bytes) -> str:
+    return hashlib.sha256(audio_data).hexdigest()
 
 
 class LiveModelEvaluation:
@@ -47,13 +55,6 @@ class LiveModelEvaluation:
     def records(self) -> list[dict[str, Any]]:
         return [dict(item) for item in self._records]
 
-    @property
-    def current_sequence(self) -> int | None:
-        if not isinstance(self._current, dict):
-            return None
-        value = self._current.get("utterance_sequence")
-        return value if isinstance(value, int) else None
-
     def start(self) -> None:
         self.running = True
 
@@ -64,79 +65,101 @@ class LiveModelEvaluation:
         self._records.clear()
         self._schedule_save()
 
-    def claim_turn(self, utterance_sequence: int, stt_entity_id: str | None) -> bool:
-        """Claim the next ordinary Assist turn while a live evaluation is running."""
-        if not self.running or self.pending is not None or self._current is not None:
-            return False
-        self._current = {
-            "trial_id": uuid4().hex,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "utterance_sequence": utterance_sequence,
-            "stt_entity_id": stt_entity_id,
-        }
-        return True
-
-    def _current_for(self, utterance_sequence: int) -> dict[str, Any] | None:
-        if not isinstance(self._current, dict):
-            return None
-        if self._current.get("utterance_sequence") != utterance_sequence:
-            return None
-        return self._current
-
-    def start_shadow_scoring(
+    def begin_pair(
         self,
         recognition: SpeakerRecognition,
         *,
-        pcm_audio: bytes,
+        audio_data: bytes,
         sample_rate: int,
-        utterance_sequence: int,
-    ) -> None:
-        """Start ECAPA beside the active recognizer without awaiting it in Assist."""
-        if self._current_for(utterance_sequence) is None:
-            return
+        started_at: float,
+    ) -> str | None:
+        """Start shadow scoring beside the active engine for the next test turn."""
+        if (
+            not self.running
+            or self.pending is not None
+            or self._current is not None
+            or not recognition.shadow_ready
+        ):
+            return None
 
-        async def _run() -> None:
-            started = perf_counter()
+        key = _audio_key(audio_data)
+        self._current = {
+            "trial_id": uuid4().hex,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "_audio_key": key,
+            "_pair_started_at": started_at,
+        }
+
+        async def _run_shadow() -> None:
             try:
                 result = await recognition.async_shadow_recognize(
-                    pcm_audio, sample_rate=sample_rate
+                    audio_data, sample_rate=sample_rate
                 )
-            except Exception as error:  # Experimental scoring must never affect Assist.
-                self._record_shadow_failure(utterance_sequence, str(error))
+            except Exception as error:  # Experimental work must never affect Assist.
+                self._record_shadow_failure(key, str(error))
                 return
             completed = perf_counter()
             if result is None:
-                self._record_shadow_failure(
-                    utterance_sequence, "Experimental engine returned no score"
-                )
+                self._record_shadow_failure(key, "Experimental engine returned no score")
                 return
             self._record_shadow_result(
-                utterance_sequence,
+                key,
                 result,
-                call_seconds=completed - started,
-                completed_at=completed,
+                call_seconds=completed - started_at,
             )
 
         self.hass.async_create_task(
-            _run(), f"Speaker Recognition live model evaluation {utterance_sequence}"
+            _run_shadow(), "Speaker Recognition live model evaluation shadow score"
         )
+        return key
 
-    def _record_shadow_failure(self, utterance_sequence: int, message: str) -> None:
-        current = self._current_for(utterance_sequence)
+    def _current_for_key(self, key: str) -> dict[str, Any] | None:
+        current = self._current
+        if not isinstance(current, dict) or current.get("_audio_key") != key:
+            return None
+        return current
+
+    def record_authoritative_result(
+        self,
+        key: str,
+        result: RecognitionResult | None,
+        *,
+        call_seconds: float,
+    ) -> None:
+        current = self._current_for_key(key)
+        if current is None:
+            return
+        if result is None:
+            current["authoritative_error"] = "Active engine returned no score"
+        else:
+            current["authoritative"] = {
+                "engine_id": result.engine_id,
+                "candidate_user_id": result.candidate_user_id,
+                "similarity": result.similarity,
+                "margin": result.margin,
+                "accepted": result.accepted,
+                "user_id": result.user_id,
+                "all_scores": dict(result.all_scores),
+                "backend_processing_seconds": result.processing_seconds,
+                "call_seconds": max(0.0, call_seconds),
+            }
+        self._maybe_finalize(key)
+
+    def _record_shadow_failure(self, key: str, message: str) -> None:
+        current = self._current_for_key(key)
         if current is None:
             return
         current["shadow_error"] = message
-        self._maybe_finalize(utterance_sequence)
+        self._maybe_finalize(key)
 
     def _record_shadow_result(
         self,
-        utterance_sequence: int,
+        key: str,
         result: ShadowRecognitionResult,
         *,
         call_seconds: float,
-        completed_at: float,
     ) -> None:
-        current = self._current_for(utterance_sequence)
+        current = self._current_for_key(key)
         if current is None:
             return
         current["shadow"] = {
@@ -148,71 +171,92 @@ class LiveModelEvaluation:
             "backend_processing_seconds": result.processing_seconds,
             "call_seconds": max(0.0, call_seconds),
         }
-        current["_shadow_completed_at"] = completed_at
-        self._maybe_finalize(utterance_sequence)
+        self._maybe_finalize(key)
 
-    def record_authoritative(
-        self,
-        recognition: CorrelatedRecognition,
-        *,
-        model_call_seconds: float | None,
-        model_completed_at: float | None,
-        stt_completed_at: float | None,
-    ) -> None:
-        """Attach the active-engine result and timing anchors for the claimed turn."""
-        current = self._current_for(recognition.utterance_sequence)
+    def attach_assist_timing(self, pcm_audio: bytes, event_data: dict[str, Any]) -> bool:
+        """Bind the paired model calls to the exact Assist turn and STT timing."""
+        key = _audio_key(pcm_audio)
+        current = self._current_for_key(key)
         if current is None:
-            return
-        current["stt_seconds"] = recognition.stt_seconds
-        current["authoritative"] = {
-            "engine_id": recognition.engine_id,
-            "candidate_user_id": recognition.candidate_user_id,
-            "similarity": recognition.similarity,
-            "margin": recognition.margin,
-            "accepted": recognition.accepted,
-            "user_id": recognition.user_id,
-            "all_scores": dict(recognition.all_scores),
-            "backend_processing_seconds": recognition.backend_processing_seconds,
-            "call_seconds": (
-                max(0.0, model_call_seconds)
-                if isinstance(model_call_seconds, (int, float))
-                else None
-            ),
-        }
-        current["_stt_completed_at"] = stt_completed_at
-        current["_authoritative_completed_at"] = model_completed_at
-        self._maybe_finalize(recognition.utterance_sequence)
+            return False
+        sequence = event_data.get("utterance_sequence")
+        entity_id = event_data.get("entity_id")
+        current["utterance_sequence"] = sequence if isinstance(sequence, int) else None
+        current["stt_entity_id"] = entity_id if isinstance(entity_id, str) else None
+        for name in (
+            "stt_seconds",
+            "recognition_seconds",
+            "preparation_seconds",
+            "added_latency_seconds",
+            "audio_seconds",
+        ):
+            value = event_data.get(name)
+            current[name] = float(value) if isinstance(value, (int, float)) else None
+        current["_timing_attached"] = True
+        self._maybe_finalize(key)
+        return True
 
-    def _maybe_finalize(self, utterance_sequence: int) -> None:
-        current = self._current_for(utterance_sequence)
-        if current is None or "authoritative" not in current:
+    @staticmethod
+    def _apply_effective_latency(current: dict[str, Any], engine: dict[str, Any]) -> None:
+        """Estimate model-specific critical-path latency from the real parallel STT turn."""
+        call_seconds = engine.get("call_seconds")
+        recognition_seconds = current.get("recognition_seconds")
+        preparation_seconds = current.get("preparation_seconds")
+        pipeline_added = current.get("added_latency_seconds")
+        if not all(
+            isinstance(value, (int, float))
+            for value in (call_seconds, recognition_seconds, preparation_seconds, pipeline_added)
+        ):
+            return
+
+        # The model pair starts after PCM preparation at EOF. When the existing
+        # analysis finished after STT, its measured added latency lets us recover
+        # the exact amount of STT work that remained at the pair start. If STT won
+        # the race, we only know a lower bound on that remaining work, so a nonzero
+        # value is reported explicitly as an upper bound rather than false precision.
+        post_prepare_analysis = max(0.0, recognition_seconds - preparation_seconds)
+        if pipeline_added > 0:
+            remaining_stt = max(0.0, post_prepare_analysis - pipeline_added)
+            engine["effective_added_latency_seconds"] = max(
+                0.0, call_seconds - remaining_stt
+            )
+            engine["effective_added_latency_upper_bound"] = False
+            return
+
+        minimum_remaining_stt = post_prepare_analysis
+        upper_bound = max(0.0, call_seconds - minimum_remaining_stt)
+        engine["effective_added_latency_seconds"] = upper_bound
+        engine["effective_added_latency_upper_bound"] = upper_bound > 0
+
+    def _maybe_finalize(self, key: str) -> None:
+        current = self._current_for_key(key)
+        if current is None or not current.get("_timing_attached"):
+            return
+        if "authoritative" not in current and "authoritative_error" not in current:
             return
         if "shadow" not in current and "shadow_error" not in current:
             return
 
-        stt_completed = current.pop("_stt_completed_at", None)
-        authoritative_completed = current.pop("_authoritative_completed_at", None)
-        shadow_completed = current.pop("_shadow_completed_at", None)
-        if isinstance(stt_completed, (int, float)):
-            authoritative = current.get("authoritative")
-            if isinstance(authoritative, dict) and isinstance(
-                authoritative_completed, (int, float)
-            ):
-                authoritative["effective_added_latency_seconds"] = max(
-                    0.0, authoritative_completed - stt_completed
-                )
-            shadow = current.get("shadow")
-            if isinstance(shadow, dict) and isinstance(shadow_completed, (int, float)):
-                shadow["effective_added_latency_seconds"] = max(
-                    0.0, shadow_completed - stt_completed
-                )
+        authoritative = current.get("authoritative")
+        if isinstance(authoritative, dict):
+            self._apply_effective_latency(current, authoritative)
+        shadow = current.get("shadow")
+        if isinstance(shadow, dict):
+            self._apply_effective_latency(current, shadow)
 
+        current.pop("_audio_key", None)
+        current.pop("_pair_started_at", None)
+        current.pop("_timing_attached", None)
         self.pending = current
         self._current = None
 
     def label_pending(self, actual_user_id: str | None) -> dict[str, Any] | None:
-        """Persist explicit ground truth for the pending paired turn."""
-        if not isinstance(self.pending, dict) or "shadow" not in self.pending:
+        """Persist explicit ground truth for one completed paired turn."""
+        if (
+            not isinstance(self.pending, dict)
+            or "authoritative" not in self.pending
+            or "shadow" not in self.pending
+        ):
             return None
         record = dict(self.pending)
         record["actual_user_id"] = actual_user_id
@@ -239,6 +283,32 @@ class LiveModelEvaluation:
         }
 
 
+class LiveEvaluationSpeakerRecognition(SpeakerRecognition):
+    """SpeakerRecognition runtime that can launch an opt-in parallel A/B score."""
+
+    async def async_recognize(
+        self, audio_data: bytes, sample_rate: int = 16000
+    ) -> RecognitionResult | None:
+        evaluation = get_live_model_evaluation(self.hass)
+        started = perf_counter()
+        key = (
+            evaluation.begin_pair(
+                self,
+                audio_data=audio_data,
+                sample_rate=sample_rate,
+                started_at=started,
+            )
+            if evaluation is not None
+            else None
+        )
+        result = await super().async_recognize(audio_data, sample_rate=sample_rate)
+        if key is not None and evaluation is not None:
+            evaluation.record_authoritative_result(
+                key, result, call_seconds=perf_counter() - started
+            )
+        return result
+
+
 async def async_setup_live_model_evaluation(hass: HomeAssistant) -> LiveModelEvaluation:
     data = _domain_data(hass)
     existing = data.get("live_model_evaluation")
@@ -253,18 +323,3 @@ async def async_setup_live_model_evaluation(hass: HomeAssistant) -> LiveModelEva
 def get_live_model_evaluation(hass: HomeAssistant) -> LiveModelEvaluation | None:
     value = _domain_data(hass).get("live_model_evaluation")
     return value if isinstance(value, LiveModelEvaluation) else None
-
-
-def claim_live_model_evaluation_turn(
-    hass: HomeAssistant, utterance_sequence: int, stt_entity_id: str | None
-) -> bool:
-    evaluation = get_live_model_evaluation(hass)
-    return bool(
-        evaluation
-        and evaluation.claim_turn(utterance_sequence, stt_entity_id)
-    )
-
-
-def is_live_model_evaluation_turn(hass: HomeAssistant, utterance_sequence: int) -> bool:
-    evaluation = get_live_model_evaluation(hass)
-    return bool(evaluation and evaluation.current_sequence == utterance_sequence)
