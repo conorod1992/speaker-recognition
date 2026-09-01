@@ -95,6 +95,7 @@ def test_profile_engine_metadata_prevents_cross_engine_loading(
 ) -> None:
     """A profile written by one engine is ignored by a different engine."""
     directory = tmp_path / "embeddings"
+    directory.mkdir()
     first = recognizer_module.SpeakerRecognizer(
         Config(embeddings_directory=str(directory)),
         engine=_FixedEngine([1.0, 0.0], engine_id="engine-a"),

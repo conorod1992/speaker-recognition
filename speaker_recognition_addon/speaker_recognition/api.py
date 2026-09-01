@@ -28,11 +28,11 @@ from speaker_recognition.models import (
     config,
 )
 from speaker_recognition.recognizer import recognizer
-from speaker_recognition.warmup import WarmupStatus, warm_engine
+from speaker_recognition.warmup import WarmupStatus, warm_encoder
 
 _LOGGER = logging.getLogger(__name__)
 _RECOGNIZER_LOCK = Lock()
-_WARMUP_STATUS: WarmupStatus = warm_engine(recognizer.engine)
+_WARMUP_STATUS: WarmupStatus = warm_encoder(recognizer)
 
 
 def _configured_trusted_local_hosts() -> set[str]:
@@ -166,7 +166,7 @@ def health_check() -> HealthResponse:
     global _WARMUP_STATUS
     with _RECOGNIZER_LOCK:
         if not _WARMUP_STATUS.ready:
-            _WARMUP_STATUS = warm_engine(recognizer.engine)
+            _WARMUP_STATUS = warm_encoder(recognizer)
         return HealthResponse(
             status="healthy" if _WARMUP_STATUS.ready else "degraded",
             trained=recognizer.is_trained,
