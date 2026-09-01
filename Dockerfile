@@ -22,7 +22,8 @@ RUN uv pip install --system --no-cache ".[server]" && \
       "huggingface-hub==1.5.0"
 
 RUN mkdir -p /data/embeddings /data/models
-VOLUME ["/data/embeddings", "/data/models"]
+VOLUME ["/data/embeddings"]
+VOLUME ["/data/models"]
 
 EXPOSE 8099
 
