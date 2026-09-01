@@ -16,6 +16,7 @@ from .correlation import CorrelatedRecognition
 _STORAGE_VERSION = 1
 _STORAGE_KEY = f"{DOMAIN}.decision_history"
 _MAX_DECISIONS = 200
+_MAX_PENDING_SHADOW = 20
 _SAVE_DELAY = 5
 
 
@@ -42,8 +43,16 @@ class DecisionRecord:
     audio_seconds: float | None
     utterance_sequence: int | None
     stt_entity_id: str | None
+    engine_id: str = "resemblyzer"
+    backend_processing_seconds: float = 0.0
     feedback: str | None = None
     actual_user_id: str | None = None
+    shadow_engine_id: str | None = None
+    shadow_candidate_user_id: str | None = None
+    shadow_similarity: float | None = None
+    shadow_margin: float | None = None
+    shadow_all_scores: dict[str, float] | None = None
+    shadow_processing_seconds: float | None = None
 
 
 class DecisionHistory:
@@ -52,6 +61,7 @@ class DecisionHistory:
     def __init__(self, hass: HomeAssistant) -> None:
         self._store = Store[dict[str, Any]](hass, _STORAGE_VERSION, _STORAGE_KEY)
         self._records: list[dict[str, Any]] = []
+        self._pending_shadow: dict[tuple[int, str | None], dict[str, Any]] = {}
 
     async def async_load(self) -> None:
         """Load persisted history, tolerating missing or malformed data."""
@@ -89,9 +99,53 @@ class DecisionHistory:
                 return item
         return None
 
+    @staticmethod
+    def _shadow_fields(data: dict[str, Any]) -> dict[str, Any] | None:
+        """Validate and normalize one audio-free shadow result."""
+        engine_id = data.get("engine_id")
+        candidate = data.get("candidate_user_id")
+        similarity = data.get("similarity")
+        margin = data.get("margin")
+        scores = data.get("all_scores")
+        processing_seconds = data.get("processing_seconds")
+        if (
+            not isinstance(engine_id, str)
+            or not engine_id
+            or not isinstance(candidate, str)
+            or not isinstance(similarity, (int, float))
+            or margin is not None and not isinstance(margin, (int, float))
+            or not isinstance(scores, dict)
+            or not isinstance(processing_seconds, (int, float))
+        ):
+            return None
+        return {
+            "shadow_engine_id": engine_id,
+            "shadow_candidate_user_id": candidate,
+            "shadow_similarity": float(similarity),
+            "shadow_margin": float(margin) if margin is not None else None,
+            "shadow_all_scores": {
+                str(user): float(score)
+                for user, score in scores.items()
+                if isinstance(score, (int, float))
+            },
+            "shadow_processing_seconds": float(processing_seconds),
+        }
+
+    def _apply_pending_shadow(self, item: dict[str, Any]) -> None:
+        """Attach a shadow result that happened to finish before the main record."""
+        sequence = item.get("utterance_sequence")
+        stt_entity_id = item.get("stt_entity_id")
+        if not isinstance(sequence, int):
+            return
+        pending = self._pending_shadow.pop((sequence, stt_entity_id), None)
+        if pending is not None:
+            item.update(pending)
+
     def _append(self, record: DecisionRecord) -> str:
         """Append and persist a bounded record."""
-        self._records.append(asdict(record))
+        item = asdict(record)
+        self._apply_pending_shadow(item)
+        self._records.append(item)
         self._records = self._records[-_MAX_DECISIONS:]
         self._schedule_save()
         return record.decision_id
@@ -107,6 +161,7 @@ class DecisionHistory:
 
         existing = self._find_turn(sequence, stt_entity_id)
         if existing is not None:
+            self._apply_pending_shadow(existing)
             decision_id = existing.get("decision_id")
             return decision_id if isinstance(decision_id, str) else None
 
@@ -122,6 +177,9 @@ class DecisionHistory:
         all_scores = data.get("all_scores")
         if not isinstance(all_scores, dict):
             all_scores = {}
+        engine_id = data.get("engine_id")
+        if not isinstance(engine_id, str) or not engine_id:
+            engine_id = "resemblyzer"
 
         record = DecisionRecord(
             decision_id=uuid4().hex,
@@ -151,8 +209,35 @@ class DecisionHistory:
             ),
             utterance_sequence=sequence,
             stt_entity_id=stt_entity_id,
+            engine_id=engine_id,
+            backend_processing_seconds=float(
+                data.get("backend_processing_seconds", 0.0) or 0.0
+            ),
         )
         return self._append(record)
+
+    def record_shadow_event(self, data: dict[str, Any]) -> bool:
+        """Enrich one matching decision with non-authoritative shadow scores."""
+        sequence = data.get("utterance_sequence")
+        stt_entity_id = data.get("entity_id")
+        if not isinstance(sequence, int):
+            return False
+        if not isinstance(stt_entity_id, str):
+            stt_entity_id = None
+        fields = self._shadow_fields(data)
+        if fields is None:
+            return False
+
+        existing = self._find_turn(sequence, stt_entity_id)
+        if existing is not None:
+            existing.update(fields)
+            self._schedule_save()
+            return True
+
+        self._pending_shadow[(sequence, stt_entity_id)] = fields
+        while len(self._pending_shadow) > _MAX_PENDING_SHADOW:
+            self._pending_shadow.pop(next(iter(self._pending_shadow)))
+        return True
 
     def record(
         self,
@@ -179,6 +264,14 @@ class DecisionHistory:
                     "identity_eligible": identity_eligible,
                     "threshold": threshold,
                     "all_scores": dict(recognition.all_scores),
+                    "engine_id": recognition.engine_id,
+                    "backend_processing_seconds": (
+                        recognition.backend_processing_seconds
+                        if recognition.backend_processing_seconds > 0
+                        else float(
+                            existing.get("backend_processing_seconds", 0.0) or 0.0
+                        )
+                    ),
                     "stt_seconds": recognition.stt_seconds,
                     "recognition_seconds": recognition.recognition_seconds,
                     "preparation_seconds": recognition.preparation_seconds,
@@ -186,6 +279,7 @@ class DecisionHistory:
                     "audio_seconds": recognition.audio_seconds,
                 }
             )
+            self._apply_pending_shadow(existing)
             self._schedule_save()
             decision_id = existing.get("decision_id")
             if isinstance(decision_id, str):
@@ -211,6 +305,8 @@ class DecisionHistory:
             audio_seconds=recognition.audio_seconds,
             utterance_sequence=recognition.utterance_sequence,
             stt_entity_id=recognition.stt_entity_id,
+            engine_id=recognition.engine_id,
+            backend_processing_seconds=recognition.backend_processing_seconds,
         )
         return self._append(record)
 
