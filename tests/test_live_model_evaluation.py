@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+import sys
 
 ROOT = Path(__file__).parents[1]
 INTEGRATION = ROOT / "custom_components" / "speaker_recognition"
@@ -14,6 +15,7 @@ def _analysis_module():
     spec = importlib.util.spec_from_file_location("live_evaluation_analysis_test", path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
