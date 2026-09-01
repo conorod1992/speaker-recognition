@@ -9,6 +9,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import Event, HomeAssistant, callback
 
 from .const import CONF_ENTRY_TYPE, DOMAIN, ENTRY_TYPE_MAIN
+from .live_evaluation import get_live_model_evaluation
 from .recognition import SpeakerRecognition
 from .telemetry import DecisionHistory
 
@@ -82,7 +83,7 @@ def async_setup_shadow_evaluation(
         if not isinstance(sequence, int):
             return
 
-        # Live diagnostic turns are deliberately excluded from calibration/history.
+        # Enrollment/diagnostic turns remain excluded from ordinary calibration.
         excluded = domain_data.setdefault("calibration_excluded_utterances", set())
         if sequence in excluded:
             return
@@ -106,13 +107,28 @@ def async_setup_shadow_evaluation(
 
         # Register the authoritative result before the ordinary history listener runs.
         # This preserves backend engine/latency metadata without changing the STT event
-        # schema or putting any experimental work on the Assist critical path.
+        # schema or putting ordinary experimental work on the Assist critical path.
         enriched = dict(event.data)
         diagnostics = recognition.pop_authoritative_diagnostics(pcm_audio)
         if diagnostics is not None:
             enriched["engine_id"] = diagnostics[0]
             enriched["backend_processing_seconds"] = diagnostics[1]
         history.record_event(enriched)
+
+        # A dedicated live evaluation timestamps the real Resemblyzer/STT race first,
+        # then measures ECAPA immediately after the Assist turn on the identical PCM.
+        # Projecting that call duration onto the same model-start point avoids making
+        # the two CPU-heavy models interfere with each other during the benchmark.
+        live_evaluation = get_live_model_evaluation(hass)
+        if live_evaluation is not None and live_evaluation.attach_assist_timing(
+            pcm_audio, dict(event.data)
+        ):
+            live_evaluation.start_shadow_scoring(
+                recognition,
+                pcm_audio=pcm_audio,
+                sample_rate=sample_rate,
+            )
+            return
 
         if not recognition.shadow_ready:
             return
