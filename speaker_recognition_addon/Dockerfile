@@ -37,6 +37,7 @@ WORKDIR /app
 
 RUN apt-get update \
     && apt-get install --no-install-recommends -y \
+        libgomp1 \
         libsndfile1 \
         python3 \
     && rm -rf /var/lib/apt/lists/*
@@ -50,4 +51,4 @@ COPY rootfs /
 
 RUN chmod a+x /etc/s6-overlay/s6-rc.d/speaker-recognition/run \
     && SPEAKER_RECOGNITION_SKIP_WARMUP=1 /opt/speaker-recognition/bin/python -c \
-        "from speaker_recognition.api import app; from speaker_recognition.neural_denoise import rnnoise_frame_size; assert app.title and rnnoise_frame_size() == 480"
+        "import ctypes; from speaker_recognition.api import app; from speaker_recognition.neural_denoise import rnnoise_frame_size; ctypes.CDLL('libgomp.so.1'); assert app.title and rnnoise_frame_size() == 480"
