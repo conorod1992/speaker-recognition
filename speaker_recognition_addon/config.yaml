@@ -25,6 +25,8 @@ options:
   log_level: "info"
   access_log: true
   embeddings_dir: "/share/speaker_recognition/embeddings"
+  model_cache_dir: "/share/speaker_recognition/models"
+  shadow_engine: "none"
   api_token: ""
   allow_insecure_remote: false
 schema:
@@ -33,5 +35,7 @@ schema:
   log_level: list(debug|info|warning|error|critical)
   access_log: bool
   embeddings_dir: str
+  model_cache_dir: str
+  shadow_engine: list(none|ecapa_tdnn)
   api_token: password
   allow_insecure_remote: bool

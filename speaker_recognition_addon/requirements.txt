@@ -4,7 +4,11 @@
 numpy>=1.26.0,<2.0.0
 scipy>=1.11.0,<2.0.0
 torch==2.8.0+cpu
+torchaudio==2.8.0+cpu
 resemblyzer==0.1.4
+# Optional ECAPA shadow engine runtime. It stays dormant unless shadow_engine is enabled.
+speechbrain==1.1.0
+huggingface-hub==1.5.0
 
 fastapi>=0.115.0,<1.0.0
 httpx>=0.28.0,<1.0.0
