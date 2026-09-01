@@ -17,7 +17,7 @@ RUN uv pip install --system --no-cache ".[server]" && \
     uv pip install --system --no-cache \
       --extra-index-url https://download.pytorch.org/whl/cpu \
       "torch==2.8.0+cpu" \
-      "torchaudio==2.8.0+cpu" \
+      "torchaudio==2.8.0" \
       "speechbrain==1.1.0" \
       "huggingface-hub==1.5.0"
 
