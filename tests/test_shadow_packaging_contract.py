@@ -7,7 +7,8 @@ def test_supervisor_runtime_packages_ecapa_dependencies() -> None:
     requirements = Path("speaker_recognition_addon/requirements.txt").read_text(
         encoding="utf-8"
     )
-    assert "torchaudio==2.8.0+cpu" in requirements
+    assert "torch==2.8.0+cpu" in requirements
+    assert "torchaudio==2.8.0" in requirements
     assert "speechbrain==1.1.0" in requirements
     assert "huggingface-hub==1.5.0" in requirements
 
