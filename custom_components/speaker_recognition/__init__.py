@@ -30,6 +30,10 @@ from .lifecycle import (
     async_apply_enrollment_update,
     async_initialize_recognition,
 )
+from .live_evaluation import (
+    LiveEvaluationSpeakerRecognition,
+    async_setup_live_model_evaluation,
+)
 from .proxy import effective_proxy_source, sync_proxy_unique_id, validate_proxy_source
 from .recognition import RecognitionBackendUnavailable, SpeakerRecognition
 from .shadow_evaluation import async_setup_shadow_evaluation
@@ -101,6 +105,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up shared frontend, calibration storage and WebSocket resources."""
     await async_register_frontend(hass)
     history = await async_setup_decision_history(hass)
+    await async_setup_live_model_evaluation(hass)
     domain_data = hass.data.setdefault(DOMAIN, {})
 
     # Register the shadow observer before the ordinary history listener. It can
@@ -146,7 +151,9 @@ async def async_setup_main_entry(
     backend_url = effective_backend_url(entry.data, entry.options)
     backend_token = effective_backend_token(entry.data, entry.options)
     voice_samples = entry.options.get(CONF_VOICE_SAMPLES, [])
-    recognition = SpeakerRecognition(hass, voice_samples, backend_url, backend_token)
+    recognition = LiveEvaluationSpeakerRecognition(
+        hass, voice_samples, backend_url, backend_token
+    )
 
     pending_user_value = entry.options.get(CONF_PENDING_ENROLLMENT)
     pending_user = pending_user_value if isinstance(pending_user_value, str) else None
@@ -239,5 +246,5 @@ async def async_update_stt_listener(hass: HomeAssistant, entry: ConfigEntry) -> 
 async def async_update_conversation_listener(
     hass: HomeAssistant, entry: ConfigEntry
 ) -> None:
-    """Handle Conversation proxy options update."""
+    """Handle Conversation proxy entry."""
     await hass.config_entries.async_reload(entry.entry_id)
