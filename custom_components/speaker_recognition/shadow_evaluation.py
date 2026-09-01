@@ -83,6 +83,11 @@ def async_setup_shadow_evaluation(
         if not isinstance(sequence, int):
             return
 
+        # Enrollment/diagnostic turns remain excluded from ordinary calibration.
+        excluded = domain_data.setdefault("calibration_excluded_utterances", set())
+        if sequence in excluded:
+            return
+
         cache = domain_data.get("utterance_audio")
         if not isinstance(cache, dict):
             return
@@ -117,12 +122,6 @@ def async_setup_shadow_evaluation(
         if live_evaluation is not None and live_evaluation.attach_assist_timing(
             pcm_audio, dict(event.data)
         ):
-            return
-
-        # Live diagnostic/enrollment turns are deliberately excluded from ordinary
-        # background calibration/history shadow work.
-        excluded = domain_data.setdefault("calibration_excluded_utterances", set())
-        if sequence in excluded:
             return
 
         if not recognition.shadow_ready:
