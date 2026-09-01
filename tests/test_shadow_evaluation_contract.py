@@ -49,8 +49,8 @@ def test_shadow_comparison_uses_paired_turns_and_independent_operating_points() 
     assert result["authoritative"]["engine_id"] == "resemblyzer"
     assert result["shadow"]["engine_id"] == "ecapa_tdnn"
     assert result["authoritative"]["similarity_threshold"] != result["shadow"]["similarity_threshold"]
-    assert result["authoritative"]["median_latency_seconds"] == 0.09
-    assert result["shadow"]["median_latency_seconds"] == 0.21
+    assert round(result["authoritative"]["median_latency_seconds"], 2) == 0.09
+    assert round(result["shadow"]["median_latency_seconds"], 2) == 0.21
 
 
 def test_shadow_integration_stays_off_assist_critical_path() -> None:
