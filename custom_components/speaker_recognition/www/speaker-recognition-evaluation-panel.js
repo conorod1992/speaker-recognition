@@ -163,7 +163,7 @@ proto._renderPrefixComparisonTable = function(data) {
     <p class="muted">The same labelled utterance is also scored using only its first 1.0 s, 1.5 s and 2.0 s. This focuses the experiment on the most promising early-recognition window while you are still speaking.</p>
     <div class="comparisonTableWrap"><table class="comparisonTable prefixTable">
       <thead><tr><th>Metric</th>${columns.map(column => `<th>ECAPA-TDNN<span>${this._escape(column[1])}</span></th>`).join("")}</tr></thead>
-      <tbody>${rows.map(([label, key]) => `<tr><th>${this._escape(label)}</th>${columns.map(column => `<td>${this._escape(this._metricValue(column[2], key))}</td>`).join("")}</tbody>
+      <tbody>${rows.map(([label, key]) => `<tr><th>${this._escape(label)}</th>${columns.map(column => `<td>${this._escape(this._metricValue(column[2], key))}</td>`).join("")}</tr>`).join("")}</tbody>
     </table></div>
     <p class="muted latencyNote">Prefix columns include only utterances long enough to contain that amount of audio. Their effective Assist latency is projected as if ECAPA had started as soon as that prefix was available; the full column keeps the normal post-utterance counterfactual.</p>
   </div>`;
