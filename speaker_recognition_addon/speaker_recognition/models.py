@@ -135,6 +135,13 @@ class ShadowRecognitionScores(RecognitionScores):
     processing_seconds: float
 
 
+class ShadowPrefixEvaluation(BaseModel):
+    """Full and fixed-prefix shadow scores from one uploaded utterance."""
+
+    full: ShadowRecognitionScores
+    prefixes: dict[str, ShadowRecognitionScores] = Field(default_factory=dict)
+
+
 class RecognitionResult(RecognitionScores):
     """Result of recognition operation after acceptance policy."""
 
