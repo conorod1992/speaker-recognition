@@ -1,4 +1,4 @@
-"""Contract coverage for audio-free calibration telemetry and feedback."""
+"""Contract coverage for calibration telemetry, review and feedback."""
 
 from pathlib import Path
 
@@ -6,7 +6,7 @@ ROOT = Path(__file__).parents[1] / "custom_components" / "speaker_recognition"
 
 
 def test_history_is_bounded_persistent_and_privacy_preserving() -> None:
-    """Decision history stays small and never stores spoken content."""
+    """Decision metadata stays small and never embeds spoken content."""
     source = (ROOT / "telemetry.py").read_text(encoding="utf-8")
     record_schema = source.split("class DecisionRecord:", 1)[1].split(
         "class DecisionHistory:", 1
@@ -61,8 +61,8 @@ def test_conversation_proxy_enriches_instead_of_duplicating_stt_record() -> None
     assert "history.record(" in conversation_source
 
 
-def test_feedback_requires_ground_truth_for_errors() -> None:
-    """Wrong/missed decisions require the actual HA user to be supplied."""
+def test_legacy_feedback_api_remains_registered_for_compatibility() -> None:
+    """Existing clients can still use the original history and feedback WebSockets."""
     source = (ROOT / "websocket.py").read_text(encoding="utf-8")
 
     assert '"wrong_speaker"' in source
@@ -73,8 +73,8 @@ def test_feedback_requires_ground_truth_for_errors() -> None:
     assert 'f"{DOMAIN}/decision_feedback"' in source
 
 
-def test_frontend_exposes_recent_decisions_and_feedback() -> None:
-    """The panel makes collected calibration evidence understandable and editable."""
+def test_frontend_uses_compact_playable_review_workflow() -> None:
+    """Calibration defaults to a ten-item listen-and-label review surface."""
     source = (ROOT / "www" / "speaker-recognition-panel.js").read_text(
         encoding="utf-8"
     )
@@ -82,15 +82,19 @@ def test_frontend_exposes_recent_decisions_and_feedback() -> None:
         ROOT / "www" / "speaker-recognition-calibration-panel.js"
     ).read_text(encoding="utf-8")
 
+    # The inherited legacy surface remains available while the calibration subclass
+    # replaces its data source and interaction model with the bounded review API.
     assert "Recognition calibration" in source
-    assert "Recent normal Assist decisions are stored without audio or transcripts" in source
-    assert "Correct" in source
-    assert "Wrong speaker" in source
-    assert "Should have recognised me" in source
-    assert "Actual speaker for corrections" in source
     assert "speaker_recognition/decision_feedback" in source
-    assert "recent recognition decision" in calibration
-    assert "STT proxy even when your pipeline sends the conversation directly" in calibration
+    assert 'type: "speaker_recognition/review_decisions"' in calibration
+    assert 'type: "speaker_recognition/decision_audio"' in calibration
+    assert 'type: "speaker_recognition/review_feedback"' in calibration
+    assert "newest ten Assist decisions" in calibration
+    assert "▶ Play clip" in calibration
+    assert "<summary>Diagnostics</summary>" in calibration
+    assert "Correctly unknown" in calibration
+    assert "That was me" in calibration
+    assert "Not me" in calibration
 
 
 def test_changed_ha_modules_compile() -> None:
@@ -101,6 +105,7 @@ def test_changed_ha_modules_compile() -> None:
         "enrollment.py",
         "telemetry.py",
         "websocket.py",
+        "review_audio_websocket.py",
     ):
         source = (ROOT / name).read_text(encoding="utf-8")
         compile(source, str(ROOT / name), "exec")

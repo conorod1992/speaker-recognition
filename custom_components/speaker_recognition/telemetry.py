@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -15,7 +16,11 @@ from .correlation import CorrelatedRecognition
 
 _STORAGE_VERSION = 1
 _STORAGE_KEY = f"{DOMAIN}.decision_history"
+_AUDIO_STORAGE_VERSION = 1
+_AUDIO_STORAGE_KEY = f"{DOMAIN}.decision_review_audio"
 _MAX_DECISIONS = 200
+_MAX_REVIEW_AUDIO = 10
+_MAX_REVIEW_AUDIO_SECONDS = 30
 _MAX_PENDING_SHADOW = 20
 _SAVE_DELAY = 5
 
@@ -56,15 +61,20 @@ class DecisionRecord:
 
 
 class DecisionHistory:
-    """Bounded persistent recognition history."""
+    """Bounded persistent recognition history plus a tiny playable review queue."""
 
     def __init__(self, hass: HomeAssistant) -> None:
+        self._hass = hass
         self._store = Store[dict[str, Any]](hass, _STORAGE_VERSION, _STORAGE_KEY)
+        self._audio_store = Store[dict[str, Any]](
+            hass, _AUDIO_STORAGE_VERSION, _AUDIO_STORAGE_KEY
+        )
         self._records: list[dict[str, Any]] = []
+        self._review_audio: list[dict[str, Any]] = []
         self._pending_shadow: dict[tuple[int, str | None], dict[str, Any]] = {}
 
     async def async_load(self) -> None:
-        """Load persisted history, tolerating missing or malformed data."""
+        """Load persisted history and the independently bounded review clips."""
         data = await self._store.async_load()
         records = data.get("records", []) if isinstance(data, dict) else []
         if isinstance(records, list):
@@ -72,10 +82,43 @@ class DecisionHistory:
                 -_MAX_DECISIONS:
             ]
 
+        audio_data = await self._audio_store.async_load()
+        clips = audio_data.get("clips", []) if isinstance(audio_data, dict) else []
+        if isinstance(clips, list):
+            valid: list[dict[str, Any]] = []
+            for item in clips:
+                if not isinstance(item, dict):
+                    continue
+                decision_id = item.get("decision_id")
+                pcm_base64 = item.get("pcm_base64")
+                sample_rate = item.get("sample_rate")
+                if (
+                    isinstance(decision_id, str)
+                    and decision_id
+                    and isinstance(pcm_base64, str)
+                    and pcm_base64
+                    and isinstance(sample_rate, int)
+                    and sample_rate > 0
+                ):
+                    valid.append(
+                        {
+                            "decision_id": decision_id,
+                            "pcm_base64": pcm_base64,
+                            "sample_rate": sample_rate,
+                        }
+                    )
+            self._review_audio = valid[-_MAX_REVIEW_AUDIO:]
+
     def _schedule_save(self) -> None:
         """Coalesce persistence so ordinary Assist use does not write every turn."""
         self._store.async_delay_save(
             lambda: {"records": self._records[-_MAX_DECISIONS:]}, _SAVE_DELAY
+        )
+
+    def _schedule_audio_save(self) -> None:
+        """Persist only the small rolling playable-audio queue."""
+        self._audio_store.async_delay_save(
+            lambda: {"clips": self._review_audio[-_MAX_REVIEW_AUDIO:]}, _SAVE_DELAY
         )
 
     @staticmethod
@@ -141,12 +184,50 @@ class DecisionHistory:
         if pending is not None:
             item.update(pending)
 
+    def _capture_review_audio(self, item: dict[str, Any]) -> None:
+        """Copy this turn's cached PCM into the ten-item review queue."""
+        decision_id = item.get("decision_id")
+        sequence = item.get("utterance_sequence")
+        if not isinstance(decision_id, str) or not isinstance(sequence, int):
+            return
+        if any(clip.get("decision_id") == decision_id for clip in self._review_audio):
+            return
+
+        cache = self._hass.data.get(DOMAIN, {}).get("utterance_audio")
+        if not isinstance(cache, dict):
+            return
+        cached = cache.get(sequence)
+        if (
+            not isinstance(cached, tuple)
+            or len(cached) != 2
+            or not isinstance(cached[0], bytes)
+            or not isinstance(cached[1], int)
+            or cached[1] <= 0
+        ):
+            return
+        pcm_audio, sample_rate = cached
+        max_bytes = sample_rate * 2 * _MAX_REVIEW_AUDIO_SECONDS
+        bounded_pcm = pcm_audio[:max_bytes]
+        if not bounded_pcm:
+            return
+
+        self._review_audio.append(
+            {
+                "decision_id": decision_id,
+                "pcm_base64": base64.b64encode(bounded_pcm).decode("ascii"),
+                "sample_rate": sample_rate,
+            }
+        )
+        self._review_audio = self._review_audio[-_MAX_REVIEW_AUDIO:]
+        self._schedule_audio_save()
+
     def _append(self, record: DecisionRecord) -> str:
-        """Append and persist a bounded record."""
+        """Append and persist a bounded metadata record and recent review clip."""
         item = asdict(record)
         self._apply_pending_shadow(item)
         self._records.append(item)
         self._records = self._records[-_MAX_DECISIONS:]
+        self._capture_review_audio(item)
         self._schedule_save()
         return record.decision_id
 
@@ -162,6 +243,7 @@ class DecisionHistory:
         existing = self._find_turn(sequence, stt_entity_id)
         if existing is not None:
             self._apply_pending_shadow(existing)
+            self._capture_review_audio(existing)
             decision_id = existing.get("decision_id")
             return decision_id if isinstance(decision_id, str) else None
 
@@ -247,7 +329,7 @@ class DecisionHistory:
         threshold: float,
         identity_eligible: bool,
     ) -> str:
-        """Record or enrich a recognition decision without audio/transcripts."""
+        """Record or enrich a recognition decision without inlining audio."""
         existing = self._find_turn(
             recognition.utterance_sequence, recognition.stt_entity_id
         )
@@ -280,6 +362,7 @@ class DecisionHistory:
                 }
             )
             self._apply_pending_shadow(existing)
+            self._capture_review_audio(existing)
             self._schedule_save()
             decision_id = existing.get("decision_id")
             if isinstance(decision_id, str):
@@ -314,6 +397,36 @@ class DecisionHistory:
         """Return newest decisions first."""
         return [dict(item) for item in reversed(self._records[-limit:])]
 
+    def review_recent(self, limit: int = _MAX_REVIEW_AUDIO) -> list[dict[str, Any]]:
+        """Return the compact newest-first review queue with playback availability."""
+        audio_ids = {
+            clip["decision_id"]
+            for clip in self._review_audio
+            if isinstance(clip.get("decision_id"), str)
+        }
+        result = self.recent(min(max(0, limit), _MAX_REVIEW_AUDIO))
+        for item in result:
+            item["has_audio"] = item.get("decision_id") in audio_ids
+        return result
+
+    def review_audio_ids(self) -> list[str]:
+        """Return decision IDs whose bounded PCM clip is still retained."""
+        return [
+            str(clip["decision_id"])
+            for clip in self._review_audio
+            if isinstance(clip.get("decision_id"), str)
+        ]
+
+    def review_audio_for_decision(self, decision_id: str) -> dict[str, Any] | None:
+        """Return one retained PCM clip without exposing it through normal history."""
+        for clip in reversed(self._review_audio):
+            if clip.get("decision_id") == decision_id:
+                return {
+                    "pcm_base64": clip["pcm_base64"],
+                    "sample_rate": clip["sample_rate"],
+                }
+        return None
+
     def labelled(self) -> list[dict[str, Any]]:
         """Return all explicitly labelled decisions in chronological order."""
         return [dict(item) for item in self._records if item.get("feedback")]
@@ -347,4 +460,10 @@ async def async_setup_decision_history(hass: HomeAssistant) -> DecisionHistory:
     history = DecisionHistory(hass)
     await history.async_load()
     domain_data["decision_history"] = history
+
+    # Kept separate to avoid importing WebSocket plumbing into the history module at
+    # import time while still letting the review-audio API share this initialized store.
+    from .review_audio_websocket import async_register_review_audio_websocket
+
+    async_register_review_audio_websocket(hass)
     return history
