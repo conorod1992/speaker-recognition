@@ -51,8 +51,8 @@ def test_prefix_analysis_uses_same_explicit_ground_truth() -> None:
             "shadow": _engine(0.8),
             "shadow_prefixes": {
                 "1.0": _engine(0.15),
+                "1.5": _engine(0.65),
                 "2.0": _engine(0.75),
-                "2.5": _engine(0.8),
             },
         },
         {
@@ -61,8 +61,8 @@ def test_prefix_analysis_uses_same_explicit_ground_truth() -> None:
             "shadow": _engine(0.2),
             "shadow_prefixes": {
                 "1.0": _engine(0.7),
+                "1.5": _engine(0.2),
                 "2.0": _engine(0.2),
-                "2.5": _engine(0.2),
             },
         },
     ]
@@ -71,14 +71,14 @@ def test_prefix_analysis_uses_same_explicit_ground_truth() -> None:
 
     assert result["trial_count"] == 2
     assert result["shadow_prefixes"]["1.0"]["trials"] == 2
+    assert result["shadow_prefixes"]["1.5"]["trials"] == 2
     assert result["shadow_prefixes"]["2.0"]["trials"] == 2
-    assert result["shadow_prefixes"]["2.5"]["trials"] == 2
+    assert result["shadow_prefixes"]["1.5"]["correct"] == 2
     assert result["shadow_prefixes"]["2.0"]["correct"] == 2
-    assert result["shadow_prefixes"]["2.5"]["correct"] == 2
 
 
 def test_short_utterances_are_excluded_only_from_unavailable_prefixes() -> None:
-    """A 1-second-capable turn still contributes when 2/2.5 seconds are unavailable."""
+    """A 1-second-capable turn still contributes when 1.5/2 seconds are unavailable."""
     module = _analysis_module()
     record = {
         "actual_user_id": "alice",
@@ -90,15 +90,15 @@ def test_short_utterances_are_excluded_only_from_unavailable_prefixes() -> None:
     result = module.analyze_live_evaluation([record])
 
     assert result["shadow_prefixes"]["1.0"]["trials"] == 1
+    assert result["shadow_prefixes"]["1.5"] is None
     assert result["shadow_prefixes"]["2.0"] is None
-    assert result["shadow_prefixes"]["2.5"] is None
     assert result["shadow"]["trials"] == 1
 
 
 def test_live_evaluator_uses_fixed_prefixes_and_projects_early_start_latency() -> None:
     source = (INTEGRATION / "live_evaluation.py").read_text(encoding="utf-8")
 
-    assert "PREFIX_DURATIONS_SECONDS = (1.0, 2.0, 2.5)" in source
+    assert "PREFIX_DURATIONS_SECONDS = (1.0, 1.5, 2.0)" in source
     assert "def _prefix_pcm" in source
     assert 'current["shadow_prefixes"] = prefixes' in source
     assert "prefix_seconds + call_seconds - stt_seconds" in source
@@ -114,8 +114,9 @@ def test_evaluation_ui_surfaces_duration_table_and_per_turn_prefix_diagnostics()
     assert "ECAPA audio-length experiment" in frontend
     assert "Eligible labelled trials" in frontend
     assert "1.0 s" in frontend
+    assert "1.5 s" in frontend
     assert "2.0 s" in frontend
-    assert "2.5 s" in frontend
+    assert "2.5 s" not in frontend
     assert "Projected Assist latency" in frontend
     assert "only utterances long enough" in frontend
     assert "ECAPA early-audio diagnostics" in frontend

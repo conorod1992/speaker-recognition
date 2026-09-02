@@ -22,7 +22,7 @@ _STORAGE_VERSION = 1
 _STORAGE_KEY = f"{DOMAIN}.live_model_evaluation"
 _SAVE_DELAY = 1
 _CURRENT_TIMEOUT_SECONDS = 60.0
-PREFIX_DURATIONS_SECONDS = (1.0, 2.0, 2.5)
+PREFIX_DURATIONS_SECONDS = (1.0, 1.5, 2.0)
 
 
 def _domain_data(hass: HomeAssistant) -> dict[str, Any]:

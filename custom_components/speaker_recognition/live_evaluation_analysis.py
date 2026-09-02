@@ -10,7 +10,7 @@ FALSE_IDENTIFICATION_WEIGHT = 5
 FALSE_UNKNOWN_WEIGHT = 1
 _SIMILARITY_STEP = 0.01
 _MARGIN_MAX = 0.50
-_PREFIX_KEYS = ("1.0", "2.0", "2.5")
+_PREFIX_KEYS = ("1.0", "1.5", "2.0")
 
 
 @dataclass(frozen=True)
