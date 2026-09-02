@@ -138,8 +138,8 @@ proto._renderPrefixComparisonTable = function(data) {
   const prefixMap = data.shadow_prefixes || {};
   const columns = [
     ["1.0", "1.0 s", prefixMap["1.0"]],
+    ["1.5", "1.5 s", prefixMap["1.5"]],
     ["2.0", "2.0 s", prefixMap["2.0"]],
-    ["2.5", "2.5 s", prefixMap["2.5"]],
     ["full", "Full", data.shadow],
   ];
   if (!columns.some(column => column[2])) return "";
@@ -160,10 +160,10 @@ proto._renderPrefixComparisonTable = function(data) {
 
   return `<div class="prefixExperiment">
     <h3>ECAPA audio-length experiment</h3>
-    <p class="muted">The same labelled utterance is also scored using only its first 1.0 s, 2.0 s and 2.5 s. This helps identify the earliest reliable point at which ECAPA could start while you are still speaking.</p>
+    <p class="muted">The same labelled utterance is also scored using only its first 1.0 s, 1.5 s and 2.0 s. This focuses the experiment on the most promising early-recognition window while you are still speaking.</p>
     <div class="comparisonTableWrap"><table class="comparisonTable prefixTable">
       <thead><tr><th>Metric</th>${columns.map(column => `<th>ECAPA-TDNN<span>${this._escape(column[1])}</span></th>`).join("")}</tr></thead>
-      <tbody>${rows.map(([label, key]) => `<tr><th>${this._escape(label)}</th>${columns.map(column => `<td>${this._escape(this._metricValue(column[2], key))}</td>`).join("")}</tr>`).join("")}</tbody>
+      <tbody>${rows.map(([label, key]) => `<tr><th>${this._escape(label)}</th>${columns.map(column => `<td>${this._escape(this._metricValue(column[2], key))}</td>`).join("")}</tbody>
     </table></div>
     <p class="muted latencyNote">Prefix columns include only utterances long enough to contain that amount of audio. Their effective Assist latency is projected as if ECAPA had started as soon as that prefix was available; the full column keeps the normal post-utterance counterfactual.</p>
   </div>`;
@@ -172,7 +172,7 @@ proto._renderPrefixComparisonTable = function(data) {
 proto._renderPendingPrefixDiagnostics = function(pending) {
   const prefixes = pending && pending.shadow_prefixes;
   if (!prefixes || typeof prefixes !== "object" || !Object.keys(prefixes).length) return "";
-  const rows = ["1.0", "2.0", "2.5"].filter(key => prefixes[key]).map(key => {
+  const rows = ["1.0", "1.5", "2.0"].filter(key => prefixes[key]).map(key => {
     const engine = prefixes[key];
     return `<tr><th>${this._escape(`${key} s`)}</th><td>${this._escape(this._evaluationUserName(engine.candidate_user_id))}</td><td>${this._escape(Number(engine.similarity).toFixed(3))}</td><td>${this._escape(this._evalMs(engine.backend_processing_seconds))}</td><td>${this._escape(this._pendingLatency(engine))}</td></tr>`;
   }).join("");
