@@ -9,11 +9,32 @@ class SpeakerRecognitionCalibrationPanel extends BasePanel {
     this._calibrationEntryId = "";
     this._calibrationMessage = "";
     this._calibrationBusy = false;
+    this._reviewAudioUrls = new Map();
+  }
+
+  disconnectedCallback() {
+    for (const url of this._reviewAudioUrls.values()) URL.revokeObjectURL(url);
+    this._reviewAudioUrls.clear();
+    super.disconnectedCallback();
   }
 
   async _refreshHistory(silent = false) {
-    await super._refreshHistory(silent);
+    if (!this._hass) return;
+    try {
+      this._history = await this._call({ type: "speaker_recognition/review_decisions" });
+      if (!silent) this._historyMessage = "";
+      const activeIds = new Set((this._history.decisions || []).map(item => item.decision_id));
+      for (const [decisionId, url] of this._reviewAudioUrls.entries()) {
+        if (!activeIds.has(decisionId)) {
+          URL.revokeObjectURL(url);
+          this._reviewAudioUrls.delete(decisionId);
+        }
+      }
+    } catch (err) {
+      this._historyMessage = this._errorText(err);
+    }
     await this._refreshCalibration(true);
+    this._render();
   }
 
   async _refreshCalibration(silent = false) {
@@ -87,6 +108,172 @@ class SpeakerRecognitionCalibrationPanel extends BasePanel {
     return enriched;
   }
 
+  _reviewWhen(value) {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "";
+    const now = new Date();
+    const sameDay = date.getFullYear() === now.getFullYear()
+      && date.getMonth() === now.getMonth()
+      && date.getDate() === now.getDate();
+    const time = date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    return sameDay ? time : `${date.toLocaleDateString()} ${time}`;
+  }
+
+  _base64ToBytes(value) {
+    const binary = atob(value);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
+    return bytes;
+  }
+
+  _reviewWavUrl(pcmBytes, sampleRate) {
+    const buffer = new ArrayBuffer(44 + pcmBytes.length);
+    const view = new DataView(buffer);
+    const write = (offset, text) => {
+      for (let i = 0; i < text.length; i++) view.setUint8(offset + i, text.charCodeAt(i));
+    };
+    write(0, "RIFF");
+    view.setUint32(4, 36 + pcmBytes.length, true);
+    write(8, "WAVE");
+    write(12, "fmt ");
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    write(36, "data");
+    view.setUint32(40, pcmBytes.length, true);
+    new Uint8Array(buffer, 44).set(pcmBytes);
+    return URL.createObjectURL(new Blob([buffer], { type: "audio/wav" }));
+  }
+
+  async _playReviewAudio(decisionId) {
+    let url = this._reviewAudioUrls.get(decisionId);
+    if (!url) {
+      try {
+        const clip = await this._call({
+          type: "speaker_recognition/decision_audio",
+          decision_id: decisionId,
+        });
+        const sampleRate = Number(clip.sample_rate || 0);
+        if (!sampleRate || !clip.pcm_base64) throw new Error("The saved clip is invalid");
+        url = this._reviewWavUrl(this._base64ToBytes(clip.pcm_base64), sampleRate);
+        this._reviewAudioUrls.set(decisionId, url);
+        this._render();
+      } catch (err) {
+        this._historyMessage = this._errorText(err);
+        this._render();
+        return;
+      }
+    }
+    const audio = this.shadowRoot && this.shadowRoot.querySelector(`audio[data-review-audio="${decisionId}"]`);
+    if (audio) audio.play().catch(() => {});
+  }
+
+  async _submitReviewFeedback(decisionId, feedback, actualUserId) {
+    let actual = actualUserId;
+    if (actual === "__selected__") actual = this._feedbackUserId;
+    if (actual === "__unknown__" || actual === "") actual = null;
+    const message = {
+      type: "speaker_recognition/review_feedback",
+      decision_id: decisionId,
+      feedback,
+      actual_user_id: actual,
+    };
+    try {
+      await this._call(message);
+      this._historyMessage = "Feedback saved.";
+      await this._refreshHistory(true);
+    } catch (err) {
+      this._historyMessage = this._errorText(err);
+      this._render();
+    }
+  }
+
+  _renderHistory() {
+    const decisions = this._history && this._history.decisions ? this._history.decisions : [];
+    if (!decisions.length) return `<p class="muted">No recent normal Assist decisions are waiting for review yet.</p>`;
+    const enrolled = this._status && Array.isArray(this._status.enrolled_users)
+      ? this._status.enrolled_users : [];
+    const soleUser = enrolled.length === 1 ? enrolled[0] : null;
+
+    return decisions.slice(0, 10).map(item => {
+      const applied = Boolean(item.identity_eligible && item.user_id);
+      const outcome = applied
+        ? `Recognised as ${this._escape(this._userName(item.user_id))}`
+        : "Not recognised";
+      const when = this._reviewWhen(item.created_at);
+      const candidate = this._escape(this._userName(item.candidate_user_id));
+      const margin = item.margin == null ? "n/a" : Number(item.margin).toFixed(3);
+      const url = this._reviewAudioUrls.get(item.decision_id);
+      const audio = item.has_audio
+        ? (url
+          ? `<audio controls preload="metadata" data-review-audio="${this._escape(item.decision_id)}" src="${this._escape(url)}"></audio>`
+          : `<button class="secondary reviewPlay" data-review-play="${this._escape(item.decision_id)}">▶ Play clip</button>`)
+        : `<span class="muted">Audio unavailable</span>`;
+
+      let feedback = "";
+      if (item.feedback) {
+        const labels = {
+          correct: "Marked correct",
+          wrong_speaker: "Marked wrong person",
+          missed_speaker: "Marked missed speaker",
+        };
+        const actual = item.actual_user_id
+          ? ` · ${this._escape(this._userName(item.actual_user_id))}`
+          : (item.feedback === "wrong_speaker" ? " · someone not enrolled" : "");
+        feedback = `<span class="feedback-saved">${labels[item.feedback] || this._escape(item.feedback)}${actual}</span>`;
+      } else if (soleUser) {
+        feedback = applied
+          ? `<div class="feedback-actions compactFeedback">
+              <button data-review-feedback="correct" data-review-decision="${this._escape(item.decision_id)}" data-review-actual="">Correct</button>
+              <button class="secondary" data-review-feedback="wrong_speaker" data-review-decision="${this._escape(item.decision_id)}" data-review-actual="__unknown__">Not me</button>
+            </div>`
+          : `<div class="feedback-actions compactFeedback">
+              <button data-review-feedback="correct" data-review-decision="${this._escape(item.decision_id)}" data-review-actual="">Correctly unknown</button>
+              <button class="secondary" data-review-feedback="missed_speaker" data-review-decision="${this._escape(item.decision_id)}" data-review-actual="${this._escape(soleUser)}">That was me</button>
+            </div>`;
+      } else {
+        feedback = applied
+          ? `<div class="feedback-actions compactFeedback">
+              <button data-review-feedback="correct" data-review-decision="${this._escape(item.decision_id)}" data-review-actual="">Correct</button>
+              <button class="secondary" data-review-feedback="wrong_speaker" data-review-decision="${this._escape(item.decision_id)}" data-review-actual="__selected__">Wrong person</button>
+            </div>`
+          : `<div class="feedback-actions compactFeedback">
+              <button data-review-feedback="correct" data-review-decision="${this._escape(item.decision_id)}" data-review-actual="">Correctly unknown</button>
+              <button class="secondary" data-review-feedback="missed_speaker" data-review-decision="${this._escape(item.decision_id)}" data-review-actual="__selected__">Should recognise speaker</button>
+            </div>`;
+      }
+
+      return `<div class="decision reviewDecision">
+        <div class="reviewDecisionTop"><div><strong>${outcome}</strong>${when ? `<span class="decisionTime">${this._escape(when)}</span>` : ""}</div>${audio}</div>
+        ${feedback}
+        <details class="decisionDiagnostics">
+          <summary>Diagnostics</summary>
+          <div class="muted">Candidate ${candidate} · similarity ${Number(item.similarity || 0).toFixed(3)} · margin ${margin}</div>
+          <div class="muted">Recognition ${this._formatMs(item.recognition_seconds)} · added Assist latency ${this._formatMs(item.added_latency_seconds)} · STT ${this._formatMs(item.stt_seconds)}${item.audio_seconds == null ? "" : ` · audio ${Number(item.audio_seconds).toFixed(1)} s`}</div>
+        </details>
+      </div>`;
+    }).join("");
+  }
+
+  _bindEvents() {
+    super._bindEvents();
+    if (!this.shadowRoot) return;
+    for (const button of this.shadowRoot.querySelectorAll("[data-review-play]")) {
+      button.onclick = () => this._playReviewAudio(button.dataset.reviewPlay);
+    }
+    for (const button of this.shadowRoot.querySelectorAll("[data-review-feedback]")) {
+      button.onclick = () => this._submitReviewFeedback(
+        button.dataset.reviewDecision,
+        button.dataset.reviewFeedback,
+        button.dataset.reviewActual,
+      );
+    }
+  }
+
   _renderEnrollmentStatus() {
     if (!this._status || !this._userId) return "";
     const enrolled = (this._status.enrolled_users || []).includes(this._userId);
@@ -128,7 +315,7 @@ class SpeakerRecognitionCalibrationPanel extends BasePanel {
       return `<div class="card" id="calibrationGuidanceCard">
         <h2>Threshold guidance</h2>
         <p><strong>${decisions.length} recent recognition decision${decisions.length === 1 ? "" : "s"} available</strong>${labelled ? ` · ${labelled} labelled` : ""}</p>
-        <p class="muted">Recognition history is collected from the Speaker Recognition STT proxy even when your pipeline sends the conversation directly to another agent. You can label recent results above now. Add a Speaker Recognition Conversation proxy only if you want this section to recommend and apply a Home Assistant identity-confidence threshold.</p>
+        <p class="muted">The review queue above keeps only ten recent clips. Compact labelled decision metadata can continue contributing to calibration after its audio has expired. Add a Speaker Recognition Conversation proxy only if you want this section to recommend and apply a Home Assistant identity-confidence threshold.</p>
       </div>`;
     }
 
@@ -144,7 +331,7 @@ class SpeakerRecognitionCalibrationPanel extends BasePanel {
       guidance = `<div class="result">
         <strong>More labelled decisions needed</strong>
         <p>${analysis.labelled_count} of ${analysis.minimum_labelled} labelled decisions collected.</p>
-        <p class="muted">Keep marking real Assist results as Correct, Wrong speaker, or Should have recognised me. No threshold recommendation is made until there is enough evidence.</p>
+        <p class="muted">Keep reviewing real Assist results. Older reviewed audio can expire from the ten-item queue while its compact feedback remains useful for threshold calibration.</p>
       </div>`;
     } else {
       const current = Number(analysis.current_threshold).toFixed(2);
@@ -166,7 +353,7 @@ class SpeakerRecognitionCalibrationPanel extends BasePanel {
 
     return `<div class="card" id="calibrationGuidanceCard">
       <h2>Threshold guidance</h2>
-      <p class="muted">Uses only the explicit feedback you provide on normal Assist decisions. It simulates the Home Assistant confidence threshold and deliberately treats a wrong-person identity as much more costly than a missed recognition.</p>
+      <p class="muted">Uses the explicit feedback you provide on normal Assist decisions. It simulates the Home Assistant confidence threshold and treats a wrong-person identity as much more costly than a missed recognition.</p>
       ${entries.length > 1 ? `<label for="calibrationEntrySelect">Conversation proxy</label><select id="calibrationEntrySelect">${options}</select>` : `<p><strong>Conversation proxy:</strong> ${this._escape(entry.title || entry.conversation_entity || entry.entry_id)}</p>`}
       ${this._calibrationMessage ? `<div class="message">${this._escape(this._calibrationMessage)}</div>` : ""}
       ${guidance}
@@ -194,11 +381,50 @@ class SpeakerRecognitionCalibrationPanel extends BasePanel {
     }
   }
 
+  _installReviewStyles() {
+    if (!this.shadowRoot || this.shadowRoot.getElementById("calibration-review-style")) return;
+    const style = document.createElement("style");
+    style.id = "calibration-review-style";
+    style.textContent = `
+      .reviewDecision { padding:14px 0; }
+      .reviewDecisionTop { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; }
+      .decisionTime { margin-left:9px; color:var(--secondary-text-color); font-size:.88rem; font-weight:400; }
+      .reviewDecision audio { width:min(300px, 100%); height:36px; }
+      .reviewPlay { padding:7px 11px; }
+      .compactFeedback { margin-top:10px; }
+      .decisionDiagnostics { margin-top:10px; }
+      .decisionDiagnostics summary { cursor:pointer; color:var(--secondary-text-color); }
+      .decisionDiagnostics .muted { margin-top:5px; }
+    `;
+    this.shadowRoot.append(style);
+  }
+
   _render() {
     super._render();
     if (!this.shadowRoot || !this._status || !this._status.configured) return;
     const wrap = this.shadowRoot.querySelector(".wrap");
     if (!wrap) return;
+
+    const reviewCard = Array.from(wrap.querySelectorAll(".card")).find(card => {
+      const heading = card.querySelector("h2");
+      return heading && heading.textContent.trim() === "Recognition calibration";
+    });
+    if (reviewCard) {
+      const intro = reviewCard.querySelector("h2 + p.muted");
+      if (intro) intro.textContent = "Review the newest ten Assist decisions. Recent clips are playable; when an eleventh decision arrives the oldest clip is discarded automatically.";
+      const select = reviewCard.querySelector("#feedbackUserSelect");
+      const label = reviewCard.querySelector('label[for="feedbackUserSelect"]');
+      const enrolled = Array.isArray(this._status.enrolled_users) ? this._status.enrolled_users : [];
+      if (select && enrolled.length === 1) {
+        select.hidden = true;
+        if (label) label.hidden = true;
+      } else if (select && !select.querySelector('option[value="__unknown__"]')) {
+        const option = document.createElement("option");
+        option.value = "__unknown__";
+        option.textContent = "Someone not enrolled";
+        select.appendChild(option);
+      }
+    }
 
     const enrollmentCard = wrap.querySelector(".card");
     if (enrollmentCard) {
@@ -215,6 +441,7 @@ class SpeakerRecognitionCalibrationPanel extends BasePanel {
     holder.innerHTML = this._renderCalibrationCard();
     const card = holder.firstElementChild;
     if (card) wrap.appendChild(card);
+    this._installReviewStyles();
     this._bindCalibrationEvents();
   }
 
