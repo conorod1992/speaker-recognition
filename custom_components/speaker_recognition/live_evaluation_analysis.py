@@ -10,6 +10,7 @@ FALSE_IDENTIFICATION_WEIGHT = 5
 FALSE_UNKNOWN_WEIGHT = 1
 _SIMILARITY_STEP = 0.01
 _MARGIN_MAX = 0.50
+_PREFIX_KEYS = ("1.0", "2.0", "2.5")
 
 
 @dataclass(frozen=True)
@@ -26,8 +27,9 @@ def _number(value: Any) -> float | None:
     return float(value) if isinstance(value, (int, float)) and value >= 0 else None
 
 
-def _trial(record: dict[str, Any], side: str) -> tuple[str, _Trial] | None:
-    engine = record.get(side)
+def _trial_from_engine(
+    record: dict[str, Any], engine: Any
+) -> tuple[str, _Trial] | None:
     if not isinstance(engine, dict):
         return None
     engine_id = engine.get("engine_id")
@@ -51,6 +53,10 @@ def _trial(record: dict[str, Any], side: str) -> tuple[str, _Trial] | None:
         effective_added_seconds=_number(engine.get("effective_added_latency_seconds")),
         effective_is_upper_bound=bool(engine.get("effective_added_latency_upper_bound")),
     )
+
+
+def _trial(record: dict[str, Any], side: str) -> tuple[str, _Trial] | None:
+    return _trial_from_engine(record, record.get(side))
 
 
 def _decision(
@@ -162,6 +168,28 @@ def _best(engine_id: str, trials: list[_Trial]) -> dict[str, Any]:
     return best
 
 
+def _prefix_analysis(
+    records: list[dict[str, Any]], prefix_key: str
+) -> dict[str, Any] | None:
+    trials: list[tuple[str, _Trial]] = []
+    for record in records:
+        prefixes = record.get("shadow_prefixes")
+        if not isinstance(prefixes, dict):
+            continue
+        trial = _trial_from_engine(record, prefixes.get(prefix_key))
+        if trial is not None:
+            trials.append(trial)
+    if not trials:
+        return None
+    engine_ids = {item[0] for item in trials}
+    if len(engine_ids) != 1:
+        return None
+    result = _best(next(iter(engine_ids)), [item[1] for item in trials])
+    result["prefix_seconds"] = float(prefix_key)
+    result["projected_early_start"] = True
+    return result
+
+
 def analyze_live_evaluation(records: list[dict[str, Any]]) -> dict[str, Any]:
     """Compare both engines using only explicit live-test ground truth."""
     authoritative: list[tuple[str, _Trial]] = []
@@ -179,6 +207,10 @@ def analyze_live_evaluation(records: list[dict[str, Any]]) -> dict[str, Any]:
         "false_unknown_weight": FALSE_UNKNOWN_WEIGHT,
         "authoritative": None,
         "shadow": None,
+        "shadow_prefixes": {
+            prefix_key: _prefix_analysis(records, prefix_key)
+            for prefix_key in _PREFIX_KEYS
+        },
     }
     if not authoritative or len(authoritative) != len(shadow):
         return result

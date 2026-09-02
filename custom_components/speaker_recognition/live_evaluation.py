@@ -21,7 +21,8 @@ from .recognition import (
 _STORAGE_VERSION = 1
 _STORAGE_KEY = f"{DOMAIN}.live_model_evaluation"
 _SAVE_DELAY = 1
-_CURRENT_TIMEOUT_SECONDS = 30.0
+_CURRENT_TIMEOUT_SECONDS = 60.0
+PREFIX_DURATIONS_SECONDS = (1.0, 2.0, 2.5)
 
 
 def _domain_data(hass: HomeAssistant) -> dict[str, Any]:
@@ -30,6 +31,28 @@ def _domain_data(hass: HomeAssistant) -> dict[str, Any]:
 
 def _audio_key(audio_data: bytes) -> str:
     return hashlib.sha256(audio_data).hexdigest()
+
+
+def _prefix_pcm(audio_data: bytes, sample_rate: int, seconds: float) -> bytes | None:
+    """Return exactly the requested leading mono PCM16 duration when available."""
+    required = int(round(sample_rate * seconds)) * 2
+    if sample_rate <= 0 or required <= 0 or len(audio_data) < required:
+        return None
+    return audio_data[:required]
+
+
+def _shadow_payload(
+    result: ShadowRecognitionResult, *, call_seconds: float
+) -> dict[str, Any]:
+    return {
+        "engine_id": result.engine_id,
+        "candidate_user_id": result.candidate_user_id,
+        "similarity": result.similarity,
+        "margin": result.margin,
+        "all_scores": dict(result.all_scores),
+        "backend_processing_seconds": result.processing_seconds,
+        "call_seconds": max(0.0, call_seconds),
+    }
 
 
 class LiveModelEvaluation:
@@ -61,7 +84,10 @@ class LiveModelEvaluation:
         if not isinstance(current, dict):
             return
         started = current.get("_pair_started_at")
-        if isinstance(started, (int, float)) and perf_counter() - started > _CURRENT_TIMEOUT_SECONDS:
+        if (
+            isinstance(started, (int, float))
+            and perf_counter() - started > _CURRENT_TIMEOUT_SECONDS
+        ):
             self._current = None
 
     def start(self) -> None:
@@ -141,34 +167,55 @@ class LiveModelEvaluation:
         pcm_audio: bytes,
         sample_rate: int,
     ) -> bool:
-        """Score ECAPA after the Assist turn, avoiding benchmark CPU interference."""
+        """Score full and early ECAPA views after Assist without CPU interference."""
         key = _audio_key(pcm_audio)
         current = self._current_for_key(key)
         if current is None or current.get("_shadow_started"):
             return False
         current["_shadow_started"] = True
 
-        async def _run() -> None:
+        async def _score(audio: bytes) -> tuple[ShadowRecognitionResult | None, float]:
             started = perf_counter()
+            result = await recognition.async_shadow_recognize(
+                audio, sample_rate=sample_rate
+            )
+            return result, max(0.0, perf_counter() - started)
+
+        async def _run() -> None:
             try:
-                result = await recognition.async_shadow_recognize(
-                    pcm_audio, sample_rate=sample_rate
+                full, full_call_seconds = await _score(pcm_audio)
+                if full is None:
+                    self._record_shadow_failure(
+                        key, "Experimental engine returned no full-utterance score"
+                    )
+                    return
+
+                prefixes: dict[str, dict[str, Any]] = {}
+                prefix_errors: dict[str, str] = {}
+                for duration in PREFIX_DURATIONS_SECONDS:
+                    prefix = _prefix_pcm(pcm_audio, sample_rate, duration)
+                    if prefix is None:
+                        continue
+                    result, call_seconds = await _score(prefix)
+                    prefix_key = f"{duration:.1f}"
+                    if result is None:
+                        prefix_errors[prefix_key] = "Experimental engine returned no score"
+                        continue
+                    prefixes[prefix_key] = _shadow_payload(
+                        result, call_seconds=call_seconds
+                    )
+
+                self._record_shadow_bundle(
+                    key,
+                    full=_shadow_payload(full, call_seconds=full_call_seconds),
+                    prefixes=prefixes,
+                    prefix_errors=prefix_errors,
                 )
             except Exception as error:  # Experimental work must never affect Assist.
                 self._record_shadow_failure(key, str(error))
-                return
-            completed = perf_counter()
-            if result is None:
-                self._record_shadow_failure(key, "Experimental engine returned no score")
-                return
-            self._record_shadow_result(
-                key,
-                result,
-                call_seconds=completed - started,
-            )
 
         self.hass.async_create_task(
-            _run(), "Speaker Recognition live model evaluation shadow score"
+            _run(), "Speaker Recognition live model evaluation shadow scores"
         )
         return True
 
@@ -177,27 +224,25 @@ class LiveModelEvaluation:
         if current is None:
             return
         current["shadow_error"] = message
+        current["_shadow_complete"] = True
         self._maybe_finalize(key)
 
-    def _record_shadow_result(
+    def _record_shadow_bundle(
         self,
         key: str,
-        result: ShadowRecognitionResult,
         *,
-        call_seconds: float,
+        full: dict[str, Any],
+        prefixes: dict[str, dict[str, Any]],
+        prefix_errors: dict[str, str],
     ) -> None:
         current = self._current_for_key(key)
         if current is None:
             return
-        current["shadow"] = {
-            "engine_id": result.engine_id,
-            "candidate_user_id": result.candidate_user_id,
-            "similarity": result.similarity,
-            "margin": result.margin,
-            "all_scores": dict(result.all_scores),
-            "backend_processing_seconds": result.processing_seconds,
-            "call_seconds": max(0.0, call_seconds),
-        }
+        current["shadow"] = full
+        current["shadow_prefixes"] = prefixes
+        if prefix_errors:
+            current["shadow_prefix_errors"] = prefix_errors
+        current["_shadow_complete"] = True
         self._maybe_finalize(key)
 
     def attach_assist_timing(self, pcm_audio: bytes, event_data: dict[str, Any]) -> bool:
@@ -225,22 +270,22 @@ class LiveModelEvaluation:
 
     @staticmethod
     def _apply_effective_latency(current: dict[str, Any], engine: dict[str, Any]) -> None:
-        """Estimate model-specific critical-path latency from the real parallel STT turn."""
+        """Estimate post-EOF model latency from the real parallel STT turn."""
         call_seconds = engine.get("call_seconds")
         recognition_seconds = current.get("recognition_seconds")
         preparation_seconds = current.get("preparation_seconds")
         pipeline_added = current.get("added_latency_seconds")
         if not all(
             isinstance(value, (int, float))
-            for value in (call_seconds, recognition_seconds, preparation_seconds, pipeline_added)
+            for value in (
+                call_seconds,
+                recognition_seconds,
+                preparation_seconds,
+                pipeline_added,
+            )
         ):
             return
 
-        # The model call starts after PCM preparation at EOF. When the existing
-        # analysis finished after STT, its measured added latency lets us recover
-        # the exact STT time that remained at that point. If STT won the race, we
-        # only know a lower bound, so any non-zero counterfactual is marked as an
-        # upper bound instead of pretending to false precision.
         post_prepare_analysis = max(0.0, recognition_seconds - preparation_seconds)
         if pipeline_added > 0:
             remaining_stt = max(0.0, post_prepare_analysis - pipeline_added)
@@ -255,11 +300,31 @@ class LiveModelEvaluation:
         engine["effective_added_latency_seconds"] = upper_bound
         engine["effective_added_latency_upper_bound"] = upper_bound > 0
 
+    @staticmethod
+    def _apply_prefix_latency(
+        current: dict[str, Any], engine: dict[str, Any], prefix_seconds: float
+    ) -> None:
+        """Project latency if inference had started when this prefix became available."""
+        call_seconds = engine.get("call_seconds")
+        stt_seconds = current.get("stt_seconds")
+        if not isinstance(call_seconds, (int, float)) or not isinstance(
+            stt_seconds, (int, float)
+        ):
+            return
+        engine["prefix_seconds"] = prefix_seconds
+        engine["effective_added_latency_seconds"] = max(
+            0.0, prefix_seconds + call_seconds - stt_seconds
+        )
+        engine["effective_added_latency_upper_bound"] = False
+        engine["projected_early_start"] = True
+
     def _maybe_finalize(self, key: str) -> None:
         current = self._current_for_key(key)
         if current is None or not current.get("_timing_attached"):
             return
         if "authoritative" not in current and "authoritative_error" not in current:
+            return
+        if not current.get("_shadow_complete"):
             return
         if "shadow" not in current and "shadow_error" not in current:
             return
@@ -270,11 +335,22 @@ class LiveModelEvaluation:
         shadow = current.get("shadow")
         if isinstance(shadow, dict):
             self._apply_effective_latency(current, shadow)
+        prefixes = current.get("shadow_prefixes")
+        if isinstance(prefixes, dict):
+            for prefix_key, engine in prefixes.items():
+                if not isinstance(engine, dict):
+                    continue
+                try:
+                    prefix_seconds = float(prefix_key)
+                except (TypeError, ValueError):
+                    continue
+                self._apply_prefix_latency(current, engine, prefix_seconds)
 
         current.pop("_audio_key", None)
         current.pop("_pair_started_at", None)
         current.pop("_timing_attached", None)
         current.pop("_shadow_started", None)
+        current.pop("_shadow_complete", None)
         self.pending = current
         self._current = None
 

@@ -134,6 +134,55 @@ proto._renderComparisonTable = function(data) {
   </table></div>`;
 };
 
+proto._renderPrefixComparisonTable = function(data) {
+  const prefixMap = data.shadow_prefixes || {};
+  const columns = [
+    ["1.0", "1.0 s", prefixMap["1.0"]],
+    ["2.0", "2.0 s", prefixMap["2.0"]],
+    ["2.5", "2.5 s", prefixMap["2.5"]],
+    ["full", "Full", data.shadow],
+  ];
+  if (!columns.some(column => column[2])) return "";
+
+  const rows = [
+    ["Eligible labelled trials", "trials"],
+    ["Correct decisions", "correct"],
+    ["Correct enrolled-speaker IDs", "correct_identity"],
+    ["Correct not-enrolled rejections", "correct_rejection"],
+    ["Wrong-speaker / false accepts", "false_identifications"],
+    ["False unknowns", "false_unknowns"],
+    ["Weighted error score", "score"],
+    ["Best similarity threshold", "similarity_threshold"],
+    ["Median backend time", "backend"],
+    ["Median end-to-end model call", "call"],
+    ["Median effective Assist latency", "effective"],
+  ];
+
+  return `<div class="prefixExperiment">
+    <h3>ECAPA audio-length experiment</h3>
+    <p class="muted">The same labelled utterance is also scored using only its first 1.0 s, 2.0 s and 2.5 s. This helps identify the earliest reliable point at which ECAPA could start while you are still speaking.</p>
+    <div class="comparisonTableWrap"><table class="comparisonTable prefixTable">
+      <thead><tr><th>Metric</th>${columns.map(column => `<th>ECAPA-TDNN<span>${this._escape(column[1])}</span></th>`).join("")}</tr></thead>
+      <tbody>${rows.map(([label, key]) => `<tr><th>${this._escape(label)}</th>${columns.map(column => `<td>${this._escape(this._metricValue(column[2], key))}</td>`).join("")}</tr>`).join("")}</tbody>
+    </table></div>
+    <p class="muted latencyNote">Prefix columns include only utterances long enough to contain that amount of audio. Their effective Assist latency is projected as if ECAPA had started as soon as that prefix was available; the full column keeps the normal post-utterance counterfactual.</p>
+  </div>`;
+};
+
+proto._renderPendingPrefixDiagnostics = function(pending) {
+  const prefixes = pending && pending.shadow_prefixes;
+  if (!prefixes || typeof prefixes !== "object" || !Object.keys(prefixes).length) return "";
+  const rows = ["1.0", "2.0", "2.5"].filter(key => prefixes[key]).map(key => {
+    const engine = prefixes[key];
+    return `<tr><th>${this._escape(`${key} s`)}</th><td>${this._escape(this._evaluationUserName(engine.candidate_user_id))}</td><td>${this._escape(Number(engine.similarity).toFixed(3))}</td><td>${this._escape(this._evalMs(engine.backend_processing_seconds))}</td><td>${this._escape(this._pendingLatency(engine))}</td></tr>`;
+  }).join("");
+  if (!rows) return "";
+  return `<div class="prefixPending"><h4>ECAPA early-audio diagnostics</h4><div class="comparisonTableWrap"><table class="comparisonTable pendingTable">
+    <thead><tr><th>Audio used</th><th>Candidate</th><th>Similarity</th><th>Backend time</th><th>Projected Assist latency</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table></div></div>`;
+};
+
 proto._renderPendingDiagnostics = function(data) {
   const pending = data.pending;
   if (!pending) return "";
@@ -186,6 +235,7 @@ proto._renderPendingDiagnostics = function(data) {
       <thead><tr><th>Diagnostic</th><th>${this._escape(this._formatEngineName(auth.engine_id))}</th><th>${this._escape(this._formatEngineName(shadow.engine_id))}</th></tr></thead>
       <tbody>${diagnostics.map(row => `<tr><th>${this._escape(row[0])}</th><td>${this._escape(row[1])}</td><td>${this._escape(row[2])}</td></tr>`).join("")}</tbody>
     </table></div>
+    ${this._renderPendingPrefixDiagnostics(pending)}
     <p class="muted latencyNote">Effective Assist latency accounts for STT and recognition running in parallel. A ≤ value is a conservative upper bound on turns where STT was still running after the current analysis finished.</p>
     ${groundTruth}
   </div>`;
@@ -196,7 +246,7 @@ proto._evaluationState = function(data) {
   if (!status.enabled) return { label: "Disabled", className: "comparison-disabled", text: "ECAPA shadow evaluation is not enabled." };
   if (!status.ready) return { label: "Preparing profiles", className: "comparison-preparing", text: "Wait for the shadow profile to finish preparing before starting a test." };
   if (data.pending) return { label: "Ground truth needed", className: "comparison-preparing", text: "Review the paired diagnostics below and tell the evaluator who actually spoke." };
-  if (data.scoring) return { label: "Scoring utterance", className: "comparison-preparing", text: "The same Assist audio is being scored by both engines." };
+  if (data.scoring) return { label: "Scoring utterance", className: "comparison-preparing", text: "The same Assist audio is being scored by both engines and the ECAPA prefix experiment." };
   if (data.running) return { label: "Waiting for utterance", className: "comparison-ready", text: "Use Assist normally. The next Speaker Recognition utterance will become a test trial." };
   return { label: "Ready", className: "comparison-ready", text: "Start testing when you are ready to collect explicitly labelled A/B trials." };
 };
@@ -224,6 +274,7 @@ proto._renderComparisonCard = function() {
     ${this._renderPendingDiagnostics(data)}
     <div class="savedTrialsHeading"><div><h3>Saved results</h3><p class="muted">${trials} labelled A/B trial${trials === 1 ? "" : "s"}${trials ? ` · ${known} enrolled speaker · ${unknown} not enrolled` : ""}. Results keep accumulating until you clear them.</p></div><button id="evaluationClearBtn" class="secondary" ${trials === 0 || this._evaluationBusy ? "disabled" : ""}>Clear results</button></div>
     ${this._renderComparisonTable(data)}
+    ${this._renderPrefixComparisonTable(data)}
     <p class="muted comparisonFootnote">False identifications are weighted ${Number(data.false_identification_weight || 5)}× versus ${Number(data.false_unknown_weight || 1)}× for false unknowns. Thresholds are optimized independently because raw similarity values are not comparable between models. ${data.authoritative && data.authoritative.effective_latency_contains_upper_bounds || data.shadow && data.shadow.effective_latency_contains_upper_bounds ? "*The latency median includes one or more conservative upper-bound estimates." : ""}</p>
   </div>`;
 };
@@ -256,6 +307,12 @@ proto._installComparisonStyles = function() {
     .comparisonEmpty { padding:16px; border:1px dashed var(--divider-color); border-radius:10px; }
     .comparisonEmpty p { margin-bottom:0; }
     .savedTrialsHeading { margin-top:22px; align-items:center; }
+    .prefixExperiment { margin-top:28px; padding-top:4px; }
+    .prefixExperiment h3 { margin-bottom:4px; }
+    .prefixExperiment > p { margin-top:0; }
+    .prefixTable { min-width:760px; }
+    .prefixPending { margin-top:18px; padding-top:2px; }
+    .prefixPending h4 { margin-bottom:6px; }
     .comparisonFootnote, .latencyNote { margin-top:14px; font-size:.9rem; }
     @media (max-width: 700px) {
       .comparisonHeading, .savedTrialsHeading, .pendingHeading { flex-direction:column; }
