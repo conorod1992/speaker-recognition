@@ -310,26 +310,39 @@ def sync_shadow_profiles(request: ProfileSyncRequest) -> ProfileSyncResult:
 @app.post(
     "/recognize",
     response_model=RecognitionResult,
-    responses={400: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+    responses={
+        400: {"model": ErrorResponse},
+        503: {"model": ErrorResponse},
+        500: {"model": ErrorResponse},
+    },
     tags=["Recognition"],
 )
 def recognize(request: RecognitionRequest) -> RecognitionResult:
-    """Recognize speaker using only the authoritative engine."""
+    """Recognize speaker without queueing behind authoritative model work."""
+    if not _RECOGNIZER_LOCK.acquire(blocking=False):
+        raise HTTPException(
+            status_code=503,
+            detail="Speaker recognition is temporarily busy",
+        )
+
     started = perf_counter()
     try:
-        with _RECOGNIZER_LOCK:
+        try:
             result = recognizer.recognize(request)
-        result.processing_seconds = perf_counter() - started
-        return result
-    except (ValueError, RuntimeError) as error:
-        _LOGGER.error("Recognition error: %s", error)
-        raise HTTPException(status_code=400, detail=str(error)) from error
-    except Exception as error:
-        _LOGGER.exception("Error during recognition")
-        raise HTTPException(
-            status_code=500,
-            detail="Speaker recognition failed",
-        ) from error
+        except (ValueError, RuntimeError) as error:
+            _LOGGER.error("Recognition error: %s", error)
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        except Exception as error:
+            _LOGGER.exception("Error during recognition")
+            raise HTTPException(
+                status_code=500,
+                detail="Speaker recognition failed",
+            ) from error
+    finally:
+        _RECOGNIZER_LOCK.release()
+
+    result.processing_seconds = perf_counter() - started
+    return result
 
 
 @app.post(
