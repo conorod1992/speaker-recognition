@@ -30,12 +30,10 @@ from .lifecycle import (
     async_apply_enrollment_update,
     async_initialize_recognition,
 )
-from .live_evaluation import (
-    LiveEvaluationSpeakerRecognition,
-    async_setup_live_model_evaluation,
-)
+from .live_evaluation import async_setup_live_model_evaluation
 from .proxy import effective_proxy_source, sync_proxy_unique_id, validate_proxy_source
 from .recognition import RecognitionBackendUnavailable, SpeakerRecognition
+from .runtime import LiveEvaluationSpeakerRecognition
 from .shadow_evaluation import async_setup_shadow_evaluation
 from .shadow_websocket import async_register_shadow_websocket
 from .telemetry import async_setup_decision_history
