@@ -6,49 +6,13 @@ from __future__ import annotations
 import argparse
 import base64
 import json
-import math
-import random
-import struct
+from pathlib import Path
 import time
 import urllib.error
 import urllib.request
 
 SAMPLE_RATE = 16000
 USER_ID = "acceptance-alice"
-
-
-def _pcm(seed: int, *, seconds: float = 3.6) -> bytes:
-    """Generate deterministic speech-like PCM16 with voiced/silent syllable structure."""
-    rng = random.Random(seed)
-    total = int(SAMPLE_RATE * seconds)
-    samples: list[int] = []
-    for index in range(total):
-        t = index / SAMPLE_RATE
-        syllable = int(t / 0.24)
-        phase = t % 0.24
-        # Short inter-syllable gaps help Resemblyzer/WebRTC VAD see a speech-like cadence.
-        if phase > 0.205:
-            samples.append(0)
-            continue
-        f0 = 108.0 + (syllable % 5) * 6.0 + (seed % 3) * 1.5
-        envelope = min(1.0, phase / 0.025, (0.205 - phase) / 0.03)
-        value = 0.0
-        # Harmonic stack with broad formant-like emphasis rather than a single test tone.
-        for harmonic in range(1, 19):
-            frequency = f0 * harmonic
-            formant = (
-                math.exp(-((frequency - 650.0) / 330.0) ** 2)
-                + 0.7 * math.exp(-((frequency - 1250.0) / 450.0) ** 2)
-                + 0.35 * math.exp(-((frequency - 2450.0) / 700.0) ** 2)
-                + 0.08
-            )
-            value += (formant / harmonic) * math.sin(
-                2.0 * math.pi * frequency * t + 0.07 * seed * harmonic
-            )
-        value += rng.uniform(-0.025, 0.025)
-        sample = int(max(-1.0, min(1.0, value * 0.19 * envelope)) * 32767)
-        samples.append(sample)
-    return b"".join(struct.pack("<h", sample) for sample in samples)
 
 
 def _request(
@@ -70,7 +34,7 @@ def _request(
         f"{base_url.rstrip('/')}{path}", data=data, headers=headers
     )
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:
+        with urllib.request.urlopen(request, timeout=60) as response:
             status = response.status
             body = response.read().decode("utf-8")
     except urllib.error.HTTPError as error:
@@ -83,15 +47,18 @@ def _request(
     return json.loads(body) if body else {}
 
 
-def _audio_payload(seed: int) -> dict[str, object]:
+def _audio_payload(path: Path) -> dict[str, object]:
+    pcm = path.read_bytes()
+    if not pcm:
+        raise AssertionError(f"empty PCM fixture: {path}")
     return {
-        "audio_data": base64.b64encode(_pcm(seed)).decode("ascii"),
+        "audio_data": base64.b64encode(pcm).decode("ascii"),
         "sample_rate": SAMPLE_RATE,
     }
 
 
 def wait_healthy(base_url: str, token: str) -> dict:
-    deadline = time.monotonic() + 210
+    deadline = time.monotonic() + 240
     last_error: Exception | None = None
     while time.monotonic() < deadline:
         try:
@@ -104,7 +71,7 @@ def wait_healthy(base_url: str, token: str) -> dict:
     raise AssertionError(f"add-on never became healthy: {last_error}")
 
 
-def initial_phase(base_url: str, token: str) -> None:
+def initial_phase(base_url: str, token: str, audio_dir: Path) -> None:
     health = wait_healthy(base_url, token)
     assert health["trained"] is False
 
@@ -122,14 +89,15 @@ def initial_phase(base_url: str, token: str) -> None:
     )
     assert sync == {"enrolled_users": [], "removed_users": []}
 
+    training_paths = [audio_dir / f"train-{index}.pcm" for index in range(1, 4)]
     train = _request(
         base_url,
         "/train",
         token=token,
         payload={
             "voice_samples": [
-                {"user": USER_ID, "audio": _audio_payload(seed)}
-                for seed in (11, 12, 13)
+                {"user": USER_ID, "audio": _audio_payload(path)}
+                for path in training_paths
             ]
         },
     )
@@ -140,7 +108,7 @@ def initial_phase(base_url: str, token: str) -> None:
         base_url,
         "/recognize",
         token=token,
-        payload={"audio": _audio_payload(11)},
+        payload={"audio": _audio_payload(audio_dir / "recognize.pcm")},
     )
     assert recognized["candidate_user_id"] == USER_ID
     assert recognized["accepted"] is True
@@ -151,7 +119,7 @@ def initial_phase(base_url: str, token: str) -> None:
     assert USER_ID in health["enrolled_users"]
 
 
-def restart_phase(base_url: str, token: str) -> None:
+def restart_phase(base_url: str, token: str, audio_dir: Path) -> None:
     health = wait_healthy(base_url, token)
     assert health["trained"] is True
     assert USER_ID in health["enrolled_users"]
@@ -160,7 +128,7 @@ def restart_phase(base_url: str, token: str) -> None:
         base_url,
         "/recognize",
         token=token,
-        payload={"audio": _audio_payload(11)},
+        payload={"audio": _audio_payload(audio_dir / "recognize.pcm")},
     )
     assert recognized["accepted"] is True
     assert recognized["user_id"] == USER_ID
@@ -180,11 +148,12 @@ def main() -> None:
     parser.add_argument("phase", choices=("initial", "restart"))
     parser.add_argument("--base-url", default="http://127.0.0.1:18099")
     parser.add_argument("--token", default="addon-acceptance-token")
+    parser.add_argument("--audio-dir", type=Path, required=True)
     args = parser.parse_args()
     if args.phase == "initial":
-        initial_phase(args.base_url, args.token)
+        initial_phase(args.base_url, args.token, args.audio_dir)
     else:
-        restart_phase(args.base_url, args.token)
+        restart_phase(args.base_url, args.token, args.audio_dir)
 
 
 if __name__ == "__main__":
