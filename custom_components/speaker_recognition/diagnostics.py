@@ -7,10 +7,13 @@ import time
 from typing import Any
 from uuid import uuid4
 
+from homeassistant.components.diagnostics import async_redact_data
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .const import DOMAIN
+from .const import CONF_BACKEND_TOKEN, DOMAIN
 from .correlation import CorrelatedRecognition
+from .telemetry import get_decision_history
 from .whisper import cached_detection
 
 _LIVE_TEST_TIMEOUT = 90.0
@@ -29,6 +32,27 @@ class LiveTestSession:
 def _domain_data(hass: HomeAssistant) -> dict[str, Any]:
     """Return integration runtime data."""
     return hass.data.setdefault(DOMAIN, {})
+
+
+async def async_get_config_entry_diagnostics(
+    hass: HomeAssistant, entry: ConfigEntry
+) -> dict[str, Any]:
+    """Return privacy-safe diagnostics for a Speaker Recognition config entry."""
+    history = get_decision_history(hass)
+    recent = history.recent(25) if history is not None else []
+    return {
+        "entry": {
+            "entry_id": entry.entry_id,
+            "title": entry.title,
+            "state": entry.state.value,
+            "data": async_redact_data(dict(entry.data), {CONF_BACKEND_TOKEN}),
+            "options": async_redact_data(dict(entry.options), {CONF_BACKEND_TOKEN}),
+        },
+        "runtime": {
+            "loaded": entry.runtime_data is not None,
+            "decision_history_count": len(recent),
+        },
+    }
 
 
 def start_live_test(hass: HomeAssistant, satellite_id: str) -> str:
