@@ -75,6 +75,53 @@ jobs:
           python -m pip install --upgrade --force-reinstall \
             "git+https://github.com/${{ env.HA_CORE_REPO }}.git@${{ env.HA_CORE_BRANCH }}"
 
+      - name: Install Home Assistant integration dependency requirements
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import subprocess
+          import sys
+
+          import homeassistant
+
+          components = Path(next(iter(homeassistant.__path__))) / "components"
+          custom_manifest = json.loads(
+              Path("custom_components/speaker_recognition/manifest.json").read_text()
+          )
+
+          requirements = set(custom_manifest.get("requirements", []))
+          pending = [
+              *custom_manifest.get("dependencies", []),
+              *custom_manifest.get("after_dependencies", []),
+          ]
+          visited = set()
+
+          while pending:
+              domain = pending.pop()
+              if domain in visited:
+                  continue
+              visited.add(domain)
+
+              manifest_path = components / domain / "manifest.json"
+              if not manifest_path.exists():
+                  raise RuntimeError(
+                      f"Home Assistant dependency manifest not found: {domain}"
+                  )
+
+              manifest = json.loads(manifest_path.read_text())
+              requirements.update(manifest.get("requirements", []))
+              pending.extend(manifest.get("dependencies", []))
+              pending.extend(manifest.get("after_dependencies", []))
+
+          print("Resolved HA dependency integrations:", ", ".join(sorted(visited)))
+          if requirements:
+              print("Installing HA integration requirements:", *sorted(requirements))
+              subprocess.check_call(
+                  [sys.executable, "-m", "pip", "install", *sorted(requirements)]
+              )
+          PY
+
       - name: Show resolved versions
         run: |
           python - <<'PY'
