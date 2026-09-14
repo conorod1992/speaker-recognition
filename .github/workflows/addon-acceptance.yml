@@ -25,6 +25,29 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Install speech fixture tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends espeak-ng ffmpeg
+
+      - name: Generate deterministic spoken PCM fixtures
+        run: |
+          AUDIO_DIR="${RUNNER_TEMP}/speaker-recognition/audio"
+          mkdir -p "${AUDIO_DIR}"
+          for spec in "1 142 43" "2 150 47" "3 158 51" "recognize 148 46"; do
+            set -- ${spec}
+            name="$1"
+            speed="$2"
+            pitch="$3"
+            espeak-ng --stdout --speed "${speed}" --pitch "${pitch}" \
+              "The morning light is warm across the kitchen table. Please turn on the hallway lamp before it gets dark." \
+              | ffmpeg -hide_banner -loglevel error -i pipe:0 -ac 1 -ar 16000 -f s16le "${AUDIO_DIR}/${name}.pcm"
+          done
+          mv "${AUDIO_DIR}/1.pcm" "${AUDIO_DIR}/train-1.pcm"
+          mv "${AUDIO_DIR}/2.pcm" "${AUDIO_DIR}/train-2.pcm"
+          mv "${AUDIO_DIR}/3.pcm" "${AUDIO_DIR}/train-3.pcm"
+          test -s "${AUDIO_DIR}/recognize.pcm"
+
       - name: Read add-on version
         id: addon-version
         run: echo "version=$(python scripts/set_release_version.py --check)" >> "$GITHUB_OUTPUT"
@@ -56,8 +79,8 @@ jobs:
             "allow_insecure_remote": false
           }
           JSON
-          cp "${RUNNER_TEMP}/speaker-recognition/data/options.json" \
-            "${RUNNER_TEMP}/speaker-recognition/supervisor/addons/self/options/config"
+          printf '%s\n' '{"result":"ok","data":{"host":"0.0.0.0","port":8099,"log_level":"info","access_log":false,"embeddings_dir":"/share/speaker_recognition/embeddings","model_cache_dir":"/share/speaker_recognition/models","shadow_engine":"none","api_token":"addon-acceptance-token","allow_insecure_remote":false}}' \
+            > "${RUNNER_TEMP}/speaker-recognition/supervisor/addons/self/options/config"
 
       - name: Start mock Supervisor API
         run: |
@@ -81,7 +104,9 @@ jobs:
             speaker-recognition-addon:acceptance
 
       - name: Exercise real API, auth, training and recognition
-        run: python scripts/addon_acceptance.py initial
+        run: |
+          python scripts/addon_acceptance.py initial \
+            --audio-dir "${RUNNER_TEMP}/speaker-recognition/audio"
 
       - name: Verify trusted loopback access inside add-on
         run: |
@@ -105,7 +130,9 @@ jobs:
             speaker-recognition-addon:acceptance
 
       - name: Verify persisted profile reload and recognition after restart
-        run: python scripts/addon_acceptance.py restart
+        run: |
+          python scripts/addon_acceptance.py restart \
+            --audio-dir "${RUNNER_TEMP}/speaker-recognition/audio"
 
       - name: Show add-on logs
         if: always()
