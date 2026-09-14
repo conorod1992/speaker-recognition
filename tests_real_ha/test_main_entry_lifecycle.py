@@ -88,6 +88,8 @@ def _main_entry(backend_url: str, *, token: str = "") -> MockConfigEntry:
         },
         options={CONF_VOICE_SAMPLES: []},
         unique_id="speaker-recognition-main",
+        version=2,
+        minor_version=0,
     )
 
 
