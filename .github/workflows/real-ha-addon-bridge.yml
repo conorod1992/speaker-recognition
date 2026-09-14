@@ -1,0 +1,212 @@
+name: Real HA + Add-on Acceptance
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - ".github/workflows/real-ha-addon-bridge.yml"
+      - "custom_components/speaker_recognition/**"
+      - "speaker_recognition/**"
+      - "speaker_recognition_addon/**"
+      - "tests_real_ha/**"
+      - "scripts/set_release_version.py"
+  schedule:
+    - cron: "50 3 * * *"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  real-ha-real-addon:
+    name: Real HA against real add-on
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install spoken-audio fixture tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y espeak-ng ffmpeg
+
+      - name: Generate real spoken WAV fixtures
+        run: |
+          mkdir -p "${RUNNER_TEMP}/speaker-recognition-ha/audio"
+          phrases=(
+            "The morning light is warm across the kitchen table"
+            "Please turn on the hallway lamp before it gets dark"
+            "My favorite music sounds best on a quiet afternoon"
+          )
+          for index in 1 2 3; do
+            espeak-ng -v en -s $((145 + index * 3)) -p $((48 + index)) \
+              -w "${RUNNER_TEMP}/speaker-recognition-ha/source-${index}.wav" \
+              "${phrases[$((index - 1))]}"
+            ffmpeg -hide_banner -loglevel error -y \
+              -i "${RUNNER_TEMP}/speaker-recognition-ha/source-${index}.wav" \
+              -ac 1 -ar 16000 -sample_fmt s16 \
+              "${RUNNER_TEMP}/speaker-recognition-ha/audio/train-${index}.wav"
+          done
+          espeak-ng -v en -s 151 -p 50 \
+            -w "${RUNNER_TEMP}/speaker-recognition-ha/recognize-source.wav" \
+            "Home should feel comfortable calm and welcoming"
+          ffmpeg -hide_banner -loglevel error -y \
+            -i "${RUNNER_TEMP}/speaker-recognition-ha/recognize-source.wav" \
+            -ac 1 -ar 16000 -sample_fmt s16 \
+            "${RUNNER_TEMP}/speaker-recognition-ha/audio/recognize.wav"
+
+      - name: Read add-on version
+        id: addon-version
+        run: echo "version=$(python scripts/set_release_version.py --check)" >> "$GITHUB_OUTPUT"
+
+      - name: Build real add-on image
+        run: |
+          docker build \
+            --build-arg BUILD_ARCH=amd64 \
+            --build-arg BUILD_VERSION=${{ steps.addon-version.outputs.version }} \
+            --tag speaker-recognition-addon:ha-acceptance \
+            speaker_recognition_addon
+
+      - name: Prepare Supervisor-style add-on configuration
+        run: |
+          mkdir -p \
+            "${RUNNER_TEMP}/speaker-recognition-ha/data" \
+            "${RUNNER_TEMP}/speaker-recognition-ha/share" \
+            "${RUNNER_TEMP}/speaker-recognition-ha/supervisor/addons/self/options"
+          cat > "${RUNNER_TEMP}/speaker-recognition-ha/data/options.json" <<'JSON'
+          {
+            "host": "0.0.0.0",
+            "port": 8099,
+            "log_level": "info",
+            "access_log": false,
+            "embeddings_dir": "/share/speaker_recognition/embeddings",
+            "model_cache_dir": "/share/speaker_recognition/models",
+            "shadow_engine": "none",
+            "api_token": "ha-addon-acceptance-token",
+            "allow_insecure_remote": false
+          }
+          JSON
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ["RUNNER_TEMP"]) / "speaker-recognition-ha"
+          options = json.loads((root / "data/options.json").read_text())
+          target = root / "supervisor/addons/self/options/config"
+          target.write_text(json.dumps({"result": "ok", "data": options}))
+          PY
+
+      - name: Start mock Supervisor and real add-on
+        run: |
+          docker network create --subnet 198.19.0.0/24 speaker-recognition-ha-acceptance
+          docker run --detach \
+            --name supervisor \
+            --network speaker-recognition-ha-acceptance \
+            --ip 198.19.0.2 \
+            --volume "${RUNNER_TEMP}/speaker-recognition-ha/supervisor:/mock:ro" \
+            python:3.13-alpine \
+            python -m http.server 80 --directory /mock
+          docker run --detach \
+            --name speaker-recognition-ha-acceptance \
+            --network speaker-recognition-ha-acceptance \
+            --ip 198.19.0.3 \
+            --env SUPERVISOR_TOKEN=ha-acceptance-supervisor-token \
+            --publish 18100:8099 \
+            --volume "${RUNNER_TEMP}/speaker-recognition-ha/data:/data" \
+            --volume "${RUNNER_TEMP}/speaker-recognition-ha/share:/share" \
+            speaker-recognition-addon:ha-acceptance
+
+      - name: Wait for real add-on health
+        run: |
+          for attempt in {1..120}; do
+            if curl --fail --silent \
+              -H 'Authorization: Bearer ha-addon-acceptance-token' \
+              http://127.0.0.1:18100/health | grep --quiet '"status":"healthy"'; then
+              exit 0
+            fi
+            if ! docker inspect --format '{{.State.Running}}' speaker-recognition-ha-acceptance | grep --quiet true; then
+              docker logs speaker-recognition-ha-acceptance
+              exit 1
+            fi
+            sleep 2
+          done
+          docker logs speaker-recognition-ha-acceptance
+          exit 1
+
+      - name: Resolve Home Assistant Python version
+        id: ha-python
+        run: |
+          version="$(curl -fsSL https://raw.githubusercontent.com/home-assistant/core/dev/.python-version | tr -d '\n')"
+          test -n "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Home Assistant Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ steps.ha-python.outputs.version }}
+          allow-prereleases: true
+          cache: pip
+          cache-dependency-path: tests_real_ha/requirements.txt
+
+      - name: Install stable Home Assistant test harness
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r tests_real_ha/requirements.txt
+          python -m pip install --upgrade homeassistant
+
+      - name: Install Home Assistant integration dependency requirements
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import subprocess
+          import sys
+          import homeassistant
+
+          components = Path(next(iter(homeassistant.__path__))) / "components"
+          custom_manifest = json.loads(Path("custom_components/speaker_recognition/manifest.json").read_text())
+          requirements = set(custom_manifest.get("requirements", []))
+          pending = [
+              *custom_manifest.get("dependencies", []),
+              *custom_manifest.get("after_dependencies", []),
+              "assist_satellite",
+          ]
+          visited = set()
+          while pending:
+              domain = pending.pop()
+              if domain in visited:
+                  continue
+              visited.add(domain)
+              manifest = json.loads((components / domain / "manifest.json").read_text())
+              requirements.update(manifest.get("requirements", []))
+              pending.extend(manifest.get("dependencies", []))
+              pending.extend(manifest.get("after_dependencies", []))
+          if requirements:
+              subprocess.check_call([sys.executable, "-m", "pip", "install", *sorted(requirements)])
+          PY
+
+      - name: Run Real HA to real add-on bridge tests
+        env:
+          SPEAKER_RECOGNITION_REAL_ADDON_URL: http://127.0.0.1:18100
+          SPEAKER_RECOGNITION_REAL_ADDON_TOKEN: ha-addon-acceptance-token
+          SPEAKER_RECOGNITION_REAL_ADDON_AUDIO_DIR: ${{ runner.temp }}/speaker-recognition-ha/audio
+        run: |
+          python -m pytest tests_real_ha/test_real_addon_bridge.py \
+            -v --tb=short --asyncio-mode=auto
+
+      - name: Show add-on logs
+        if: always()
+        run: docker logs speaker-recognition-ha-acceptance || true
+
+      - name: Clean up containers
+        if: always()
+        run: |
+          docker rm --force speaker-recognition-ha-acceptance || true
+          docker rm --force supervisor || true
+          docker network rm speaker-recognition-ha-acceptance || true
