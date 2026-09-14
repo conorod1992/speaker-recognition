@@ -226,6 +226,18 @@ class SpeakerRecognitionConversationEntity(
                         "Ignoring speaker recognition for deleted Home Assistant user_id=%s",
                         speaker_data.user_id,
                     )
+                elif recognized_user.system_generated:
+                    identity_eligible = False
+                    _LOGGER.warning(
+                        "Ignoring speaker recognition for system-generated Home Assistant user_id=%s",
+                        speaker_data.user_id,
+                    )
+                elif not recognized_user.is_active:
+                    identity_eligible = False
+                    _LOGGER.warning(
+                        "Ignoring speaker recognition for inactive Home Assistant user_id=%s",
+                        speaker_data.user_id,
+                    )
 
             audio_cache = self.hass.data.setdefault(DOMAIN, {}).setdefault(
                 "utterance_audio", {}
