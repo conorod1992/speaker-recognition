@@ -94,6 +94,11 @@ jobs:
           pending = [
               *custom_manifest.get("dependencies", []),
               *custom_manifest.get("after_dependencies", []),
+              # Speaker Recognition imports Assist Satellite symbols at module load
+              # time but does not require HA to set up the Assist Satellite
+              # integration itself. Include its Python requirements in the test
+              # environment without turning it into a hard runtime dependency.
+              "assist_satellite",
           ]
           visited = set()
 
