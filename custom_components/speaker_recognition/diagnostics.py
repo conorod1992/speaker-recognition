@@ -49,7 +49,7 @@ async def async_get_config_entry_diagnostics(
             "options": async_redact_data(dict(entry.options), {CONF_BACKEND_TOKEN}),
         },
         "runtime": {
-            "loaded": entry.runtime_data is not None,
+            "loaded": getattr(entry, "runtime_data", None) is not None,
             "decision_history_count": len(recent),
         },
     }
