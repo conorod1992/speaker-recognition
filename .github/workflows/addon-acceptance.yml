@@ -1,0 +1,119 @@
+name: Add-on Acceptance
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - ".github/workflows/addon-acceptance.yml"
+      - "speaker_recognition/**"
+      - "speaker_recognition_addon/**"
+      - "scripts/addon_acceptance.py"
+      - "scripts/set_release_version.py"
+  schedule:
+    - cron: "20 3 * * *"
+
+jobs:
+  real-addon:
+    name: Real add-on container acceptance
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Read add-on version
+        id: addon-version
+        run: echo "version=$(python scripts/set_release_version.py --check)" >> "$GITHUB_OUTPUT"
+
+      - name: Build real add-on image
+        run: |
+          docker build \
+            --build-arg BUILD_ARCH=amd64 \
+            --build-arg BUILD_VERSION=${{ steps.addon-version.outputs.version }} \
+            --tag speaker-recognition-addon:acceptance \
+            speaker_recognition_addon
+
+      - name: Prepare Supervisor-style configuration and persistent volumes
+        run: |
+          mkdir -p \
+            "${RUNNER_TEMP}/speaker-recognition/data" \
+            "${RUNNER_TEMP}/speaker-recognition/share" \
+            "${RUNNER_TEMP}/speaker-recognition/supervisor/addons/self/options"
+          cat > "${RUNNER_TEMP}/speaker-recognition/data/options.json" <<'JSON'
+          {
+            "host": "0.0.0.0",
+            "port": 8099,
+            "log_level": "info",
+            "access_log": false,
+            "embeddings_dir": "/share/speaker_recognition/embeddings",
+            "model_cache_dir": "/share/speaker_recognition/models",
+            "shadow_engine": "none",
+            "api_token": "addon-acceptance-token",
+            "allow_insecure_remote": false
+          }
+          JSON
+          cp "${RUNNER_TEMP}/speaker-recognition/data/options.json" \
+            "${RUNNER_TEMP}/speaker-recognition/supervisor/addons/self/options/config"
+
+      - name: Start mock Supervisor API
+        run: |
+          docker network create speaker-recognition-acceptance
+          docker run --detach \
+            --name supervisor \
+            --network speaker-recognition-acceptance \
+            --volume "${RUNNER_TEMP}/speaker-recognition/supervisor:/mock:ro" \
+            python:3.13-alpine \
+            python -m http.server 80 --directory /mock
+
+      - name: Start real add-on container
+        run: |
+          docker run --detach \
+            --name speaker-recognition-acceptance \
+            --network speaker-recognition-acceptance \
+            --env SUPERVISOR_TOKEN=acceptance-supervisor-token \
+            --publish 18099:8099 \
+            --volume "${RUNNER_TEMP}/speaker-recognition/data:/data" \
+            --volume "${RUNNER_TEMP}/speaker-recognition/share:/share" \
+            speaker-recognition-addon:acceptance
+
+      - name: Exercise real API, auth, training and recognition
+        run: python scripts/addon_acceptance.py initial
+
+      - name: Verify trusted loopback access inside add-on
+        run: |
+          docker exec speaker-recognition-acceptance \
+            python3 -c 'import json, urllib.request; data=json.load(urllib.request.urlopen("http://127.0.0.1:8099/health", timeout=10)); assert data["status"] == "healthy"'
+
+      - name: Verify authoritative profile was persisted
+        run: |
+          test "$(find "${RUNNER_TEMP}/speaker-recognition/share/speaker_recognition/embeddings" -name '*_profile.npz' -type f | wc -l)" -ge 1
+
+      - name: Replace container while preserving /share
+        run: |
+          docker rm --force speaker-recognition-acceptance
+          docker run --detach \
+            --name speaker-recognition-acceptance \
+            --network speaker-recognition-acceptance \
+            --env SUPERVISOR_TOKEN=acceptance-supervisor-token \
+            --publish 18099:8099 \
+            --volume "${RUNNER_TEMP}/speaker-recognition/data:/data" \
+            --volume "${RUNNER_TEMP}/speaker-recognition/share:/share" \
+            speaker-recognition-addon:acceptance
+
+      - name: Verify persisted profile reload and recognition after restart
+        run: python scripts/addon_acceptance.py restart
+
+      - name: Show add-on logs
+        if: always()
+        run: docker logs speaker-recognition-acceptance || true
+
+      - name: Clean up containers
+        if: always()
+        run: |
+          docker rm --force speaker-recognition-acceptance || true
+          docker rm --force supervisor || true
+          docker network rm speaker-recognition-acceptance || true
