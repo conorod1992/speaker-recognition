@@ -20,6 +20,7 @@ from custom_components.speaker_recognition.const import (
     ENTRY_TYPE_MAIN,
 )
 from custom_components.speaker_recognition.correlation import (
+    CorrelatedRecognition,
     clear_correlated_recognition,
     take_correlated_recognition,
 )
@@ -154,17 +155,20 @@ async def test_inflight_turn_keeps_starting_runtime_and_next_turn_uses_replaceme
     entity = _entity(hass, main)
     blocked_source = BlockingSourceSTT()
 
+    async def run_first_turn() -> tuple[stt.SpeechResult, CorrelatedRecognition | None]:
+        result = await entity.async_process_audio_stream(_metadata(), _stream())
+        return result, take_correlated_recognition()
+
     with patch(
         "custom_components.speaker_recognition.stt.async_get_speech_to_text_entity",
         return_value=blocked_source,
     ):
-        task = asyncio.create_task(entity.async_process_audio_stream(_metadata(), _stream()))
+        task = asyncio.create_task(run_first_turn())
         await blocked_source.first_chunk_seen.wait()
         main.runtime_data = new_runtime
         blocked_source.continue_reading.set()
-        first_result = await task
+        first_result, first = await task
 
-    first = take_correlated_recognition()
     assert first_result.result is stt.SpeechResultState.SUCCESS
     assert first is not None and first.user_id == old_user.id
     assert old_runtime.calls == 1
