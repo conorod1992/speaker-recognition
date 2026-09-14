@@ -28,7 +28,8 @@ def test_dsp_only_wraps_downstream_stt_not_speaker_or_whisper_analysis() -> None
     assert "stt_stream = async_enhance_stt_stream(" in stt
     assert "source_entity.async_process_audio_stream(\n                    metadata, stt_stream" in stt
     assert "prepare_live_pcm,\n                    audio_data" in stt
-    assert "recognition_runtime.async_recognize(\n                        pcm_audio" in stt
+    assert "recognition = self.recognition" in stt
+    assert "recognition.async_recognize(\n                        pcm_audio" in stt
     assert "detect_whisper,\n                            pcm_audio" in stt
 
 
