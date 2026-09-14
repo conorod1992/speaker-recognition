@@ -31,6 +31,8 @@ class BackendStub:
             "status": "healthy",
             "trained": False,
             "enrolled_users": [],
+            "encoder_ready": True,
+            "warmup_error": None,
         }
         self.requests: list[tuple[str, str | None]] = []
         self._runner: web.AppRunner | None = None
@@ -173,7 +175,7 @@ async def test_backend_unavailable_places_entry_in_setup_retry(
 
 @pytest.mark.asyncio
 async def test_setup_retry_recovers_when_backend_appears(hass: HomeAssistant) -> None:
-    """The same HA entry can recover once its unavailable backend starts."""
+    """The same HA entry can recover through HA's retry path once backend starts."""
     port = _unused_port()
     entry = _main_entry(f"http://127.0.0.1:{port}")
     entry.add_to_hass(hass)
@@ -185,7 +187,8 @@ async def test_setup_retry_recovers_when_backend_appears(hass: HomeAssistant) ->
     backend = BackendStub(port)
     await backend.start()
     try:
-        assert await hass.config_entries.async_setup(entry.entry_id)
+        entry.async_cancel_retry_setup()
+        entry._async_setup_again(hass)  # noqa: SLF001 - exercise HA's retry callback path
         await hass.async_block_till_done()
 
         assert entry.state is ConfigEntryState.LOADED
