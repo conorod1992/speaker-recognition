@@ -252,6 +252,12 @@ class SpeakerRecognitionSTTEntity(SpeechToTextEntity):
         if source_entity is None:
             return SpeechResult(None, SpeechResultState.ERROR)
 
+        # Keep one utterance bound to the recognition runtime that existed when
+        # the turn started. A main-entry reload may replace runtime_data while
+        # the wrapped STT is still consuming audio, but that new generation
+        # belongs to subsequent turns rather than the in-flight utterance.
+        recognition = self.recognition
+
         domain_data = self.hass.data.setdefault(DOMAIN, {})
         utterance_sequence = int(domain_data.get("utterance_sequence", 0)) + 1
         domain_data["utterance_sequence"] = utterance_sequence
@@ -375,7 +381,7 @@ class SpeakerRecognitionSTTEntity(SpeechToTextEntity):
                         return WhisperDetection(False, 0.0, False)
 
                 recognition_result, whisper_result = await asyncio.gather(
-                    self.recognition.async_recognize(
+                    recognition.async_recognize(
                         pcm_audio,
                         sample_rate=sample_rate,
                     ),
