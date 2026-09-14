@@ -11,8 +11,10 @@ from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.typing import ConfigType
 
 from .const import (
+    CONF_CONVERSATION_ENTITY,
     CONF_ENTRY_TYPE,
     CONF_PENDING_ENROLLMENT,
+    CONF_STT_ENTITY,
     CONF_VOICE_SAMPLES,
     DOMAIN,
     ENTRY_TYPE_CONVERSATION,
@@ -31,7 +33,12 @@ from .lifecycle import (
     async_initialize_recognition,
 )
 from .live_evaluation import async_setup_live_model_evaluation
-from .proxy import effective_proxy_source, sync_proxy_unique_id, validate_proxy_source
+from .proxy import (
+    effective_proxy_source,
+    proxy_unique_id,
+    sync_proxy_unique_id,
+    validate_proxy_source,
+)
 from .recognition import RecognitionBackendUnavailable, SpeakerRecognition
 from .runtime import LiveEvaluationSpeakerRecognition
 from .shadow_evaluation import async_setup_shadow_evaluation
@@ -129,6 +136,53 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     async_register_websocket_commands(hass)
     async_register_enhancement_websocket(hass)
     async_register_shadow_websocket(hass)
+    return True
+
+
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Migrate legacy Speaker Recognition config entries to the current schema."""
+    if entry.version == 2:
+        return True
+    if entry.version != 1:
+        _LOGGER.error(
+            "Cannot migrate Speaker Recognition config entry %s from version %s",
+            entry.entry_id,
+            entry.version,
+        )
+        return False
+
+    data = dict(entry.data)
+    entry_type = data.get(CONF_ENTRY_TYPE)
+    if entry_type not in {ENTRY_TYPE_MAIN, ENTRY_TYPE_STT, ENTRY_TYPE_CONVERSATION}:
+        if CONF_STT_ENTITY in data or CONF_STT_ENTITY in entry.options:
+            entry_type = ENTRY_TYPE_STT
+        elif CONF_CONVERSATION_ENTITY in data or CONF_CONVERSATION_ENTITY in entry.options:
+            entry_type = ENTRY_TYPE_CONVERSATION
+        else:
+            entry_type = ENTRY_TYPE_MAIN
+        data[CONF_ENTRY_TYPE] = entry_type
+
+    unique_id = entry.unique_id
+    if entry_type == ENTRY_TYPE_MAIN:
+        unique_id = ENTRY_TYPE_MAIN
+    elif entry_type == ENTRY_TYPE_STT:
+        source = entry.options.get(CONF_STT_ENTITY, data.get(CONF_STT_ENTITY))
+        if isinstance(source, str):
+            unique_id = proxy_unique_id(ENTRY_TYPE_STT, source)
+    elif entry_type == ENTRY_TYPE_CONVERSATION:
+        source = entry.options.get(
+            CONF_CONVERSATION_ENTITY, data.get(CONF_CONVERSATION_ENTITY)
+        )
+        if isinstance(source, str):
+            unique_id = proxy_unique_id(ENTRY_TYPE_CONVERSATION, source)
+
+    hass.config_entries.async_update_entry(
+        entry,
+        data=data,
+        unique_id=unique_id,
+        version=2,
+        minor_version=0,
+    )
     return True
 
 
