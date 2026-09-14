@@ -123,6 +123,20 @@ class FakeRecognition:
         return None
 
 
+def _proxy_entity(
+    hass: HomeAssistant, main: MockConfigEntry
+) -> SpeakerRecognitionSTTEntity:
+    """Create a proxy entity attached to the real HA instance for direct execution."""
+    entity = SpeakerRecognitionSTTEntity(
+        hass, "Speaker Recognition STT", SOURCE_ENTITY_ID, "proxy-id", main
+    )
+    # EntityPlatform normally supplies this reference before an entity is used. These
+    # tests exercise the real proxy class directly, so attach the same HA instance here
+    # without mocking any Speaker Recognition behavior.
+    entity.hass = hass
+    return entity
+
+
 @pytest.mark.asyncio
 async def test_real_config_flow_creates_stt_proxy_entry(hass: HomeAssistant) -> None:
     """The genuine HA config flow creates a current-version STT proxy entry."""
@@ -220,9 +234,7 @@ async def test_stt_proxy_forwards_audio_and_preserves_transcription(
     recognition = FakeRecognition(None)
     main.runtime_data = recognition
     source = FakeSourceSTT()
-    entity = SpeakerRecognitionSTTEntity(
-        hass, "Speaker Recognition STT", SOURCE_ENTITY_ID, "proxy-id", main
-    )
+    entity = _proxy_entity(hass, main)
 
     with patch(
         "custom_components.speaker_recognition.stt.async_get_speech_to_text_entity",
@@ -257,9 +269,7 @@ async def test_stt_proxy_correlates_recognized_user_with_exact_turn(
             all_scores={user.id: 0.88},
         )
     )
-    entity = SpeakerRecognitionSTTEntity(
-        hass, "Speaker Recognition STT", SOURCE_ENTITY_ID, "proxy-id", main
-    )
+    entity = _proxy_entity(hass, main)
 
     with patch(
         "custom_components.speaker_recognition.stt.async_get_speech_to_text_entity",
@@ -284,9 +294,7 @@ async def test_unknown_speaker_does_not_create_identity_context(
     clear_correlated_recognition()
     main = _main_entry(hass)
     main.runtime_data = FakeRecognition(None)
-    entity = SpeakerRecognitionSTTEntity(
-        hass, "Speaker Recognition STT", SOURCE_ENTITY_ID, "proxy-id", main
-    )
+    entity = _proxy_entity(hass, main)
 
     with patch(
         "custom_components.speaker_recognition.stt.async_get_speech_to_text_entity",
@@ -306,9 +314,7 @@ async def test_missing_source_stt_returns_clean_error(hass: HomeAssistant) -> No
     """A source entity disappearing after configuration fails the turn cleanly."""
     main = _main_entry(hass)
     main.runtime_data = FakeRecognition(None)
-    entity = SpeakerRecognitionSTTEntity(
-        hass, "Speaker Recognition STT", SOURCE_ENTITY_ID, "proxy-id", main
-    )
+    entity = _proxy_entity(hass, main)
 
     with patch(
         "custom_components.speaker_recognition.stt.async_get_speech_to_text_entity",
@@ -328,9 +334,7 @@ async def test_underlying_stt_failure_propagates_without_stale_identity(
     clear_correlated_recognition()
     main = _main_entry(hass)
     main.runtime_data = FakeRecognition(None)
-    entity = SpeakerRecognitionSTTEntity(
-        hass, "Speaker Recognition STT", SOURCE_ENTITY_ID, "proxy-id", main
-    )
+    entity = _proxy_entity(hass, main)
 
     with patch(
         "custom_components.speaker_recognition.stt.async_get_speech_to_text_entity",
