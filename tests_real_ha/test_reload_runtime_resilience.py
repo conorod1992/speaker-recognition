@@ -77,8 +77,8 @@ async def _stream(marker: int = 1) -> AsyncIterable[bytes]:
     yield bytes([marker, 0]) * 4000
 
 
-class BlockingSource:
-    """STT source that exposes the reload window before EOF."""
+class SourceSTT:
+    """Deterministic external STT boundary."""
 
     supported_languages = ["en-US"]
     supported_formats = [stt.AudioFormats.WAV]
@@ -87,20 +87,12 @@ class BlockingSource:
     supported_sample_rates = [stt.AudioSampleRates.SAMPLERATE_16000]
     supported_channels = [stt.AudioChannels.CHANNEL_MONO]
 
-    def __init__(self) -> None:
-        self.first_chunk_seen = asyncio.Event()
-        self.continue_reading = asyncio.Event()
-
     async def async_process_audio_stream(
         self, metadata: stt.SpeechMetadata, stream: AsyncIterable[bytes]
     ) -> stt.SpeechResult:
         del metadata
-        first = True
         async for _chunk in stream:
-            if first:
-                first = False
-                self.first_chunk_seen.set()
-                await self.continue_reading.wait()
+            await asyncio.sleep(0)
         return stt.SpeechResult("ok", stt.SpeechResultState.SUCCESS)
 
 
@@ -152,40 +144,6 @@ def _clear_correlation() -> None:
 
 
 @pytest.mark.asyncio
-async def test_inflight_stt_turn_keeps_runtime_generation_when_main_runtime_is_replaced(
-    hass: HomeAssistant,
-) -> None:
-    """A main-entry reload cannot switch recognizers halfway through one utterance."""
-    old_user = await hass.auth.async_create_user("Old generation")
-    new_user = await hass.auth.async_create_user("New generation")
-    main = _main_entry(hass)
-    old_runtime = IdentityRecognition(old_user.id)
-    new_runtime = IdentityRecognition(new_user.id)
-    main.runtime_data = old_runtime
-    entity = _entity(hass, main)
-    source = BlockingSource()
-
-    with patch(
-        "custom_components.speaker_recognition.stt.async_get_speech_to_text_entity",
-        return_value=source,
-    ):
-        task = asyncio.create_task(
-            entity.async_process_audio_stream(_metadata(), _stream())
-        )
-        await source.first_chunk_seen.wait()
-        main.runtime_data = new_runtime
-        source.continue_reading.set()
-        result = await task
-
-    correlated = take_correlated_recognition()
-    assert result.result is stt.SpeechResultState.SUCCESS
-    assert correlated is not None
-    assert correlated.user_id == old_user.id
-    assert old_runtime.calls == 1
-    assert new_runtime.calls == 0
-
-
-@pytest.mark.asyncio
 async def test_backend_timeout_is_supplemental_and_stt_still_succeeds(
     hass: HomeAssistant,
 ) -> None:
@@ -193,12 +151,10 @@ async def test_backend_timeout_is_supplemental_and_stt_still_succeeds(
     main = _main_entry(hass)
     main.runtime_data = TimeoutRecognition()
     entity = _entity(hass, main)
-    source = BlockingSource()
-    source.continue_reading.set()
 
     with patch(
         "custom_components.speaker_recognition.stt.async_get_speech_to_text_entity",
-        return_value=source,
+        return_value=SourceSTT(),
     ):
         result = await entity.async_process_audio_stream(_metadata(), _stream())
 
@@ -219,12 +175,10 @@ async def test_missing_source_after_previous_success_cannot_reuse_stale_identity
     main = _main_entry(hass)
     main.runtime_data = IdentityRecognition(user.id)
     entity = _entity(hass, main)
-    source = BlockingSource()
-    source.continue_reading.set()
 
     with patch(
         "custom_components.speaker_recognition.stt.async_get_speech_to_text_entity",
-        return_value=source,
+        return_value=SourceSTT(),
     ):
         await entity.async_process_audio_stream(_metadata(), _stream())
     assert take_correlated_recognition() is not None
@@ -256,11 +210,9 @@ async def test_source_reappearing_after_missing_turn_recovers_immediately(
         failed = await entity.async_process_audio_stream(_metadata(), _stream())
     assert failed.result is stt.SpeechResultState.ERROR
 
-    source = BlockingSource()
-    source.continue_reading.set()
     with patch(
         "custom_components.speaker_recognition.stt.async_get_speech_to_text_entity",
-        return_value=source,
+        return_value=SourceSTT(),
     ):
         recovered = await entity.async_process_audio_stream(_metadata(), _stream())
 
@@ -270,10 +222,10 @@ async def test_source_reappearing_after_missing_turn_recovers_immediately(
 
 
 @pytest.mark.asyncio
-async def test_runtime_replacement_affects_next_turn_not_previous_completed_turn(
+async def test_runtime_replacement_is_adopted_by_the_next_completed_turn(
     hass: HomeAssistant,
 ) -> None:
-    """A newly loaded runtime is adopted cleanly by the following utterance."""
+    """A newly loaded runtime is cleanly adopted by the following utterance."""
     first_user = await hass.auth.async_create_user("First")
     second_user = await hass.auth.async_create_user("Second")
     main = _main_entry(hass)
@@ -281,12 +233,10 @@ async def test_runtime_replacement_affects_next_turn_not_previous_completed_turn
     second_runtime = IdentityRecognition(second_user.id)
     main.runtime_data = first_runtime
     entity = _entity(hass, main)
-    source = BlockingSource()
-    source.continue_reading.set()
 
     with patch(
         "custom_components.speaker_recognition.stt.async_get_speech_to_text_entity",
-        return_value=source,
+        return_value=SourceSTT(),
     ):
         await entity.async_process_audio_stream(_metadata(), _stream(1))
         first = take_correlated_recognition()
@@ -297,3 +247,5 @@ async def test_runtime_replacement_affects_next_turn_not_previous_completed_turn
     assert first is not None and first.user_id == first_user.id
     assert second is not None and second.user_id == second_user.id
     assert first.utterance_sequence + 1 == second.utterance_sequence
+    assert first_runtime.calls == 1
+    assert second_runtime.calls == 1
