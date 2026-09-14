@@ -142,6 +142,12 @@ async def _run(
         return await entity.async_process(user_input)
 
 
+async def _create_non_owner_user(hass: HomeAssistant, name: str):
+    if await hass.auth.async_get_owner() is None:
+        await hass.auth.async_create_user("Owner")
+    return await hass.auth.async_create_user(name)
+
+
 @pytest.fixture(autouse=True)
 def _clear_correlation() -> None:
     clear_correlated_recognition()
@@ -169,7 +175,7 @@ async def test_inactive_user_cannot_be_injected_from_voice_recognition(
     hass: HomeAssistant,
 ) -> None:
     """A disabled HA account fails closed even if the backend still recognizes it."""
-    user = await hass.auth.async_create_user("Alice")
+    user = await _create_non_owner_user(hass, "Alice")
     await hass.auth.async_update_user(user, is_active=False)
     entity = _entity(hass)
     source = RecordingSourceAgent()
@@ -185,7 +191,7 @@ async def test_reactivated_user_is_eligible_on_the_next_turn(
     hass: HomeAssistant,
 ) -> None:
     """Identity eligibility follows current HA account state without stale caching."""
-    user = await hass.auth.async_create_user("Alice")
+    user = await _create_non_owner_user(hass, "Alice")
     entity = _entity(hass)
     source = RecordingSourceAgent()
 
