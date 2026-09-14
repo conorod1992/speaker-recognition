@@ -1,0 +1,5 @@
+# Home Assistant Core is installed separately in CI:
+# - stable: latest stable release from PyPI
+# - upcoming: current home-assistant/core@dev
+
+pytest-homeassistant-custom-component>=0.13.365
