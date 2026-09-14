@@ -189,7 +189,7 @@ async def test_setup_retry_recovers_when_backend_appears(hass: HomeAssistant) ->
     try:
         entry.async_cancel_retry_setup()
         entry._async_setup_again(hass)  # noqa: SLF001 - exercise HA's retry callback path
-        await hass.async_block_till_done()
+        await hass.async_block_till_done(wait_background_tasks=True)
 
         assert entry.state is ConfigEntryState.LOADED
         assert ("GET /health", None) in backend.requests
