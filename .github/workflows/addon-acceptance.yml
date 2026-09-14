@@ -39,7 +39,7 @@ jobs:
             name="$1"
             speed="$2"
             pitch="$3"
-            espeak-ng --stdout --speed "${speed}" --pitch "${pitch}" \
+            espeak-ng --stdout -s "${speed}" -p "${pitch}" \
               "The morning light is warm across the kitchen table. Please turn on the hallway lamp before it gets dark." \
               | ffmpeg -hide_banner -loglevel error -i pipe:0 -ac 1 -ar 16000 -f s16le "${AUDIO_DIR}/${name}.pcm"
           done
@@ -84,7 +84,7 @@ jobs:
 
       - name: Start mock Supervisor API
         run: |
-          docker network create speaker-recognition-acceptance
+          docker network create --subnet 172.31.250.0/24 speaker-recognition-acceptance
           docker run --detach \
             --name supervisor \
             --network speaker-recognition-acceptance \
