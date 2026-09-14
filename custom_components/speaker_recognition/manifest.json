@@ -6,7 +6,6 @@
   ],
   "config_flow": true,
   "dependencies": [
-    "assist_satellite",
     "media_source",
     "panel_custom",
     "stt"
