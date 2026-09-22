@@ -214,6 +214,9 @@ async def async_promote_decision(hass, entry, decision_id: str) -> dict:
             await hass.async_add_executor_job(_delete_paths, [path])
             raise
         history.mark_promoted(decision_id, target)
+        from .enrollment_quality import schedule_quality_analysis
+
+        schedule_quality_analysis(hass, target)
         return item
 
 
@@ -235,3 +238,6 @@ async def async_discard_promotions(hass, user_id: str) -> None:
         await hass.async_add_executor_job(
             _delete_paths, [path for path in paths if path is not None]
         )
+        from .enrollment_quality import schedule_quality_analysis
+
+        schedule_quality_analysis(hass, user_id)

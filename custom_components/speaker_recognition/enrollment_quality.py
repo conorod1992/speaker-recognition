@@ -12,9 +12,16 @@ from .enrollment import _managed_media_path
 
 def _snapshot(hass, user_id):
     staged = hass.data.get(DOMAIN, {}).get("enrollment_staged", {}).get(user_id, {})
-    return tuple(
+    from .promotions import pending_promotions
+
+    phrases = tuple(
         (index, item["media_content_id"]) for index, item in sorted(staged.items())
     )
+    promoted = tuple(
+        (6 + index, item["media_content_id"])
+        for index, item in enumerate(pending_promotions(hass, user_id))
+    )
+    return phrases + promoted
 
 
 def schedule_quality_analysis(hass, user_id):

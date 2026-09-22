@@ -308,5 +308,5 @@ def test_preview_cache_is_bounded_and_expires(recognizer_module, tmp_path, monke
 
 def test_quality_preview_bounds(recognizer_module, tmp_path):
     recognizer = _recognizer(recognizer_module, tmp_path)
-    with pytest.raises(ValueError, match="at most six"):
-        recognizer.enrollment_quality(_preview_request(7))
+    with pytest.raises(ValueError, match="at most twelve"):
+        recognizer.enrollment_quality(_preview_request(13))

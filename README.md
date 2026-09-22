@@ -845,6 +845,7 @@ can reuse those embeddings while rerunning all profile checks. No cache is used 
 normal Assist recognition and no audio is retained in this cache.
 
 Analysis is on capture only, coalesces rapid retakes, ignores stale results, and is
-cancelled on integration unload. Each request handles at most six phrase samples.
+cancelled on integration unload. Each request handles at most six phrase samples plus six explicitly promoted clips.
+Promoted Assist clips are labelled separately and analysed when promoted, too.
 It uses the backend's existing authoritative lock; busy analysis degrades gracefully
 and Assist never queues behind it. There are no continuous background ML jobs.

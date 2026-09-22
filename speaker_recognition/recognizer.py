@@ -380,8 +380,8 @@ class SpeakerRecognizer:
     def enrollment_quality(self, request: TrainingRequest) -> EnrollmentQualityResult:
         """Assess staged recordings without changing or persisting any profile."""
         users = {sample.user for sample in request.voice_samples}
-        if len(users) != 1 or len(request.voice_samples) > 6:
-            raise ValueError("Quality preview requires one user and at most six staged samples")
+        if len(users) != 1 or len(request.voice_samples) > 12:
+            raise ValueError("Quality preview requires one user and at most twelve staged samples")
         user_id = next(iter(users))
         embeddings = np.stack([
             self._normalize_embedding(self._staged_embedding(sample.audio, preview=True))

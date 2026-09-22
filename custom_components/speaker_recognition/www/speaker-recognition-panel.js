@@ -472,12 +472,13 @@ class SpeakerRecognitionPanel extends HTMLElement {
     if (!quality) return "";
     if (quality.state === "analyzing") return `<p class="muted">Checking sample consistency… Recording saved.</p>`;
     if (quality.state === "unavailable") return `<p class="muted">Embedding analysis unavailable. Your recording is saved; final training checks still apply.</p>`;
+    const sampleLabel = index => Number(index) < 6 ? `Phrase ${Number(index) + 1}` : `Promoted Assist clip ${Number(index) - 5}`;
     const labels = {good: "Good sample", inconsistent: "Inconsistent sample — retake recommended", insufficient_evidence: "Insufficient evidence yet"};
     return `<div class="result"><strong>Staged sample quality</strong>
-      ${Object.entries(quality.samples || {}).map(([index, item]) => `<p>Phrase ${Number(index) + 1}: ${labels[item.assessment] || "Analysis unavailable"}</p>`).join("")}
+      ${Object.entries(quality.samples || {}).map(([index, item]) => `<p>${sampleLabel(index)}: ${labels[item.assessment] || "Analysis unavailable"}</p>`).join("")}
       <p class="muted">Advisory feedback; final training checks remain authoritative. At least three staged recordings are needed for a consistency assessment.</p>
       <details><summary>Embedding diagnostics</summary><p>Internal consistency: ${quality.consistency == null ? "Not enough evidence" : Number(quality.consistency).toFixed(3)}</p>
-      ${Object.entries(quality.samples || {}).filter(([, item]) => item.profile_similarity != null).map(([index, item]) => `<p>Phrase ${Number(index) + 1}, existing-profile similarity: ${Number(item.profile_similarity).toFixed(3)}</p>`).join("")}</details>
+      ${Object.entries(quality.samples || {}).filter(([, item]) => item.profile_similarity != null).map(([index, item]) => `<p>${sampleLabel(index)}, existing-profile similarity: ${Number(item.profile_similarity).toFixed(3)}</p>`).join("")}</details>
     </div>`;
   }
 
