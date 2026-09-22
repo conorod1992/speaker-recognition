@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import base64
 from pathlib import Path
 import wave
 from unittest.mock import patch
@@ -124,6 +125,15 @@ async def test_real_ha_main_entry_trains_recognizes_and_reconciles_real_addon(
     assert result.candidate_user_id == user.id
     assert result.engine_id == "resemblyzer"
     assert result.confidence > 0.0
+    preview = await entry.runtime_data._async_post("/enrollment/quality", {
+        "voice_samples": [{"user": user.id, "audio": {
+            "audio_data": base64.b64encode(pcm).decode("ascii"), "sample_rate": sample_rate,
+        }}],
+    })
+    assert preview["engine_id"] == "resemblyzer"
+    assert preview["samples"][0]["assessment"] == "insufficient_evidence"
+    assert preview["samples"][0]["profile_similarity"] is not None
+    assert (await entry.runtime_data._async_get("/health"))["enrolled_users"] == [user.id]
 
     # A persisted HA policy is applied and acknowledged by the actual backend,
     # including after the HA runtime is replaced. No extra inference is needed.

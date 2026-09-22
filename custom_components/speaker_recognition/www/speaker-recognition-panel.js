@@ -20,6 +20,8 @@ class SpeakerRecognitionPanel extends HTMLElement {
     this._liveBusy = false;
     this._pollTimer = null;
     this._livePollTimer = null;
+    this._qualityPollTimer = null;
+    this._qualityPollAttempts = 0;
   }
 
   set hass(value) {
@@ -34,6 +36,7 @@ class SpeakerRecognitionPanel extends HTMLElement {
   disconnectedCallback() {
     if (this._pollTimer) clearTimeout(this._pollTimer);
     if (this._livePollTimer) clearTimeout(this._livePollTimer);
+    if (this._qualityPollTimer) clearTimeout(this._qualityPollTimer);
     this._stopRecorderTracks();
   }
 
@@ -46,6 +49,11 @@ class SpeakerRecognitionPanel extends HTMLElement {
     if (!this._hass) return;
     try {
       this._status = await this._call({ type: "speaker_recognition/status" });
+      if (this._qualityPollTimer) clearTimeout(this._qualityPollTimer);
+      if (this.isConnected && this._qualityPollAttempts < 30 && Object.values(this._status.enrollment_quality || {}).some(item => item.state === "analyzing")) {
+        this._qualityPollAttempts += 1;
+        this._qualityPollTimer = setTimeout(() => this._refresh(true), 1000);
+      }
       if (!this._userId && this._status.users.length) {
         this._userId = this._status.users[0].id;
         this._sampleIndex = this._nextIncompleteSample(-1);
@@ -213,6 +221,7 @@ class SpeakerRecognitionPanel extends HTMLElement {
     this._message = "Saving sample…";
     this._render();
     try {
+      this._qualityPollAttempts = 0;
       const savedIndex = this._sampleIndex;
       const quality = await this._call({
         type: "speaker_recognition/stage_sample",
@@ -237,6 +246,7 @@ class SpeakerRecognitionPanel extends HTMLElement {
   }
 
   async _startSatellite() {
+    this._qualityPollAttempts = 0;
     if (!this._userId || !this._satelliteId) return;
     this._busy = true;
     this._message = "The selected satellite will read the phrase and listen for your reply…";
@@ -457,6 +467,20 @@ class SpeakerRecognitionPanel extends HTMLElement {
     }).join("");
   }
 
+  _renderEnrollmentQuality() {
+    const quality = this._status?.enrollment_quality?.[this._userId];
+    if (!quality) return "";
+    if (quality.state === "analyzing") return `<p class="muted">Checking sample consistency… Recording saved.</p>`;
+    if (quality.state === "unavailable") return `<p class="muted">Embedding analysis unavailable. Your recording is saved; final training checks still apply.</p>`;
+    const labels = {good: "Good sample", inconsistent: "Inconsistent sample — retake recommended", insufficient_evidence: "Insufficient evidence yet"};
+    return `<div class="result"><strong>Staged sample quality</strong>
+      ${Object.entries(quality.samples || {}).map(([index, item]) => `<p>Phrase ${Number(index) + 1}: ${labels[item.assessment] || "Analysis unavailable"}</p>`).join("")}
+      <p class="muted">Advisory feedback; final training checks remain authoritative. At least three staged recordings are needed for a consistency assessment.</p>
+      <details><summary>Embedding diagnostics</summary><p>Internal consistency: ${quality.consistency == null ? "Not enough evidence" : Number(quality.consistency).toFixed(3)}</p>
+      ${Object.entries(quality.samples || {}).filter(([, item]) => item.profile_similarity != null).map(([index, item]) => `<p>Phrase ${Number(index) + 1}, existing-profile similarity: ${Number(item.profile_similarity).toFixed(3)}</p>`).join("")}</details>
+    </div>`;
+  }
+
   _render() {
     if (!this.shadowRoot) return;
     const s = this._status;
@@ -506,6 +530,7 @@ class SpeakerRecognitionPanel extends HTMLElement {
             <h2>Enroll or retrain a voice</h2>
             <label>User</label>
             <select id="userSelect">${s.users.map(u => `<option value="${u.id}" ${u.id === this._userId ? "selected" : ""}>${this._escape(u.name)}</option>`).join("")}</select>
+            ${this._renderEnrollmentQuality()}
             <div class="samples">${s.phrases.map((_, i) => `<button class="sample ${staged.includes(i) ? "done" : "secondary"}" data-sample="${i}">${i + 1}${staged.includes(i) ? " ✓" : ""}</button>`).join("")}</div>
             <div class="phrase"><strong>Phrase ${this._sampleIndex + 1}:</strong><br>${this._escape(phrase)}</div>
             <h3>Record with this device</h3>

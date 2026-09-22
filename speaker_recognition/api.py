@@ -19,6 +19,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from speaker_recognition.const import MAX_REQUEST_BODY_BYTES
 from speaker_recognition.models import (
     ErrorResponse,
+    EnrollmentQualityResult,
     HealthResponse,
     ProfileSyncRequest,
     ProfileSyncResult,
@@ -210,6 +211,22 @@ def health_check() -> HealthResponse:
         shadow_enrolled_users=shadow_enrolled_users,
         shadow_error=shadow_error,
     )
+
+
+@app.post("/enrollment/quality", response_model=EnrollmentQualityResult, tags=["Training"])
+def enrollment_quality(request: TrainingRequest) -> EnrollmentQualityResult:
+    """Bounded, on-demand advisory analysis using the authoritative engine."""
+    if not _RECOGNIZER_LOCK.acquire(blocking=False):
+        raise HTTPException(status_code=503, detail="Enrollment analysis is temporarily busy")
+    try:
+        return recognizer.enrollment_quality(request)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except Exception as error:
+        _LOGGER.exception("Enrollment analysis unavailable")
+        raise HTTPException(status_code=503, detail="Enrollment analysis unavailable") from error
+    finally:
+        _RECOGNIZER_LOCK.release()
 
 
 @app.post(

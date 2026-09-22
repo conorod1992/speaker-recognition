@@ -162,6 +162,10 @@ async def async_stage_pcm_sample(
     if previous_path is not None and previous_path != absolute_path:
         await hass.async_add_executor_job(_delete_paths, [previous_path])
 
+    # Imported lazily so capture/media primitives remain independently reusable.
+    from .enrollment_quality import schedule_quality_analysis
+
+    schedule_quality_analysis(hass, user_id)
     samples = array("h")
     samples.frombytes(pcm_data[: len(pcm_data) - (len(pcm_data) % 2)])
     if sys.byteorder != "little":

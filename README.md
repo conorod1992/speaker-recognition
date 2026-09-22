@@ -824,3 +824,27 @@ It holds at most 24 pending clips overall, with at most six promoted clips per u
 across pending and current training material. Only explicit promotions gain this
 managed training lifetime; the ten-clip rolling review-audio queue and 200-record
 history limits remain unchanged. No automatic self-training is performed.
+
+### Advisory enrollment embedding checks
+
+Each captured browser or satellite enrollment recording is saved first, then
+analysed asynchronously by the authoritative local embedding engine. Once three
+staged samples exist, the panel shows **Good sample**, **Inconsistent sample — retake
+recommended**, or **Insufficient evidence yet**. Details show internal consistency
+and, when available, similarity to that user's existing profile. Preview never
+writes a trained profile. Failure or an older backend without the preview endpoint
+leaves the recording usable and shows analysis unavailable.
+
+The preview reuses training's normalization and outlier diagnostics. An additional
+average-consistency cutoff of 0.5 is only a conservative advisory heuristic, not a
+universal speaker-quality boundary or a new training rejection rule. Final training
+still performs its existing minimum-sample, outlier and transactional checks.
+Successful preview embeddings are cached only in backend memory, keyed by engine,
+sample rate and audio hash, for up to 15 minutes and at most 48 samples. Training
+can reuse those embeddings while rerunning all profile checks. No cache is used on
+normal Assist recognition and no audio is retained in this cache.
+
+Analysis is on capture only, coalesces rapid retakes, ignores stale results, and is
+cancelled on integration unload. Each request handles at most six phrase samples.
+It uses the backend's existing authoritative lock; busy analysis degrades gracefully
+and Assist never queues behind it. There are no continuous background ML jobs.
