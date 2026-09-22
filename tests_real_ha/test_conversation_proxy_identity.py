@@ -364,7 +364,9 @@ async def test_deleted_ha_user_cannot_be_reintroduced_by_stale_recognition(
     hass: HomeAssistant,
 ) -> None:
     """A stale backend user ID is rejected after that HA user is deleted."""
+    await hass.auth.async_create_user("Owner")
     alice = await hass.auth.async_create_user("Alice")
+    assert not alice.is_owner
     stale_user_id = alice.id
     await hass.auth.async_remove_user(alice)
     main = _main_entry(hass)

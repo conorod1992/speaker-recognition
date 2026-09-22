@@ -333,7 +333,9 @@ async def test_user_deleted_between_stt_and_conversation_fails_closed(
     hass: HomeAssistant,
 ) -> None:
     """A user disappearing after recognition cannot be injected by the same turn."""
+    await hass.auth.async_create_user("Owner")
     user = await hass.auth.async_create_user("Alice")
+    assert not user.is_owner
     recognition = IdentityRecognition(user.id)
     main, stt_entry, conversation_entry = _entries(hass, recognition)
     stt_entity, conversation_entity = _product_entities(
