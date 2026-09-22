@@ -6,6 +6,7 @@ class SpeakerRecognitionSettingsPanel extends BasePanel {
   constructor() {
     super();
     this._settings = null;
+    this._profileHealth = null;
     this._settingsMessage = "";
     this._settingsBusy = "";
     this._panelSection = "enrollment";
@@ -67,6 +68,34 @@ class SpeakerRecognitionSettingsPanel extends BasePanel {
   async _refreshHistory(silent = false) {
     await super._refreshHistory(silent);
     await this._refreshSettings(true);
+    await this._refreshProfileHealth();
+  }
+
+  async _refreshProfileHealth() {
+    if (!this._hass) return;
+    try {
+      this._profileHealth = await this._call({ type: "speaker_recognition/profile_health" });
+    } catch (_) {
+      this._profileHealth = { available: false };
+    }
+    this._render();
+  }
+
+  _renderProfileHealth() {
+    const health = this._profileHealth;
+    const number = value => Number.isFinite(value) ? value.toFixed(2) : "Unavailable";
+    if (!health) return '<p class="muted">Profile health has not been loaded.</p>';
+    if (!health.available) return '<p class="muted">Profile health is temporarily unavailable. Update the backend if needed.</p>';
+    if (!health.profiles.length) return '<p class="muted">No enrolled profiles to compare.</p>';
+    return health.profiles.map(profile => `<div class="profileHealth">
+      <p><strong>${this._escape(profile.user_name)}</strong> · Internal consistency: ${number(profile.internal_consistency)}</p>
+      <p>${profile.nearest_user_id
+        ? `Nearest other profile: ${this._escape(profile.nearest_user_name)} · Separation: ${number(profile.separation)}`
+        : "No other enrolled speakers to compare"}</p>
+      ${profile.low_separation ? '<p class="message">Profiles are unusually close; review recordings. This is a conservative heuristic, not a recognition decision.</p>' : ""}
+      ${profile.sample_data_incomplete ? '<p class="muted">Some stored sample embeddings are unavailable; diagnostics may be incomplete.</p>' : ""}
+      ${(profile.sample_warnings || []).length ? `<details><summary>Samples to review</summary>${profile.sample_warnings.map(sample => `<p>Stored sample ${Number(sample.sample_index)} is close to ${this._escape(sample.competing_user_name)} (own-versus-other similarity gap: ${number(sample.separation)}).</p>`).join("")}</details>` : ""}
+    </div>`).join("") + '<p class="muted">Separation is 1 minus profile cosine similarity (0–2; higher means farther apart). These diagnostics do not change recognition.</p>';
   }
 
   async _refreshSettings(silent = false) {
@@ -394,6 +423,10 @@ class SpeakerRecognitionSettingsPanel extends BasePanel {
     if (paragraphs.length > 1) {
       paragraphs[1].innerHTML = "To test a profile directly, record any phrase in <strong>Enrollment</strong> and choose <strong>Test profile</strong>. Use the live satellite test below for a real Assist-path check.";
     }
+    const health = document.createElement("div");
+    health.innerHTML = `<h3>Profile health</h3>${this._renderProfileHealth()}<button id="refreshProfileHealth">Refresh profile health</button>`;
+    card.appendChild(health);
+    health.querySelector("button").onclick = () => this._refreshProfileHealth();
   }
 
   _classifyMessages() {

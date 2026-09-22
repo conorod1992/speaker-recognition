@@ -19,6 +19,9 @@ from speaker_recognition.models import (
     Config,
     EnrollmentQualityResult,
     EnrollmentSampleQuality,
+    ProfileHealth,
+    ProfileHealthResult,
+    ProfileSampleSeparation,
     RecognitionRequest,
     RecognitionResult,
     RecognitionScores,
@@ -243,6 +246,84 @@ class SpeakerRecognizer:
             (1.0 - PROFILE_SAMPLE_WEIGHT) * centroid_score
             + PROFILE_SAMPLE_WEIGHT * sample_score
         )
+
+    def profile_snapshot(self) -> tuple[
+        dict[str, NDArray[np.float32]], dict[str, NDArray[np.float32]]
+    ]:
+        """Copy immutable diagnostic inputs while the API holds its short lock."""
+        return (
+            {user: value.copy() for user, value in self._reference_embeddings.items()},
+            {user: value.copy() for user, value in self._sample_embeddings.items()
+             if isinstance(value, np.ndarray)},
+        )
+
+    def profile_health(
+        self, snapshot: tuple[dict[str, NDArray[np.float32]], dict[str, NDArray[np.float32]]]
+    ) -> ProfileHealthResult:
+        """Compute cross-profile diagnostics without inference or derived persistence.
+
+        Distance <0.10 and sample competitor similarity >=0.80 with an own-vs-other
+        gap <=0.05 are conservative review heuristics, never recognition gates.
+        """
+        references, samples = snapshot
+        normalized: dict[str, NDArray[np.float32]] = {}
+        dimension: Optional[int] = None
+        for user in sorted(references):
+            try:
+                value = self._normalize_embedding(references[user])
+                if dimension is not None and value.size != dimension:
+                    continue
+                dimension = value.size
+                normalized[user] = value
+            except ValueError:
+                continue
+        users = list(normalized)
+        if not users:
+            return ProfileHealthResult(engine_id=self.engine_id, profiles=[])
+        centers = np.stack(list(normalized.values()))
+        similarities = np.clip(centers @ centers.T, -1.0, 1.0)
+        profiles: list[ProfileHealth] = []
+        for position, user in enumerate(users):
+            valid: list[NDArray[np.float32]] = []
+            indexes: list[int] = []
+            raw = samples.get(user)
+            incomplete = raw is None or raw.ndim != 2 or raw.shape[1] != dimension
+            if not incomplete and raw is not None:
+                for index, sample in enumerate(raw, 1):
+                    try:
+                        valid.append(self._normalize_embedding(sample))
+                        indexes.append(index)
+                    except ValueError:
+                        incomplete = True
+            consistency = self._profile_diagnostics(np.stack(valid))[0] if len(valid) >= 2 else None
+            health = ProfileHealth(
+                user_id=user, sample_count=len(valid), internal_consistency=consistency,
+                sample_data_incomplete=incomplete or not valid,
+            )
+            if len(users) > 1:
+                competitor = min(
+                    (index for index in range(len(users)) if index != position),
+                    key=lambda index: (-float(similarities[position, index]), users[index]),
+                )
+                similarity = float(similarities[position, competitor])
+                health.nearest_user_id = users[competitor]
+                health.nearest_similarity = similarity
+                health.separation = 1.0 - similarity
+                health.low_separation = health.separation < 0.10
+                for index, sample in zip(indexes, valid):
+                    scores = np.clip(centers @ sample, -1.0, 1.0)
+                    other = min(
+                        (i for i in range(len(users)) if i != position),
+                        key=lambda i: (-float(scores[i]), users[i]),
+                    )
+                    gap = float(scores[position] - scores[other])
+                    if float(scores[other]) >= 0.80 and gap <= 0.05:
+                        health.sample_warnings.append(ProfileSampleSeparation(
+                            sample_index=index, competing_user_id=users[other],
+                            competing_similarity=float(scores[other]), separation=gap,
+                        ))
+            profiles.append(health)
+        return ProfileHealthResult(engine_id=self.engine_id, profiles=profiles)
 
     def _profile_path(self, user_id: str) -> Path:
         """Return a filesystem-safe stable profile path for a user."""
