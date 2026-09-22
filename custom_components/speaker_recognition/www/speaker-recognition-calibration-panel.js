@@ -250,6 +250,8 @@ class SpeakerRecognitionCalibrationPanel extends BasePanel {
       return `<div class="decision reviewDecision">
         <div class="reviewDecisionTop"><div><strong>${outcome}</strong>${when ? `<span class="decisionTime">${this._escape(when)}</span>` : ""}</div>${audio}</div>
         ${feedback}
+        ${item.has_audio && item.feedback && !item.promoted_user_id && enrolled.includes(item.feedback === "correct" && item.identity_eligible ? item.user_id : item.actual_user_id) ? `<button class="secondary" data-promote-decision="${this._escape(item.decision_id)}">Add to voice profile</button>` : ""}
+        ${item.promoted_user_id ? `<span class="muted">Previously added to profile training material</span>` : ""}
         <details class="decisionDiagnostics">
           <summary>Diagnostics</summary>
           <div class="muted">Candidate ${candidate} · similarity ${Number(item.similarity || 0).toFixed(3)} · margin ${margin}</div>
@@ -262,6 +264,17 @@ class SpeakerRecognitionCalibrationPanel extends BasePanel {
   _bindEvents() {
     super._bindEvents();
     if (!this.shadowRoot) return;
+    for (const button of this.shadowRoot.querySelectorAll("[data-promote-decision]")) {
+      button.onclick = async () => {
+        button.disabled = true;
+        try {
+          await this._call({type: "speaker_recognition/promote_decision", decision_id: button.dataset.promoteDecision});
+          this._historyMessage = "Clip staged. Use Train with promoted clips in enrollment to update the profile.";
+          await this._refresh(true);
+          await this._refreshHistory(true);
+        } catch (err) { this._historyMessage = this._errorText(err); this._render(); }
+      };
+    }
     for (const button of this.shadowRoot.querySelectorAll("[data-review-play]")) {
       button.onclick = () => this._playReviewAudio(button.dataset.reviewPlay);
     }

@@ -34,6 +34,6 @@ def test_superseded_managed_recordings_are_cleaned_only_after_success() -> None:
     setup = (HA / "__init__.py").read_text(encoding="utf-8")
     assert "async def async_cleanup_managed_samples(" in enrollment
     assert "previous_samples = list(entry.runtime_data.voice_samples)" in setup
-    cleanup = "await async_cleanup_managed_samples(hass, previous_samples, changed_users)"
+    cleanup = "await async_cleanup_managed_samples("
     assert cleanup in setup
     assert setup.index(cleanup) > setup.index("changed_users = await async_apply_enrollment_update")

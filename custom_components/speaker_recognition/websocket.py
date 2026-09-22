@@ -38,6 +38,7 @@ from .enrollment import (
     start_satellite_session,
 )
 from .telemetry import get_decision_history
+from .promotions import pending_promotions, promotion_lock, async_promote_decision, async_discard_promotions
 
 _FEEDBACK_VALUES = ("correct", "wrong_speaker", "missed_speaker")
 _ENROLLMENT_SAMPLE_INDEX = vol.All(
@@ -150,6 +151,12 @@ async def websocket_status(
             "satellites": satellites,
             "enrollment_satellites": enrollment_satellites,
             "staged": staged,
+            "promoted_samples": pending_promotions(hass),
+            "profile_promoted_counts": {
+                row.get("user"): sum(isinstance(item, dict) and item.get("source") == "assist"
+                                     for item in (row.get("samples", []) if isinstance(row.get("samples", []), list) else [row.get("samples")]))
+                for row in (entry.options.get(CONF_VOICE_SAMPLES, []) if entry else [])
+            },
             "completed_satellite_captures": completed_satellite_capture_ids(hass),
             "live_test_active": (
                 {
@@ -496,9 +503,19 @@ async def websocket_commit_enrollment(
         )
         return
 
+    user = await hass.auth.async_get_user(msg["user_id"])
+    if not user or user.system_generated or not user.is_active:
+        connection.send_error(msg["id"], "unknown_user", "Choose an active Home Assistant user")
+        return
+    if promotion_lock(hass).locked():
+        connection.send_error(msg["id"], "promotion_in_progress", "A promotion is being saved")
+        return
+    promoted = pending_promotions(hass, msg["user_id"])
+    existing = list(entry.options.get(CONF_VOICE_SAMPLES, []))
+    previous = next((row for row in existing if row.get(CONF_USER) == msg["user_id"]), None)
     staged = staged_samples(hass, msg["user_id"])
     ordered = [(index, staged[index]) for index in sorted(staged)]
-    if len(ordered) < MIN_ENROLLMENT_SAMPLES:
+    if len(ordered) < MIN_ENROLLMENT_SAMPLES and not (promoted and previous and not ordered):
         connection.send_error(
             msg["id"],
             "too_few_samples",
@@ -519,9 +536,15 @@ async def websocket_commit_enrollment(
     completion = hass.loop.create_future()
     waiters[user_id] = completion
     options = dict(entry.options)
-    options[CONF_VOICE_SAMPLES] = _replace_user_samples(
-        list(options.get(CONF_VOICE_SAMPLES, [])), user_id, ordered
-    )
+    replacement = _replace_user_samples(existing, user_id, ordered) if ordered else [dict(row) for row in existing]
+    for row in replacement:
+        if row.get(CONF_USER) == user_id:
+            base_samples = row.get(CONF_SAMPLES, [])
+            base_samples = base_samples if isinstance(base_samples, list) else [base_samples]
+            row[CONF_SAMPLES] = list(base_samples) + [
+                {key: value for key, value in item.items() if key != "user"} for item in promoted
+            ]
+    options[CONF_VOICE_SAMPLES] = replacement
     hass.config_entries.async_update_entry(entry, options=options)
 
     try:
@@ -545,7 +568,35 @@ async def websocket_commit_enrollment(
         )
         return
 
-    connection.send_result(msg["id"], {"committed": True, "samples": len(ordered)})
+    connection.send_result(msg["id"], {"committed": True, "samples": len(ordered) + len(promoted)})
+
+
+@websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/promote_decision", vol.Required("decision_id"): str})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def websocket_promote_decision(hass, connection, msg):
+    entry = _main_entry(hass)
+    if entry is None:
+        connection.send_error(msg["id"], "not_configured", "Set up Speaker Recognition first")
+        return
+    try:
+        item = await async_promote_decision(hass, entry, msg["decision_id"])
+    except (ValueError, OSError) as error:
+        connection.send_error(msg["id"], "promotion_failed", str(error))
+        return
+    connection.send_result(msg["id"], {"staged": True, "user_id": item["user"]})
+
+
+@websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/discard_promoted_samples", vol.Required("user_id"): str})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def websocket_discard_promoted_samples(hass, connection, msg):
+    try:
+        await async_discard_promotions(hass, msg["user_id"])
+    except (ValueError, OSError) as error:
+        connection.send_error(msg["id"], "discard_failed", str(error))
+        return
+    connection.send_result(msg["id"], {"discarded": True})
 
 
 @websocket_api.websocket_command(
@@ -604,4 +655,6 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, websocket_start_satellite_sample)
     websocket_api.async_register_command(hass, websocket_start_live_test)
     websocket_api.async_register_command(hass, websocket_commit_enrollment)
+    websocket_api.async_register_command(hass, websocket_promote_decision)
+    websocket_api.async_register_command(hass, websocket_discard_promoted_samples)
     websocket_api.async_register_command(hass, websocket_test_sample)

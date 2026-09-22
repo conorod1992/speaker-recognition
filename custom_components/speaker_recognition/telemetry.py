@@ -393,6 +393,14 @@ class DecisionHistory:
         )
         return self._append(record)
 
+    def mark_promoted(self, decision_id: str, user_id: str) -> None:
+        """Remember an explicit promotion without keeping its review audio alive."""
+        for record in self._records:
+            if record.get("decision_id") == decision_id:
+                record["promoted_user_id"] = user_id
+                self._schedule_save()
+                return
+
     def recent(self, limit: int = 25) -> list[dict[str, Any]]:
         """Return newest decisions first."""
         return [dict(item) for item in reversed(self._records[-limit:])]

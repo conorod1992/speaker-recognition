@@ -44,6 +44,7 @@ from .runtime import LiveEvaluationSpeakerRecognition
 from .shadow_evaluation import async_setup_shadow_evaluation
 from .shadow_websocket import async_register_shadow_websocket
 from .telemetry import async_setup_decision_history
+from .promotions import async_setup_promotions, async_reconcile_promotions
 from .websocket import async_register_websocket_commands
 
 _LOGGER = logging.getLogger(__name__)
@@ -110,6 +111,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up shared frontend, calibration storage and WebSocket resources."""
     await async_register_frontend(hass)
     history = await async_setup_decision_history(hass)
+    await async_setup_promotions(hass)
     await async_setup_live_model_evaluation(hass)
     domain_data = hass.data.setdefault(DOMAIN, {})
 
@@ -223,6 +225,10 @@ async def async_setup_main_entry(
         updated_options.pop(CONF_PENDING_ENROLLMENT)
         hass.config_entries.async_update_entry(entry, options=updated_options)
 
+    try:
+        await async_reconcile_promotions(hass, voice_samples)
+    except OSError:
+        _LOGGER.warning("Unable to reconcile promoted sample metadata; will retry on reload")
     entry.runtime_data = recognition
     entry.async_on_unload(entry.add_update_listener(async_update_main_listener))
     return True
@@ -281,7 +287,13 @@ async def async_update_main_listener(
         return
 
     if changed_users:
-        await async_cleanup_managed_samples(hass, previous_samples, changed_users)
+        await async_cleanup_managed_samples(
+            hass, previous_samples, changed_users, retained_samples=voice_samples
+        )
+        try:
+            await async_reconcile_promotions(hass, voice_samples)
+        except OSError:
+            _LOGGER.warning("Promoted sample metadata cleanup deferred until reload")
 
     staged = hass.data.get(DOMAIN, {}).get("enrollment_staged")
     if changed_users and isinstance(staged, dict):
