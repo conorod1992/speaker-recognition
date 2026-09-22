@@ -149,3 +149,25 @@ async def test_backend_response_with_unconfigured_identity_fails_closed(
 
     recognition._async_post = async_post
     assert await recognition.async_recognize(b"\x01\x00") is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("acknowledge", [True, False])
+async def test_custom_policy_propagated_and_requires_backend_ack(monkeypatch, acknowledge):
+    module = _load_recognition_module(monkeypatch)
+    recognition = module.SpeakerRecognition(_FakeHass(), _configured("alice"))
+    recognition._trained = True
+    policy = {"min_similarity": 0.7, "min_margin": 0.0}
+    recognition.acceptance_thresholds = policy
+
+    async def async_post(path, payload):
+        assert path == "/recognize"
+        assert payload["acceptance_thresholds"] == policy
+        result = {"user_id": "alice", "confidence": 0.9, "all_scores": {"alice": 0.9}}
+        if acknowledge:
+            result["acceptance_thresholds"] = dict(policy)
+        return result
+
+    recognition._async_post = async_post
+    result = await recognition.async_recognize(b"\x01\x00")
+    assert (result is not None) is acknowledge

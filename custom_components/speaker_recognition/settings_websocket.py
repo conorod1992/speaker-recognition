@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+import math
 
 import voluptuous as vol
 
@@ -103,6 +104,9 @@ def websocket_settings(
                 "entry_id": entry.entry_id,
                 "title": entry.title,
                 "backend_url": effective_backend_url(entry.data, entry.options),
+                "acceptance_thresholds": entry.options.get(
+                    "acceptance_thresholds", {"min_similarity": 0.55, "min_margin": 0.05}
+                ),
             }
         elif entry_type == ENTRY_TYPE_STT:
             stt_entries.append(
@@ -145,6 +149,10 @@ def websocket_settings(
         vol.Required("type"): f"{DOMAIN}/update_settings",
         vol.Required("entry_id"): str,
         vol.Optional("backend_url"): str,
+        vol.Optional("acceptance_thresholds"): {
+            vol.Required("min_similarity"): vol.All(vol.Coerce(float), vol.Range(min=0.0, max=1.0)),
+            vol.Required("min_margin"): vol.All(vol.Coerce(float), vol.Range(min=0.0, max=1.0)),
+        },
         vol.Optional("stt_entity"): str,
         vol.Optional("use_basic_dsp"): bool,
         vol.Optional("conversation_entity"): str,
@@ -177,6 +185,12 @@ def websocket_update_settings(
             )
             return
         options[CONF_BACKEND_URL] = backend_url.strip()
+        policy = msg.get("acceptance_thresholds")
+        if policy is not None:
+            if not all(math.isfinite(value) for value in policy.values()):
+                connection.send_error(msg["id"], "invalid_threshold", "Thresholds must be finite")
+                return
+            options["acceptance_thresholds"] = dict(policy)
 
     elif entry_type == ENTRY_TYPE_STT:
         stt_entity = _validate_proxy_setting(

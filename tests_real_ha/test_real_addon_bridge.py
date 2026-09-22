@@ -125,6 +125,21 @@ async def test_real_ha_main_entry_trains_recognizes_and_reconciles_real_addon(
     assert result.engine_id == "resemblyzer"
     assert result.confidence > 0.0
 
+    # A persisted HA policy is applied and acknowledged by the actual backend,
+    # including after the HA runtime is replaced. No extra inference is needed.
+    policy = {"min_similarity": 1.0, "min_margin": 0.0}
+    hass.config_entries.async_update_entry(
+        entry, options={**entry.options, "acceptance_thresholds": policy}
+    )
+    await hass.async_block_till_done(wait_background_tasks=True)
+    strict = await entry.runtime_data.async_recognize(pcm, sample_rate=sample_rate)
+    assert strict is not None
+    assert strict.accepted == (strict.similarity >= 1.0)
+    assert entry.runtime_data.acceptance_thresholds == policy
+    health = await entry.runtime_data._async_get("/health")
+    assert health["supports_acceptance_thresholds"] is True
+    assert health["acceptance_thresholds"] == {"min_similarity": 0.55, "min_margin": 0.05}
+
     # Exercise HA's real update-listener path against the real add-on: removing the
     # configured user must delete the backend profile and reload a clean runtime.
     hass.config_entries.async_update_entry(entry, options={CONF_VOICE_SAMPLES: []})

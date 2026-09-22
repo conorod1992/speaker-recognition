@@ -760,3 +760,24 @@ Speaker Recognition makes use of:
 ---
 
 Made with ❤️ for the Home Assistant community
+
+### Advanced recognition thresholds
+
+In the panel's **Settings → Advanced recognition thresholds**, administrators can
+set minimum accepted similarity (default **0.55**) and minimum accepted margin
+(default **0.05**). Both accept values from 0 to 1. A margin of 0 disables the
+ambiguity gate; similarity is still required. A single enrolled profile has no
+competing margin. Lowering either threshold can increase incorrect identities.
+These backend gates are separate from the Conversation proxy's minimum identity
+confidence, which continues to govern whether an accepted identity is applied.
+
+The existing HA config entry persists the policy. HA sends it with each
+recognition request and the authoritative backend applies and echoes it. This
+avoids separate settings files, shared-backend global mutations, extra round trips,
+and restart windows with stale defaults. Settings show the policy used by this HA
+entry; `/health` exposes the backend default policy and capability, and recognition
+responses expose the applied policy. Existing entries without a policy keep their
+original requests and exact defaults. After explicitly changing thresholds, upgrade
+the backend too: if it cannot acknowledge the policy, Assist continues without
+speaker identity rather than silently using a different policy. No shadow-engine,
+DSP, profile learning, enrollment or correlation behaviour changes.

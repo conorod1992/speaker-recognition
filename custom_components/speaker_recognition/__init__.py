@@ -207,6 +207,8 @@ async def async_setup_main_entry(
         hass, voice_samples, backend_url, backend_token
     )
 
+    recognition.acceptance_thresholds = entry.options.get("acceptance_thresholds")
+
     pending_user_value = entry.options.get(CONF_PENDING_ENROLLMENT)
     pending_user = pending_user_value if isinstance(pending_user_value, str) else None
     try:

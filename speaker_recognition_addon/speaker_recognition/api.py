@@ -196,6 +196,7 @@ def health_check() -> HealthResponse:
 
     return HealthResponse(
         status="healthy" if _WARMUP_STATUS.ready else "degraded",
+        acceptance_thresholds=config.acceptance_thresholds,
         trained=trained,
         enrolled_users=enrolled_users,
         encoder_ready=_WARMUP_STATUS.ready,

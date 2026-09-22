@@ -468,10 +468,12 @@ class SpeakerRecognizer:
     def recognize(self, request: RecognitionRequest) -> RecognitionResult:
         """Recognize or reject a speaker from audio data."""
         scores = self.score(request)
-        accepted = scores.similarity >= MIN_ACCEPTED_SIMILARITY and (
-            scores.margin is None or scores.margin >= MIN_ACCEPTED_MARGIN
+        policy = request.acceptance_thresholds or self._config.acceptance_thresholds
+        accepted = scores.similarity >= policy.min_similarity and (
+            scores.margin is None or scores.margin >= policy.min_margin
         )
         return RecognitionResult(
+            acceptance_thresholds=policy,
             engine_id=scores.engine_id,
             user_id=scores.candidate_user_id if accepted else None,
             candidate_user_id=scores.candidate_user_id,

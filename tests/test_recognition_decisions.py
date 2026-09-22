@@ -165,3 +165,64 @@ def test_persisted_sample_embeddings_are_loaded_for_matching(
         np.linalg.norm(restarted._sample_embeddings["alice"], axis=1),
         [1.0, 1.0, 1.0],
     )
+
+
+@pytest.mark.parametrize(
+    "similarity,margin,min_similarity,min_margin,accepted",
+    [
+        (0.549999, 0.1, 0.55, 0.05, False),
+        (0.55, 0.05, 0.55, 0.05, True),
+        (0.550001, 0.1, 0.55, 0.05, True),
+        (0.8, 0.049999, 0.55, 0.05, False),
+        (0.8, 0.050001, 0.55, 0.05, True),
+        (0.749999, 0.2, 0.75, 0.05, False),
+        (0.750001, 0.2, 0.75, 0.05, True),
+        (0.8, 0.149999, 0.55, 0.15, False),
+        (0.8, 0.150001, 0.55, 0.15, True),
+        (0.8, 0.0, 0.55, 0.0, True),
+        (0.54, 0.0, 0.55, 0.0, False),
+        (0.8, None, 0.55, 1.0, True),
+    ],
+)
+def test_configured_acceptance_boundaries(
+    recognizer_module, tmp_path, monkeypatch,
+    similarity, margin, min_similarity, min_margin, accepted,
+):
+    from speaker_recognition.models import AcceptanceThresholds, RecognitionScores
+
+    recognizer = _recognizer(recognizer_module, tmp_path)
+    monkeypatch.setattr(recognizer, "score", lambda request: RecognitionScores(
+        candidate_user_id="alice", similarity=similarity, margin=margin,
+        all_scores={"alice": similarity},
+    ))
+    policy = AcceptanceThresholds(min_similarity=min_similarity, min_margin=min_margin)
+    result = recognizer.recognize(RecognitionRequest(
+        audio=_audio_input(), acceptance_thresholds=policy,
+    ))
+    assert result.accepted is accepted
+    assert result.acceptance_thresholds == policy
+    assert result.user_id == ("alice" if accepted else None)
+    # Request policy is isolated: it never changes defaults for other callers.
+    assert recognizer._config.acceptance_thresholds == AcceptanceThresholds()
+
+
+def test_default_acceptance_policy_and_restart(recognizer_module, tmp_path):
+    from speaker_recognition.models import AcceptanceThresholds
+
+    policy = AcceptanceThresholds(min_similarity=0.7, min_margin=0.0)
+    config = Config(embeddings_directory=str(tmp_path), acceptance_thresholds=policy)
+    restored = Config.model_validate_json(config.model_dump_json())
+    assert recognizer_module.SpeakerRecognizer(restored)._config.acceptance_thresholds == policy
+    assert Config().acceptance_thresholds.model_dump() == {
+        "min_similarity": 0.55, "min_margin": 0.05,
+    }
+
+
+@pytest.mark.parametrize("value", [-0.1, 1.1, float("nan"), float("inf")])
+@pytest.mark.parametrize("field", ["min_similarity", "min_margin"])
+def test_invalid_acceptance_policy(value, field):
+    from pydantic import ValidationError
+    from speaker_recognition.models import AcceptanceThresholds
+
+    with pytest.raises(ValidationError):
+        AcceptanceThresholds(**{field: value})

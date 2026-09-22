@@ -253,3 +253,34 @@ async def test_backend_token_is_used_for_startup_requests(hass: HomeAssistant) -
         ]
     finally:
         await backend.stop()
+
+@pytest.mark.asyncio
+async def test_acceptance_thresholds_persist_across_reload(hass: HomeAssistant, hass_ws_client) -> None:
+    """Panel policy uses the existing config entry and survives runtime replacement."""
+    backend = BackendStub()
+    await backend.start()
+    try:
+        entry = _main_entry(backend.url)
+        entry.add_to_hass(hass)
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        assert entry.runtime_data.acceptance_thresholds is None
+        old_runtime = entry.runtime_data
+        client = await hass_ws_client(hass)
+        policy = {"min_similarity": 0.72, "min_margin": 0.0}
+        await client.send_json_auto_id({
+            "type": f"{DOMAIN}/update_settings", "entry_id": entry.entry_id,
+            "backend_url": backend.url, "acceptance_thresholds": policy,
+        })
+        assert (await client.receive_json())["success"]
+        await hass.async_block_till_done()
+        assert entry.options["acceptance_thresholds"] == policy
+        assert entry.runtime_data is not old_runtime
+        assert entry.runtime_data.acceptance_thresholds == policy
+        assert await hass.config_entries.async_reload(entry.entry_id)
+        await hass.async_block_till_done()
+        assert entry.runtime_data.acceptance_thresholds == policy
+        await client.send_json_auto_id({"type": f"{DOMAIN}/settings"})
+        assert (await client.receive_json())["result"]["main"]["acceptance_thresholds"] == policy
+    finally:
+        await backend.stop()
