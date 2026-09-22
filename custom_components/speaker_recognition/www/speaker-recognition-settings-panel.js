@@ -151,6 +151,12 @@ class SpeakerRecognitionSettingsPanel extends BasePanel {
       <strong>Recognition backend</strong>
       <label for="backendUrl">Backend URL</label>
       <input id="backendUrl" style="${fieldStyle}" value="${this._escape(main.backend_url || "")}">
+      <h3>Advanced recognition thresholds</h3>
+      <p class="muted">Backend acceptance gates, separate from the Conversation proxy minimum identity confidence below. Lower values can increase incorrect identities. A margin of 0 disables the ambiguity gate. Requires a backend supporting configurable thresholds.</p>
+      <label for="backendSimilarity">Minimum accepted similarity</label>
+      <input id="backendSimilarity" type="number" min="0" max="1" step="0.01" value="${main.acceptance_thresholds?.min_similarity ?? 0.55}">
+      <label for="backendMargin">Minimum accepted margin</label>
+      <input id="backendMargin" type="number" min="0" max="1" step="0.01" value="${main.acceptance_thresholds?.min_margin ?? 0.05}">
       <div class="row" style="margin-top:12px"><button id="saveMainSettings" ${this._settingsBusy ? "disabled" : ""}>Save backend</button></div>
     </div>` : "";
 
@@ -465,7 +471,13 @@ class SpeakerRecognitionSettingsPanel extends BasePanel {
     if (main && saveMain) {
       saveMain.onclick = () => {
         const input = this.shadowRoot.getElementById("backendUrl");
-        this._saveSettings({ entry_id: main.entry_id, backend_url: input.value }, main.entry_id);
+        const similarity = this.shadowRoot.getElementById("backendSimilarity");
+        const margin = this.shadowRoot.getElementById("backendMargin");
+        if (!similarity.reportValidity() || !margin.reportValidity() || !similarity.value || !margin.value) return;
+        const policy = { min_similarity: Number(similarity.value), min_margin: Number(margin.value) };
+        const message = { entry_id: main.entry_id, backend_url: input.value };
+        if (JSON.stringify(policy) !== JSON.stringify(main.acceptance_thresholds)) message.acceptance_thresholds = policy;
+        this._saveSettings(message, main.entry_id);
       };
     }
 

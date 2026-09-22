@@ -156,6 +156,7 @@ async def test_settings_websocket_returns_effective_entries_without_secret(
         "entry_id": main.entry_id,
         "title": "Speaker Recognition",
         "backend_url": "http://127.0.0.1:8099",
+        "acceptance_thresholds": {"min_similarity": 0.55, "min_margin": 0.05},
     }
     assert CONF_BACKEND_TOKEN not in str(result)
     assert result["stt_entries"] == [
@@ -291,3 +292,32 @@ async def test_commands_without_main_entry_fail_cleanly(
 
     assert response["success"] is False
     assert response["error"]["code"] == expected_error
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("value", [-0.01, 1.01, "nan", "inf"])
+async def test_backend_threshold_settings_reject_invalid_values(hass, hass_ws_client, value):
+    main = _entry(hass, entry_type=ENTRY_TYPE_MAIN, title="Main", data={CONF_BACKEND_URL: "http://localhost:8099"})
+    await _setup_integration(hass)
+    client = await hass_ws_client(hass)
+    await client.send_json_auto_id({
+        "type": f"{DOMAIN}/update_settings", "entry_id": main.entry_id,
+        "backend_url": "http://localhost:8099",
+        "acceptance_thresholds": {"min_similarity": value, "min_margin": 0.05},
+    })
+    assert not (await client.receive_json())["success"]
+    assert "acceptance_thresholds" not in main.options
+
+
+@pytest.mark.asyncio
+async def test_backend_threshold_settings_require_admin(hass, hass_ws_client, hass_read_only_access_token):
+    main = _entry(hass, entry_type=ENTRY_TYPE_MAIN, title="Main", data={CONF_BACKEND_URL: "http://localhost:8099"})
+    await _setup_integration(hass)
+    client = await hass_ws_client(hass, hass_read_only_access_token)
+    await client.send_json_auto_id({
+        "type": f"{DOMAIN}/update_settings", "entry_id": main.entry_id,
+        "backend_url": "http://localhost:8099",
+        "acceptance_thresholds": {"min_similarity": 0.7, "min_margin": 0.0},
+    })
+    response = await client.receive_json()
+    assert response["error"]["code"] == "unauthorized"
+    assert "acceptance_thresholds" not in main.options

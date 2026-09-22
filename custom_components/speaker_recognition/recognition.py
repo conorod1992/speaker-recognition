@@ -89,6 +89,7 @@ class SpeakerRecognition:
         """Initialize speaker recognition."""
         self.hass = hass
         self.voice_samples = voice_samples
+        self.acceptance_thresholds: dict[str, float] | None = None
         self._trained = False
         self._enrolled_users: set[str] = set()
         self._shadow_engine_id: str | None = None
@@ -455,12 +456,18 @@ class SpeakerRecognition:
             return None
         try:
             audio_base64 = base64.b64encode(audio_data).decode("utf-8")
+            policy = dict(self.acceptance_thresholds) if self.acceptance_thresholds else None
+            payload: dict[str, Any] = {
+                "audio": {"audio_data": audio_base64, "sample_rate": sample_rate}
+            }
+            if policy is not None:
+                payload["acceptance_thresholds"] = policy
             request_started = perf_counter()
             try:
                 response = await asyncio.wait_for(
                     self._async_post(
                         "/recognize",
-                        {"audio": {"audio_data": audio_base64, "sample_rate": sample_rate}},
+                        payload,
                     ),
                     timeout=RECOGNITION_TIMEOUT_SECONDS,
                 )
@@ -470,6 +477,8 @@ class SpeakerRecognition:
                     perf_counter() - request_started,
                 )
 
+            if policy is not None and response.get("acceptance_thresholds") != policy:
+                raise ValueError("Backend did not acknowledge the configured acceptance thresholds")
             raw_user_id = response.get("user_id")
             confidence = response.get("confidence")
             all_scores = response.get("all_scores")

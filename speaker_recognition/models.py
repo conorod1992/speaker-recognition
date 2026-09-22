@@ -23,11 +23,20 @@ from speaker_recognition.const import (
 )
 
 
+class AcceptanceThresholds(BaseModel):
+    """Validated authoritative policy, optionally supplied by a persisted HA entry."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    min_similarity: float = Field(0.55, ge=0.0, le=1.0, allow_inf_nan=False)
+    min_margin: float = Field(0.05, ge=0.0, le=1.0, allow_inf_nan=False)
+
+
 class Config(BaseModel):
     """Application configuration."""
 
     model_config = ConfigDict(validate_assignment=True)
 
+    acceptance_thresholds: AcceptanceThresholds = AcceptanceThresholds(min_similarity=0.55, min_margin=0.05)
     host: str = DEFAULT_HOST
     port: int = DEFAULT_PORT
     log_level: str = DEFAULT_LOG_LEVEL
@@ -116,6 +125,8 @@ class ProfileSyncResult(BaseModel):
 class RecognitionRequest(BaseModel):
     """Recognition request data model."""
 
+    acceptance_thresholds: Optional[AcceptanceThresholds] = None
+
     audio: AudioInput = Field(..., description="Audio input for recognition")
 
 
@@ -137,6 +148,8 @@ class ShadowRecognitionScores(RecognitionScores):
 
 class RecognitionResult(RecognitionScores):
     """Result of recognition operation after acceptance policy."""
+
+    acceptance_thresholds: AcceptanceThresholds = AcceptanceThresholds(min_similarity=0.55, min_margin=0.05)
 
     user_id: Optional[str]
     confidence: float
@@ -163,6 +176,8 @@ class HealthResponse(BaseModel):
     """Health check response data model."""
 
     status: str
+    acceptance_thresholds: AcceptanceThresholds = AcceptanceThresholds(min_similarity=0.55, min_margin=0.05)
+    supports_acceptance_thresholds: bool = True
     trained: bool = False
     enrolled_users: list[str] = Field(default_factory=list)
     encoder_ready: bool = False
