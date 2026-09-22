@@ -151,6 +151,7 @@ async def websocket_status(
             "satellites": satellites,
             "enrollment_satellites": enrollment_satellites,
             "staged": staged,
+            "enrollment_quality": domain_data.get("enrollment_quality", {}),
             "promoted_samples": pending_promotions(hass),
             "profile_promoted_counts": {
                 row.get("user"): sum(isinstance(item, dict) and item.get("source") == "assist"

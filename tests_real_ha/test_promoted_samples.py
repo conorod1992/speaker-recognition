@@ -203,3 +203,23 @@ async def test_promotion_commands_require_admin(hass, promotion_environment, has
     client = await hass_ws_client(hass, hass_read_only_access_token)
     await client.send_json_auto_id({"type": f"{DOMAIN}/{command}", **values})
     assert (await client.receive_json())["error"]["code"] == "unauthorized"
+
+@pytest.mark.asyncio
+async def test_promoted_and_phrase_samples_share_advisory_preview(hass, promotion_environment):
+    alice, bob, entry, backend, history, decision, send = promotion_environment
+
+    async def quality(path, payload, **kwargs):
+        assert path == "/enrollment/quality"
+        return {"samples": [{"sample_index": i + 1, "assessment": "insufficient_evidence"}
+                            for i, _ in enumerate(payload["voice_samples"])]}
+
+    with patch.object(entry.runtime_data, "_async_post", side_effect=quality):
+        assert (await send("promote_decision", decision_id=decision(actual=alice.id)))["success"]
+        await hass.async_block_till_done()
+        assert set(hass.data[DOMAIN]["enrollment_quality"][alice.id]["samples"]) == {6}
+        await async_stage_pcm_sample(hass, alice.id, 0, b"\x03\x00" * 16000, 16000)
+        await hass.async_block_till_done()
+        assert set(hass.data[DOMAIN]["enrollment_quality"][alice.id]["samples"]) == {0, 6}
+        assert (await send("discard_promoted_samples", user_id=alice.id))["success"]
+        await hass.async_block_till_done()
+        assert set(hass.data[DOMAIN]["enrollment_quality"][alice.id]["samples"]) == {0}

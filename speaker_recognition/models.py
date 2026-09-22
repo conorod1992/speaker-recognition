@@ -109,6 +109,23 @@ class TrainingResult(BaseModel):
     outlier_samples: dict[str, list[int]] = Field(default_factory=dict)
 
 
+class EnrollmentSampleQuality(BaseModel):
+    """Advisory diagnostics for one staged recording (one-based index)."""
+
+    sample_index: int
+    assessment: str
+    outlier: bool = False
+    profile_similarity: Optional[float] = None
+
+
+class EnrollmentQualityResult(BaseModel):
+    """Read-only preview; final training remains authoritative."""
+
+    engine_id: str = DEFAULT_ENGINE_ID
+    consistency: Optional[float] = None
+    samples: list[EnrollmentSampleQuality]
+
+
 class ProfileSyncRequest(BaseModel):
     """Desired set of persisted speaker profiles."""
 

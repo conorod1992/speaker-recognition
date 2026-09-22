@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 import hashlib
 import logging
 from pathlib import Path
+from time import monotonic
 from typing import Any, BinaryIO, Optional
 
 import numpy as np
@@ -16,6 +17,8 @@ from speaker_recognition.engines import SpeakerEmbeddingEngine, create_engine
 from speaker_recognition.models import (
     AudioInput,
     Config,
+    EnrollmentQualityResult,
+    EnrollmentSampleQuality,
     RecognitionRequest,
     RecognitionResult,
     RecognitionScores,
@@ -46,6 +49,7 @@ class SpeakerRecognizer:
         self._engine = engine or create_engine()
         self._reference_embeddings: dict[str, NDArray[np.float32]] = {}
         self._sample_embeddings: dict[str, NDArray[np.float32]] = {}
+        self._preview_embeddings: OrderedDict[str, tuple[float, NDArray[np.float32]]] = OrderedDict()
         self._is_trained = False
         self._config = config
         self._embeddings_directory = Path(config.embeddings_directory)
@@ -347,6 +351,59 @@ class SpeakerRecognizer:
             np.asarray(self._engine.embed_prepared(waveform), dtype=np.float32)
         )
 
+    def _preview_key(self, audio: AudioInput) -> str:
+        return hashlib.sha256(
+            f"{self.engine_id}:{audio.sample_rate}:{audio.audio_data}".encode("ascii")
+        ).hexdigest()
+
+    def _staged_embedding(self, audio: AudioInput, *, preview: bool = False) -> NDArray[np.float32]:
+        """Reuse only successful preview embeddings, bounded to 48 for 15 minutes.
+
+        Recognition never consults this cache. Normal training without a preview
+        follows the original inference path, including repeated recordings.
+        """
+        key = self._preview_key(audio)
+        now = monotonic()
+        for expired in [key for key, (created, _) in self._preview_embeddings.items() if now - created > 900]:
+            self._preview_embeddings.pop(expired)
+        cached = self._preview_embeddings.get(key)
+        if cached is not None:
+            self._preview_embeddings.move_to_end(key)
+            return cached[1].copy()
+        embedding = self._embed_audio(audio)
+        if preview:
+            self._preview_embeddings[key] = (now, embedding.copy())
+            while len(self._preview_embeddings) > 48:
+                self._preview_embeddings.popitem(last=False)
+        return embedding
+
+    def enrollment_quality(self, request: TrainingRequest) -> EnrollmentQualityResult:
+        """Assess staged recordings without changing or persisting any profile."""
+        users = {sample.user for sample in request.voice_samples}
+        if len(users) != 1 or len(request.voice_samples) > 12:
+            raise ValueError("Quality preview requires one user and at most twelve staged samples")
+        user_id = next(iter(users))
+        embeddings = np.stack([
+            self._normalize_embedding(self._staged_embedding(sample.audio, preview=True))
+            for sample in request.voice_samples
+        ]).astype(np.float32, copy=False)
+        if self._reference_embeddings and embeddings.shape[1] != next(iter(self._reference_embeddings.values())).size:
+            raise ValueError("Sample embedding dimensions do not match profiles")
+        enough = len(embeddings) >= MIN_PROFILE_SAMPLES
+        consistency, outliers = self._profile_diagnostics(embeddings)
+        reference = self._reference_embeddings.get(user_id)
+        return EnrollmentQualityResult(
+            engine_id=self.engine_id,
+            consistency=consistency if enough else None,
+            samples=[EnrollmentSampleQuality(
+                sample_index=index + 1,
+                assessment=("insufficient_evidence" if not enough else
+                            "inconsistent" if index + 1 in outliers or consistency < 0.5 else "good"),
+                outlier=enough and index + 1 in outliers,
+                profile_similarity=float(np.dot(embedding, reference)) if reference is not None else None,
+            ) for index, embedding in enumerate(embeddings)],
+        )
+
     def train(self, request: TrainingRequest) -> TrainingResult:
         """Build all requested profiles first, then commit them as one transaction."""
         if not request.voice_samples:
@@ -372,7 +429,7 @@ class SpeakerRecognizer:
             embeddings: list[NDArray[np.float32]] = []
             for sample_number, audio_input in enumerate(audio_inputs, start=1):
                 try:
-                    embedding = self._embed_audio(audio_input)
+                    embedding = self._staged_embedding(audio_input)
                     if request_dimension is not None and embedding.size != request_dimension:
                         raise ValueError("sample embedding dimensions do not match profiles")
                     request_dimension = embedding.size

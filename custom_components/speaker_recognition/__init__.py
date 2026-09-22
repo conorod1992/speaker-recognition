@@ -264,6 +264,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     entry_type = entry.data.get(CONF_ENTRY_TYPE, ENTRY_TYPE_MAIN)
     if entry_type == ENTRY_TYPE_MAIN:
+        from .enrollment_quality import async_cancel_quality_analysis
+
+        await async_cancel_quality_analysis(hass)
         return True
     platforms = [Platform.STT] if entry_type == ENTRY_TYPE_STT else [Platform.CONVERSATION]
     return await hass.config_entries.async_unload_platforms(entry, platforms)

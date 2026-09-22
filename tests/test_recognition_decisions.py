@@ -226,3 +226,87 @@ def test_invalid_acceptance_policy(value, field):
 
     with pytest.raises(ValidationError):
         AcceptanceThresholds(**{field: value})
+
+
+def _preview_request(count):
+    return TrainingRequest(voice_samples=[VoiceSample(user="alice", audio=AudioInput(
+        audio_data=base64.b64encode(bytes([i + 1, 0]) * 200).decode(), sample_rate=16000,
+    )) for i in range(count)])
+
+
+def test_quality_preview_is_advisory_and_reuses_embeddings_for_final_training(
+    recognizer_module, tmp_path, monkeypatch,
+):
+    recognizer = _recognizer(recognizer_module, tmp_path)
+    values = iter([[1.0, 0.0], [0.99, 0.1], [0.98, 0.2], [-1.0, 0.0]])
+    calls = []
+
+    def embed(audio):
+        calls.append(audio.audio_data)
+        return np.asarray(next(values), dtype=np.float32)
+
+    monkeypatch.setattr(recognizer, "_embed_audio", embed)
+    for count in (1, 2):
+        preview = recognizer.enrollment_quality(_preview_request(count))
+        assert all(item.assessment == "insufficient_evidence" for item in preview.samples)
+    preview = recognizer.enrollment_quality(_preview_request(3))
+    assert all(item.assessment == "good" for item in preview.samples)
+    preview = recognizer.enrollment_quality(_preview_request(4))
+    assert preview.samples[-1].assessment == "inconsistent"
+    assert preview.samples[-1].outlier
+    assert not recognizer.is_trained
+    assert not list(tmp_path.rglob("*.npz"))
+    assert len(calls) == 4
+    trained = recognizer.train(_preview_request(4))
+    assert trained.outlier_samples["alice"] == [4]
+    assert trained.accepted_samples["alice"] == 3
+    assert len(calls) == 4
+
+
+def test_quality_preview_existing_profile_and_failure_do_not_mutate_it(
+    recognizer_module, tmp_path, monkeypatch,
+):
+    recognizer = _recognizer(recognizer_module, tmp_path)
+    reference = np.array([1.0, 0.0], dtype=np.float32)
+    recognizer._reference_embeddings = {"alice": reference.copy()}
+    recognizer._sample_embeddings = {"alice": reference.reshape(1, -1).copy()}
+    recognizer._is_trained = True
+    monkeypatch.setattr(recognizer, "_embed_audio", lambda audio: reference.copy())
+    assert recognizer.enrollment_quality(_preview_request(1)).samples[0].profile_similarity == 1.0
+
+    def fail(audio):
+        raise RuntimeError("temporary encoder failure")
+
+    monkeypatch.setattr(recognizer, "_embed_audio", fail)
+    with pytest.raises(RuntimeError):
+        recognizer.enrollment_quality(_preview_request(2))
+    np.testing.assert_array_equal(recognizer._reference_embeddings["alice"], reference)
+    assert recognizer.is_trained
+    assert not list(tmp_path.rglob("*.npz"))
+
+
+def test_preview_cache_is_bounded_and_expires(recognizer_module, tmp_path, monkeypatch):
+    recognizer = _recognizer(recognizer_module, tmp_path)
+    calls = []
+    monkeypatch.setattr(recognizer_module, "monotonic", lambda: 0)
+
+    def embed(audio):
+        calls.append(audio.audio_data)
+        return np.array([1.0, 0.0], dtype=np.float32)
+
+    monkeypatch.setattr(recognizer, "_embed_audio", embed)
+    for i in range(60):
+        recognizer.enrollment_quality(TrainingRequest(voice_samples=[VoiceSample(
+            user="alice", audio=AudioInput(audio_data=base64.b64encode(bytes([i, 0]) * 200).decode())
+        )]))
+    assert len(recognizer._preview_embeddings) == 48
+    monkeypatch.setattr(recognizer_module, "monotonic", lambda: 901)
+    recognizer.enrollment_quality(_preview_request(1))
+    assert len(recognizer._preview_embeddings) == 1
+    assert len(calls) == 61
+
+
+def test_quality_preview_bounds(recognizer_module, tmp_path):
+    recognizer = _recognizer(recognizer_module, tmp_path)
+    with pytest.raises(ValueError, match="at most twelve"):
+        recognizer.enrollment_quality(_preview_request(13))
