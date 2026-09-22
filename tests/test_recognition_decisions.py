@@ -310,3 +310,51 @@ def test_quality_preview_bounds(recognizer_module, tmp_path):
     recognizer = _recognizer(recognizer_module, tmp_path)
     with pytest.raises(ValueError, match="at most twelve"):
         recognizer.enrollment_quality(_preview_request(13))
+
+
+def test_profile_health_single_separated_and_similar(recognizer_module, tmp_path, monkeypatch):
+    recognizer = _recognizer(recognizer_module, tmp_path)
+    def no_inference(audio):
+        raise AssertionError("Diagnostics must not infer")
+    monkeypatch.setattr(recognizer, "_embed_audio", no_inference)
+    recognizer._reference_embeddings = {"alice": np.array([1., 0.], dtype=np.float32)}
+    recognizer._sample_embeddings = {"alice": np.array([[1., 0.]] * 3, dtype=np.float32)}
+    single = recognizer.profile_health(recognizer.profile_snapshot()).profiles[0]
+    assert single.nearest_user_id is None and single.separation is None
+    assert single.internal_consistency == pytest.approx(1)
+    recognizer._reference_embeddings["bob"] = np.array([0., 1.], dtype=np.float32)
+    separated = recognizer.profile_health(recognizer.profile_snapshot()).profiles[0]
+    assert separated.nearest_user_id == "bob"
+    assert separated.separation == pytest.approx(1)
+    assert not separated.low_separation and not separated.sample_warnings
+    recognizer._reference_embeddings["bob"] = np.array([1., .01], dtype=np.float32)
+    similar = recognizer.profile_health(recognizer.profile_snapshot()).profiles[0]
+    assert similar.low_separation and len(similar.sample_warnings) == 3
+    assert similar.sample_warnings[0].competing_user_id == "bob"
+    assert recognizer.profile_health(recognizer.profile_snapshot()) == recognizer.profile_health(recognizer.profile_snapshot())
+
+
+@pytest.mark.parametrize("samples", [None, np.array([1., 0.]), np.array([[1., 0., 0.]]), np.array([[float('nan'), 0.], [0., 0.], [1., 0.]])])
+def test_profile_health_tolerates_missing_or_malformed_samples(recognizer_module, tmp_path, samples):
+    recognizer = _recognizer(recognizer_module, tmp_path)
+    recognizer._reference_embeddings = {"alice": np.array([1., 0.]), "bob": np.array([0., 1.])}
+    recognizer._sample_embeddings = {} if samples is None else {"alice": samples}
+    health = recognizer.profile_health(recognizer.profile_snapshot()).profiles[0]
+    assert health.sample_data_incomplete
+    assert health.internal_consistency is None
+    assert health.nearest_user_id == "bob" and health.separation == pytest.approx(1)
+
+
+def test_profile_health_updates_after_training_and_removal(recognizer_module, tmp_path, monkeypatch):
+    recognizer = _recognizer(recognizer_module, tmp_path)
+    recognizer._reference_embeddings = {"alice": np.array([1., 0.]), "bob": np.array([1., .01])}
+    recognizer._sample_embeddings = {user: np.stack([embedding] * 3) for user, embedding in recognizer._reference_embeddings.items()}
+    previous = recognizer.profile_snapshot()
+    monkeypatch.setattr(recognizer, "_embed_audio", lambda audio: np.array([0., 1.], dtype=np.float32))
+    recognizer.train(_preview_request(3))
+    assert recognizer.profile_health(previous).profiles[0].low_separation
+    assert not recognizer.profile_health(recognizer.profile_snapshot()).profiles[0].low_separation
+    np.testing.assert_array_equal(recognizer._reference_embeddings["bob"], previous[0]["bob"])
+    recognizer.sync_profiles({"alice"})
+    profiles = recognizer.profile_health(recognizer.profile_snapshot()).profiles
+    assert len(profiles) == 1 and profiles[0].nearest_user_id is None

@@ -849,3 +849,27 @@ cancelled on integration unload. Each request handles at most six phrase samples
 Promoted Assist clips are labelled separately and analysed when promoted, too.
 It uses the backend's existing authoritative lock; busy analysis degrades gracefully
 and Assist never queues behind it. There are no continuous background ML jobs.
+
+### Cross-speaker profile health
+
+The panel's **Diagnostics → Profiles → Profile health** compares already stored
+embeddings. Refresh it after profile changes to see internal consistency, the
+nearest other enrolled HA user, and separation (`1 - cosine similarity`, from
+0 to 2; higher means farther apart). One-user installations show “No other
+enrolled speakers to compare”. Missing legacy sample embeddings leave centroid
+comparisons available and mark sample diagnostics incomplete.
+
+A separation below 0.10 prompts a cautious review warning. Stored samples are
+flagged when another profile's similarity is at least 0.80 and the sample's
+own-versus-other similarity gap is at most 0.05. These are conservative review
+heuristics, not scientifically universal cutoffs or additional recognition gates.
+Sample numbers refer to retained backend embeddings, not original phrase slots
+(which can differ after training removes outliers). Review recordings before
+choosing whether to retrain; nothing is changed automatically.
+
+Diagnostics use a short, consistent snapshot of existing profile/sample embeddings;
+there is no additional model inference, background ML job, or persisted derived
+state. Retraining and removing profiles are reflected on the next refresh. The
+admin-only HA endpoint resolves active eligible users to their display names.
+An older or temporarily unavailable backend leaves profile health unavailable
+without affecting recognition or enrollment.

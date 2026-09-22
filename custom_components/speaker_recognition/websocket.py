@@ -173,6 +173,43 @@ async def websocket_status(
     )
 
 
+@websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/profile_health"})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def websocket_profile_health(hass, connection, msg):
+    entry = _main_entry(hass)
+    runtime = getattr(entry, "runtime_data", None) if entry else None
+    if runtime is None:
+        connection.send_result(msg["id"], {"available": False, "profiles": []})
+        return
+    try:
+        payload = await runtime._async_get("/profiles/diagnostics")
+        rows = payload.get("profiles")
+        if not isinstance(rows, list):
+            raise ValueError("Invalid profile diagnostics")
+        users = {user.id: user.name or user.id for user in await hass.auth.async_get_users()
+                 if user.is_active and not user.system_generated}
+        eligible = runtime.configured_users & set(users)
+        result = []
+        for row in rows:
+            if not isinstance(row, dict) or row.get("user_id") not in eligible:
+                continue
+            item = dict(row)
+            item["user_name"] = users[item["user_id"]]
+            competitor = item.get("nearest_user_id")
+            item["nearest_user_name"] = users.get(competitor) if competitor in eligible else None
+            if competitor is not None and competitor not in eligible:
+                item.update(nearest_user_id=None, nearest_similarity=None, separation=None, low_separation=False)
+            warnings = item.get("sample_warnings", [])
+            item["sample_warnings"] = [dict(warning, competing_user_name=users[warning["competing_user_id"]])
+                for warning in warnings if isinstance(warning, dict) and warning.get("competing_user_id") in eligible]
+            result.append(item)
+    except Exception:
+        connection.send_result(msg["id"], {"available": False, "profiles": []})
+        return
+    connection.send_result(msg["id"], {"available": True, "profiles": result})
+
+
 @websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/decision_history"})
 @websocket_api.require_admin
 @callback
@@ -647,6 +684,7 @@ async def websocket_test_sample(
 def async_register_websocket_commands(hass: HomeAssistant) -> None:
     """Register all Speaker Recognition frontend commands once."""
     websocket_api.async_register_command(hass, websocket_status)
+    websocket_api.async_register_command(hass, websocket_profile_health)
     websocket_api.async_register_command(hass, websocket_decision_history)
     websocket_api.async_register_command(hass, websocket_calibration_analysis)
     websocket_api.async_register_command(hass, websocket_apply_recommended_backend_thresholds)

@@ -20,6 +20,7 @@ from speaker_recognition.const import MAX_REQUEST_BODY_BYTES
 from speaker_recognition.models import (
     ErrorResponse,
     EnrollmentQualityResult,
+    ProfileHealthResult,
     HealthResponse,
     ProfileSyncRequest,
     ProfileSyncResult,
@@ -211,6 +212,18 @@ def health_check() -> HealthResponse:
         shadow_enrolled_users=shadow_enrolled_users,
         shadow_error=shadow_error,
     )
+
+
+@app.get("/profiles/diagnostics", response_model=ProfileHealthResult, tags=["Training"])
+def profile_diagnostics() -> ProfileHealthResult:
+    """Snapshot briefly under lock; do all diagnostic computation after releasing it."""
+    if not _RECOGNIZER_LOCK.acquire(blocking=False):
+        raise HTTPException(status_code=503, detail="Profile diagnostics are temporarily busy")
+    try:
+        snapshot = recognizer.profile_snapshot()
+    finally:
+        _RECOGNIZER_LOCK.release()
+    return recognizer.profile_health(snapshot)
 
 
 @app.post("/enrollment/quality", response_model=EnrollmentQualityResult, tags=["Training"])

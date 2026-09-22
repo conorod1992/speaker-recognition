@@ -126,6 +126,36 @@ class EnrollmentQualityResult(BaseModel):
     samples: list[EnrollmentSampleQuality]
 
 
+class ProfileSampleSeparation(BaseModel):
+    """Stored sample that is close to a competing profile centroid."""
+
+    sample_index: int
+    competing_user_id: str
+    competing_similarity: float
+    separation: float
+
+
+class ProfileHealth(BaseModel):
+    """Diagnostic-only separation and internal consistency for one profile."""
+
+    user_id: str
+    sample_count: int
+    internal_consistency: Optional[float] = None
+    sample_data_incomplete: bool = False
+    nearest_user_id: Optional[str] = None
+    nearest_similarity: Optional[float] = None
+    separation: Optional[float] = None
+    low_separation: bool = False
+    sample_warnings: list[ProfileSampleSeparation] = Field(default_factory=list)
+
+
+class ProfileHealthResult(BaseModel):
+    """Fresh diagnostics derived from stored embeddings, with no inference."""
+
+    engine_id: str = DEFAULT_ENGINE_ID
+    profiles: list[ProfileHealth]
+
+
 class ProfileSyncRequest(BaseModel):
     """Desired set of persisted speaker profiles."""
 

@@ -135,6 +135,13 @@ async def test_real_ha_main_entry_trains_recognizes_and_reconciles_real_addon(
     assert preview["samples"][0]["profile_similarity"] is not None
     assert (await entry.runtime_data._async_get("/health"))["enrolled_users"] == [user.id]
 
+    diagnostics = await entry.runtime_data._async_get("/profiles/diagnostics")
+    profile = diagnostics["profiles"][0]
+    assert profile["user_id"] == user.id
+    assert profile["nearest_user_id"] is None and profile["separation"] is None
+    assert profile["internal_consistency"] is not None
+    assert profile["sample_count"] >= 3
+
     # A persisted HA policy is applied and acknowledged by the actual backend,
     # including after the HA runtime is replaced. No extra inference is needed.
     policy = {"min_similarity": 1.0, "min_margin": 0.0}
