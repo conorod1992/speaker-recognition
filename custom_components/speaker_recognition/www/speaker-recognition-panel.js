@@ -461,6 +461,7 @@ class SpeakerRecognitionPanel extends HTMLElement {
     if (!this.shadowRoot) return;
     const s = this._status;
     const phrase = s && s.phrases[this._sampleIndex] ? s.phrases[this._sampleIndex] : "";
+    const promoted = (s?.promoted_samples || []).filter(item => item.user === this._userId);
     const staged = this._stagedIndexes();
     const minimum = s ? s.minimum_samples : 5;
     const micAvailable = this._canUseMicrophone();
@@ -515,6 +516,8 @@ class SpeakerRecognitionPanel extends HTMLElement {
             <h3>Record with a voice satellite</h3>
             ${enrollmentSatellites.length ? `<div class="row"><select id="satelliteSelect">${enrollmentSatellites.map(x => `<option value="${x.entity_id}" ${x.entity_id === this._satelliteId ? "selected" : ""}>${this._escape(x.name || x.entity_id)}${x.available ? "" : " (unavailable)"}</option>`).join("")}</select><button id="satelliteBtn" ${this._busy ? "disabled" : ""}>Prompt satellite</button></div>` : `<p class="muted">No Assist Satellite entity currently advertises remote Start Conversation support.</p>`}
             <p class="muted">The satellite path is bound to the selected satellite and the exact Assist turn; unrelated speech from another satellite is ignored.</p>
+            ${s.profile_promoted_counts?.[this._userId] ? `<p class="muted">Current profile includes ${s.profile_promoted_counts[this._userId]} explicitly labelled real-world Assist clip(s).</p>` : ""}
+            ${promoted.length ? `<div class="result"><strong>Promoted real-world Assist clips: ${promoted.length}</strong><p>Explicitly labelled clips staged for profile improvement. Your current profile remains active until training succeeds.</p><button id="trainPromotedBtn" ${this._busy || staged.length ? "disabled" : ""}>Train with promoted clips</button><button id="discardPromotedBtn" class="secondary" ${this._busy ? "disabled" : ""}>Discard promoted clips</button>${staged.length ? `<p>Finish the phrase recordings below to train them together with these clips.</p>` : ""}</div>` : ""}
             <div class="row"><button id="commitBtn" ${staged.length < minimum || this._busy ? "disabled" : ""}>Train with ${staged.length} staged sample${staged.length === 1 ? "" : "s"}</button><span class="muted">Minimum ${minimum}; up to ${s.phrases.length}.</span></div>
             ${this._message ? `<div class="message">${this._escape(this._message)}</div>` : ""}
           </div>
@@ -569,6 +572,13 @@ class SpeakerRecognitionPanel extends HTMLElement {
     if ($("testBtn")) $("testBtn").onclick = () => this._testProfile();
     if ($("satelliteBtn")) $("satelliteBtn").onclick = () => this._startSatellite();
     if ($("commitBtn")) $("commitBtn").onclick = () => this._commitEnrollment();
+    if ($("trainPromotedBtn")) $("trainPromotedBtn").onclick = () => this._commitEnrollment();
+    if ($("discardPromotedBtn")) $("discardPromotedBtn").onclick = async () => {
+      try {
+        await this._call({type: "speaker_recognition/discard_promoted_samples", user_id: this._userId});
+        await this._refresh();
+      } catch (err) { this._message = this._errorText(err); this._render(); }
+    };
     if ($("liveTestBtn")) $("liveTestBtn").onclick = () => this._startLiveTest();
     if ($("refreshHistoryBtn")) $("refreshHistoryBtn").onclick = () => this._refreshHistory();
     for (const button of this.shadowRoot.querySelectorAll("[data-sample]")) {

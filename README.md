@@ -800,3 +800,27 @@ existing config entry; the browser cannot submit a cached threshold recommendati
 Nothing is applied automatically. Conversation proxy confidence calibration remains
 separate and unchanged. No audio is retained beyond the existing bounded review
 queue for this analysis, and no model inference is performed.
+
+### Improve a profile with reviewed Assist clips
+
+After explicitly labelling a retained calibration clip for an active enrolled HA
+user, choose **Add to voice profile**. A confirmed "Correct" identity is an explicit
+label; a prediction alone is never sufficient. Unknown/not-enrolled speakers and
+expired audio cannot be promoted. The target comes from the label, even when the
+predicted candidate was someone else. Each decision can be promoted only once.
+
+Promotion copies audio to integration-managed enrollment media and stages it;
+it does not train immediately. In Enrollment, select the user and choose
+**Train with promoted clips** to append the clips to existing training recordings,
+or finish a full set of replacement phrases to train those together with the clips.
+The old profile stays active until transactional training succeeds. Failed training
+preserves the previous profile and the staged clips for retry. **Discard promoted
+clips** removes pending managed audio. Removing a profile cleans its pending media;
+replacement cleanup preserves any recordings still referenced by the new profile.
+
+The staged media index uses a small versioned Home Assistant Store so pending clips
+survive restart without entering the live voice-sample configuration prematurely.
+It holds at most 24 pending clips overall, with at most six promoted clips per user
+across pending and current training material. Only explicit promotions gain this
+managed training lifetime; the ten-clip rolling review-audio queue and 200-record
+history limits remain unchanged. No automatic self-training is performed.

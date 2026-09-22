@@ -106,9 +106,13 @@ def _delete_paths(paths: list[Path]) -> None:
 
 
 async def async_cleanup_managed_samples(
-    hass: HomeAssistant, voice_samples: list[dict], user_ids: set[str]
+    hass: HomeAssistant, voice_samples: list[dict], user_ids: set[str],
+    retained_samples: list[dict] | None = None,
 ) -> None:
     """Remove superseded panel recordings after a successful profile update."""
+    retained_ids = {item.get("media_content_id") for row in retained_samples or []
+                    for item in (row.get("samples", []) if isinstance(row.get("samples", []), list) else [row.get("samples")])
+                    if isinstance(item, dict)}
     paths: list[Path] = []
     for user_sample in voice_samples:
         if user_sample.get("user") not in user_ids:
@@ -119,7 +123,7 @@ async def async_cleanup_managed_samples(
             if not isinstance(item, dict):
                 continue
             media_id = item.get("media_content_id")
-            if not isinstance(media_id, str):
+            if not isinstance(media_id, str) or media_id in retained_ids:
                 continue
             path = _managed_media_path(hass, media_id)
             if path is not None:
