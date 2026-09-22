@@ -369,3 +369,72 @@ def analyze_engine_comparison(records: Iterable[dict[str, Any]]) -> dict[str, An
     )
     result["shadow"] = asdict(_best_engine_operating_point(shadow_id, shadow_trials))
     return result
+
+
+def analyze_backend_thresholds(
+    records: Iterable[dict[str, Any]], current_policy: dict[str, float]
+) -> dict[str, Any]:
+    """Enumerate a small joint grid using existing explicit feedback and raw scores.
+
+    Missing raw evidence is excluded rather than reconstructed from confidence or
+    an accepted identity. A None margin retains the backend's single-profile rule.
+    """
+    import math
+
+    trials: list[_EngineTrial] = []
+    for record in records:
+        if record.get("feedback") not in ("correct", "wrong_speaker", "missed_speaker"):
+            continue
+        candidate = record.get("candidate_user_id")
+        similarity = record.get("similarity")
+        margin = record.get("margin")
+        if (
+            not isinstance(candidate, str) or not candidate
+            or not isinstance(similarity, (int, float)) or isinstance(similarity, bool)
+            or not math.isfinite(similarity) or not -1 <= similarity <= 1
+            or "margin" not in record
+            or margin is not None and (
+                not isinstance(margin, (int, float)) or isinstance(margin, bool)
+                or not math.isfinite(margin) or not 0 <= margin <= 2
+            )
+            or record.get("feedback") == "missed_speaker" and not record.get("actual_user_id")
+        ):
+            continue
+        trials.append(_EngineTrial(
+            actual_user_id=_actual_user_for_engine_trial(record),
+            candidate_user_id=candidate,
+            similarity=float(similarity),
+            margin=float(margin) if margin is not None else None,
+            latency_seconds=None,
+        ))
+    similarity = float(current_policy["min_similarity"])
+    margin = float(current_policy["min_margin"])
+    current = _evaluate_engine("resemblyzer", trials, similarity, margin)
+    result: dict[str, Any] = {
+        "ready": len(trials) >= MIN_LABELLED_DECISIONS,
+        "labelled_count": len(trials),
+        "minimum_labelled": MIN_LABELLED_DECISIONS,
+        "current_policy": dict(current_policy),
+        "current_metrics": asdict(current),
+        "recommended_policy": None,
+        "recommended_metrics": None,
+        "summary": "Uses explicit labels and raw scores; wrong identities cost five times a miss. Recommendations are advisory and never applied automatically.",
+    }
+    if not result["ready"]:
+        return result
+    # At most 22 x 22 operating points, including the exact current policy so a
+    # tie never needlessly moves it onto the grid. No model inference is involved.
+    similarities = sorted({step / 20 for step in range(21)} | {similarity})
+    margins = sorted({step / 20 for step in range(21)} | {margin})
+    best_similarity, best_margin, best = min(
+        ((s, m, _evaluate_engine("resemblyzer", trials, s, m)) for s in similarities for m in margins),
+        key=lambda trial: (
+            trial[2].score, trial[2].false_identifications,
+            abs(trial[0] - similarity) + abs(trial[1] - margin),
+            -trial[0], -trial[1],
+        ),
+    )
+    policy = {"min_similarity": best_similarity, "min_margin": best_margin}
+    result["recommended_policy"] = policy
+    result["recommended_metrics"] = asdict(best)
+    return result

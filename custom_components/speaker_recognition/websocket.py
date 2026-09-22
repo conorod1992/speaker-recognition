@@ -14,7 +14,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 
 from .audio import decode_wav
-from .calibration import analyze_thresholds
+from .calibration import analyze_backend_thresholds, analyze_thresholds
 from .const import (
     CONF_CONVERSATION_ENTITY,
     CONF_ENTRY_TYPE,
@@ -213,7 +213,12 @@ def websocket_calibration_analysis(
                 "analysis": analyze_thresholds(records, threshold),
             }
         )
-    connection.send_result(msg["id"], {"conversation_entries": entries})
+    main = _main_entry(hass)
+    backend = None
+    if main is not None:
+        policy = main.options.get("acceptance_thresholds", {"min_similarity": 0.55, "min_margin": 0.05})
+        backend = {"entry_id": main.entry_id, "analysis": analyze_backend_thresholds(records, policy)}
+    connection.send_result(msg["id"], {"conversation_entries": entries, "backend": backend})
 
 
 @websocket_api.websocket_command(
@@ -271,6 +276,37 @@ def websocket_apply_recommended_threshold(
             "new_threshold": float(recommendation),
         },
     )
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/apply_recommended_backend_thresholds",
+        vol.Required("entry_id"): str,
+    }
+)
+@websocket_api.require_admin
+@callback
+def websocket_apply_recommended_backend_thresholds(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Recalculate from current persisted evidence; never accept client thresholds."""
+    entry = _main_entry(hass)
+    if entry is None or entry.entry_id != msg["entry_id"]:
+        connection.send_error(msg["id"], "unknown_entry", "Main config entry was not found")
+        return
+    history = get_decision_history(hass)
+    policy = entry.options.get("acceptance_thresholds", {"min_similarity": 0.55, "min_margin": 0.05})
+    analysis = analyze_backend_thresholds(history.labelled() if history else [], policy)
+    recommendation = analysis["recommended_policy"]
+    if not analysis["ready"] or recommendation is None:
+        connection.send_error(msg["id"], "insufficient_evidence", "More labelled raw decisions are required")
+        return
+    hass.config_entries.async_update_entry(
+        entry, options={**entry.options, "acceptance_thresholds": recommendation}
+    )
+    connection.send_result(msg["id"], {"applied": True, "previous_policy": policy, "new_policy": recommendation})
 
 
 @websocket_api.websocket_command(
@@ -561,6 +597,7 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, websocket_status)
     websocket_api.async_register_command(hass, websocket_decision_history)
     websocket_api.async_register_command(hass, websocket_calibration_analysis)
+    websocket_api.async_register_command(hass, websocket_apply_recommended_backend_thresholds)
     websocket_api.async_register_command(hass, websocket_apply_recommended_threshold)
     websocket_api.async_register_command(hass, websocket_decision_feedback)
     websocket_api.async_register_command(hass, websocket_stage_sample)

@@ -227,3 +227,53 @@ async def test_config_entry_diagnostics_remain_useful_while_backend_is_offline(
     assert diagnostics["entry"]["state"] == entry.state.value
     assert diagnostics["runtime"]["loaded"] is False
     assert diagnostics["runtime"]["decision_history_count"] == 0
+
+@pytest.mark.asyncio
+async def test_joint_calibration_recalculates_stale_recommendation_from_stored_history(
+    hass, hass_ws_client, hass_storage,
+):
+    entry = _main_entry(hass)
+    records = [dict(
+        decision_id=str(i), feedback="missed_speaker", actual_user_id="alice",
+        candidate_user_id="alice", similarity=0.8, margin=0.02,
+        user_id=None, accepted=False, identity_eligible=False,
+    ) for i in range(15)]
+    hass_storage[f"{DOMAIN}.decision_history"] = {
+        "version": 1, "minor_version": 1, "key": f"{DOMAIN}.decision_history",
+        "data": {"records": records},
+    }
+    await _setup_integration(hass)
+    client = await hass_ws_client(hass)
+    await client.send_json_auto_id({"type": f"{DOMAIN}/calibration_analysis"})
+    analysis = (await client.receive_json())["result"]["backend"]["analysis"]
+    assert analysis["recommended_policy"] == {"min_similarity": 0.55, "min_margin": 0.0}
+    await client.send_json_auto_id({"type": f"{DOMAIN}/apply_recommended_backend_thresholds", "entry_id": entry.entry_id})
+    applied = await client.receive_json()
+    assert applied["success"]
+    assert entry.options["acceptance_thresholds"] == analysis["recommended_policy"]
+    history = get_decision_history(hass)
+    for item in records:
+        assert history.add_feedback(item["decision_id"], "wrong_speaker", None)
+    await client.send_json_auto_id({"type": f"{DOMAIN}/apply_recommended_backend_thresholds", "entry_id": entry.entry_id})
+    response = await client.receive_json()
+    assert response["success"]
+    # The displayed margin-zero recommendation became unsafe after correction.
+    assert response["result"]["new_policy"] == {"min_similarity": 0.55, "min_margin": 0.05}
+    assert entry.options["acceptance_thresholds"] == response["result"]["new_policy"]
+    assert "min_confidence" not in entry.options
+
+
+@pytest.mark.asyncio
+async def test_joint_calibration_apply_requires_evidence_and_admin(
+    hass, hass_ws_client, hass_read_only_access_token,
+):
+    entry = _main_entry(hass)
+    await _setup_integration(hass)
+    message = {"type": f"{DOMAIN}/apply_recommended_backend_thresholds", "entry_id": entry.entry_id}
+    client = await hass_ws_client(hass)
+    await client.send_json_auto_id(message)
+    assert (await client.receive_json())["error"]["code"] == "insufficient_evidence"
+    readonly = await hass_ws_client(hass, hass_read_only_access_token)
+    await readonly.send_json_auto_id(message)
+    assert (await readonly.receive_json())["error"]["code"] == "unauthorized"
+    assert "acceptance_thresholds" not in entry.options
