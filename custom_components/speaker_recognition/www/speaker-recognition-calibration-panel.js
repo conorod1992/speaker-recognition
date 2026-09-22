@@ -305,6 +305,41 @@ class SpeakerRecognitionCalibrationPanel extends BasePanel {
     </div>`;
   }
 
+  _renderBackendCalibration() {
+    const backend = this._calibration?.backend;
+    if (!backend) return "";
+    const a = backend.analysis;
+    const policy = p => `similarity ${Number(p.min_similarity).toFixed(2)} · margin ${Number(p.min_margin).toFixed(2)}`;
+    const metrics = m => `${m.correct_identity} correct identities · ${m.wrong_speaker + m.false_accepts} wrong identities · ${m.false_unknowns} misses · ${m.correct_rejection} correctly unknown`;
+    const recommended = a.recommended_policy;
+    const unchanged = recommended && recommended.min_similarity === a.current_policy.min_similarity && recommended.min_margin === a.current_policy.min_margin;
+    return `<div class="result" id="backendCalibration">
+      <h3>Backend acceptance policy</h3>
+      <p>Current: ${policy(a.current_policy)}</p>
+      <p>${a.labelled_count} of ${a.minimum_labelled} labelled raw decisions required.</p>
+      <p class="muted">${this._escape(a.summary)} These gates are separate from Conversation proxy confidence.</p>
+      ${recommended ? `<p><strong>Recommended: ${policy(recommended)}</strong></p><p>Current: ${metrics(a.current_metrics)}<br>Recommended: ${metrics(a.recommended_metrics)}</p>
+      <button id="applyBackendCalibrationBtn" ${unchanged || this._calibrationBusy ? "disabled" : ""}>Apply recommended backend thresholds</button>` : `<p>Insufficient evidence yet.</p>`}
+    </div>`;
+  }
+
+  async _applyBackendCalibration() {
+    const backend = this._calibration?.backend;
+    if (!backend) return;
+    this._calibrationBusy = true;
+    this._render();
+    try {
+      await this._call({ type: "speaker_recognition/apply_recommended_backend_thresholds", entry_id: backend.entry_id });
+      this._calibrationMessage = "Backend thresholds updated using the latest labelled evidence.";
+      await this._refreshHistory(true);
+    } catch (err) {
+      this._calibrationMessage = this._errorText(err);
+    } finally {
+      this._calibrationBusy = false;
+      this._render();
+    }
+  }
+
   _renderCalibrationCard() {
     const entries = this._calibration && this._calibration.conversation_entries
       ? this._calibration.conversation_entries
@@ -314,6 +349,8 @@ class SpeakerRecognitionCalibrationPanel extends BasePanel {
     if (!entries.length) {
       return `<div class="card" id="calibrationGuidanceCard">
         <h2>Threshold guidance</h2>
+      ${this._renderBackendCalibration()}
+        ${this._calibrationMessage ? `<div class="message">${this._escape(this._calibrationMessage)}</div>` : ""}
         <p><strong>${decisions.length} recent recognition decision${decisions.length === 1 ? "" : "s"} available</strong>${labelled ? ` · ${labelled} labelled` : ""}</p>
         <p class="muted">The review queue above keeps only ten recent clips. Compact labelled decision metadata can continue contributing to calibration after its audio has expired. Add a Speaker Recognition Conversation proxy only if you want this section to recommend and apply a Home Assistant identity-confidence threshold.</p>
       </div>`;
@@ -353,6 +390,7 @@ class SpeakerRecognitionCalibrationPanel extends BasePanel {
 
     return `<div class="card" id="calibrationGuidanceCard">
       <h2>Threshold guidance</h2>
+      ${this._renderBackendCalibration()}
       <p class="muted">Uses the explicit feedback you provide on normal Assist decisions. It simulates the Home Assistant confidence threshold and treats a wrong-person identity as much more costly than a missed recognition.</p>
       ${entries.length > 1 ? `<label for="calibrationEntrySelect">Conversation proxy</label><select id="calibrationEntrySelect">${options}</select>` : `<p><strong>Conversation proxy:</strong> ${this._escape(entry.title || entry.conversation_entity || entry.entry_id)}</p>`}
       ${this._calibrationMessage ? `<div class="message">${this._escape(this._calibrationMessage)}</div>` : ""}
@@ -455,6 +493,8 @@ class SpeakerRecognitionCalibrationPanel extends BasePanel {
         this._render();
       };
     }
+    const applyBackend = this.shadowRoot.getElementById("applyBackendCalibrationBtn");
+    if (applyBackend) applyBackend.onclick = () => this._applyBackendCalibration();
     const apply = this.shadowRoot.getElementById("applyCalibrationBtn");
     if (apply) apply.onclick = () => this._applyCalibration();
   }

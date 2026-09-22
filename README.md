@@ -781,3 +781,22 @@ original requests and exact defaults. After explicitly changing thresholds, upgr
 the backend too: if it cannot acknowledge the policy, Assist continues without
 speaker identity rather than silently using a different policy. No shadow-engine,
 DSP, profile learning, enrollment or correlation behaviour changes.
+
+### Joint backend calibration
+
+Threshold guidance also evaluates the backend's similarity and margin gates
+against the existing bounded labelled history, including rejected decisions.
+It requires at least 15 labelled decisions with usable raw similarity, margin and
+candidate evidence. Missing old evidence is skipped, never guessed from confidence.
+A fixed grid at 0.05 increments (plus the exact current policy) has at most 484
+pairs. It counts correct identities, wrong identities, enrolled-speaker misses
+and correctly rejected unknowns, with wrong identities costing five times a miss.
+Ties favour fewer wrong identities, then proximity to the current policy, then
+stricter gates. This is guidance from your labels, not a guarantee of future accuracy.
+
+**Apply recommended backend thresholds** is an explicit administrator action.
+The server recalculates from the latest history immediately before saving to the
+existing config entry; the browser cannot submit a cached threshold recommendation.
+Nothing is applied automatically. Conversation proxy confidence calibration remains
+separate and unchanged. No audio is retained beyond the existing bounded review
+queue for this analysis, and no model inference is performed.
