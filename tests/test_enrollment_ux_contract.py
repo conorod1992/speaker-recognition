@@ -24,23 +24,21 @@ def test_browser_panel_keeps_upload_fallback_and_secure_context_message() -> Non
 
     assert "navigator.mediaDevices.getUserMedia" in panel
     assert "window.isSecureContext" in panel
-    assert "existing WAV upload flow" in panel
+    assert "upload an existing WAV file" in panel
     assert "Test profile" in panel
 
 
 def test_selected_user_enrollment_status_is_explicit() -> None:
-    """The panel explains whether the selected user is new, enrolled or retraining."""
+    """The panel distinguishes an active profile from an update in progress."""
     panel = (
         ROOT / "www" / "speaker-recognition-calibration-panel.js"
     ).read_text(encoding="utf-8")
 
-    assert "Selected user status" in panel
-    assert "Current profile" in panel
-    assert "Enrollment mode" in panel
-    assert "Retraining existing profile" in panel
-    assert "New enrollment" in panel
-    assert "Ready to train" in panel
-    assert "existing trained profile stays in use" in panel
+    assert "✓ Voice profile active" in panel
+    assert "of ${minimum} recordings ready" in panel
+    assert "Record at least ${minimum} of the ${total} phrases below" in panel
+    assert "existing profile keeps working until the update is ready" in panel
+    assert "Retraining existing profile" not in panel
 
 
 def test_satellite_enrollment_is_claimed_during_selected_satellite_stt() -> None:
