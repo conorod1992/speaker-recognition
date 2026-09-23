@@ -90,7 +90,7 @@ def test_frontend_uses_compact_playable_review_workflow() -> None:
     assert 'type: "speaker_recognition/decision_audio"' in calibration
     assert 'type: "speaker_recognition/review_feedback"' in calibration
     assert "Review the latest recognition results" in calibration
-    assert "▶ Play clip" in calibration
+    assert "▶ Play recording" in calibration
     assert "<summary>Technical details</summary>" in calibration
     assert "Correctly unknown" in calibration
     assert "That was me" in calibration
