@@ -9,6 +9,7 @@ class SpeakerRecognitionCalibrationPanel extends BasePanel {
     this._calibrationEntryId = "";
     this._calibrationMessage = "";
     this._calibrationBusy = false;
+    this._showReviewed = false;
     this._reviewAudioUrls = new Map();
   }
 
@@ -193,8 +194,15 @@ class SpeakerRecognitionCalibrationPanel extends BasePanel {
   }
 
   _renderHistory() {
-    const decisions = this._history && this._history.decisions ? this._history.decisions : [];
-    if (!decisions.length) return `<p class="muted">No recognition results are waiting for review.</p>`;
+    const allDecisions = this._history && this._history.decisions ? this._history.decisions : [];
+    const decisions = this._showReviewed
+      ? allDecisions
+      : allDecisions.filter(item => !item.feedback);
+    if (!decisions.length) {
+      return this._showReviewed
+        ? `<p class="muted">No recent recognition results are available.</p>`
+        : `<p class="muted">No recognition results are waiting for review.</p>`;
+    }
     const enrolled = this._status && Array.isArray(this._status.enrolled_users)
       ? this._status.enrolled_users : [];
     const soleUser = enrolled.length === 1 ? enrolled[0] : null;
@@ -214,8 +222,18 @@ class SpeakerRecognitionCalibrationPanel extends BasePanel {
           : `<button class="secondary reviewPlay" data-review-play="${this._escape(item.decision_id)}">▶ Play recording</button>`)
         : `<span class="muted">Audio unavailable</span>`;
 
-      let actions;
-      if (soleUser) {
+      let actions = "";
+      if (item.feedback) {
+        const labels = {
+          correct: "Marked correct",
+          wrong_speaker: "Marked wrong person",
+          missed_speaker: "Marked missed speaker",
+        };
+        const actual = item.actual_user_id
+          ? ` · ${this._escape(this._userName(item.actual_user_id))}`
+          : (item.feedback === "wrong_speaker" ? " · someone not enrolled" : "");
+        actions = `<span class="feedback-saved">${labels[item.feedback] || this._escape(item.feedback)}${actual}</span>`;
+      } else if (soleUser) {
         actions = applied
           ? `<div class="feedback-actions compactFeedback">
               <button data-review-feedback="correct" data-review-decision="${this._escape(item.decision_id)}" data-review-actual="">Correct</button>
@@ -244,6 +262,8 @@ class SpeakerRecognitionCalibrationPanel extends BasePanel {
       return `<div class="decision reviewDecision">
         <div class="reviewDecisionTop"><div><strong>${outcome}</strong>${when ? `<span class="decisionTime">${this._escape(when)}</span>` : ""}</div>${audio}</div>
         ${actions}
+        ${item.has_audio && item.feedback && !item.promoted_user_id && enrolled.includes(item.feedback === "correct" && item.identity_eligible ? item.user_id : item.actual_user_id) ? `<button class="secondary" data-promote-decision="${this._escape(item.decision_id)}">Add to voice profile</button>` : ""}
+        ${item.promoted_user_id ? `<span class="muted">Previously added to profile training material</span>` : ""}
         <details class="decisionDiagnostics">
           <summary>Technical details</summary>
           <div class="muted">Best match ${candidate} · similarity ${Number(item.similarity || 0).toFixed(3)} · margin ${margin}</div>
@@ -308,6 +328,13 @@ class SpeakerRecognitionCalibrationPanel extends BasePanel {
     }
     const ignoreAll = this.shadowRoot.getElementById("ignoreAllReviewsBtn");
     if (ignoreAll) ignoreAll.onclick = () => this._dismissAllReviews();
+    const toggleReviewed = this.shadowRoot.getElementById("toggleReviewedBtn");
+    if (toggleReviewed) {
+      toggleReviewed.onclick = () => {
+        this._showReviewed = !this._showReviewed;
+        this._render();
+      };
+    }
   }
 
   _renderEnrollmentStatus() {
@@ -480,6 +507,7 @@ class SpeakerRecognitionCalibrationPanel extends BasePanel {
       .decisionDiagnostics { margin-top:10px; }
       .decisionDiagnostics summary { cursor:pointer; color:var(--secondary-text-color); }
       .decisionDiagnostics .muted { margin-top:5px; }
+      .reviewHeaderActions { display:flex; gap:8px; flex-wrap:wrap; margin:0 0 10px; }
     `;
     this.shadowRoot.append(style);
   }
@@ -497,12 +525,14 @@ class SpeakerRecognitionCalibrationPanel extends BasePanel {
     if (reviewCard) {
       const heading = reviewCard.querySelector("h2");
       if (heading) heading.textContent = "Recent recognition results";
-      if ((this._history?.decisions || []).length && !reviewCard.querySelector("#ignoreAllReviewsBtn")) {
-        const button = document.createElement("button");
-        button.id = "ignoreAllReviewsBtn";
-        button.className = "secondary";
-        button.textContent = "Ignore all";
-        heading.insertAdjacentElement("afterend", button);
+      const allDecisions = this._history?.decisions || [];
+      const pendingCount = allDecisions.filter(item => !item.feedback).length;
+      const reviewedCount = allDecisions.filter(item => item.feedback).length;
+      if ((pendingCount || reviewedCount) && !reviewCard.querySelector(".reviewHeaderActions")) {
+        const actions = document.createElement("div");
+        actions.className = "reviewHeaderActions";
+        actions.innerHTML = `${reviewedCount ? `<button id="toggleReviewedBtn" class="secondary">${this._showReviewed ? "Hide reviewed" : "Show reviewed"}</button>` : ""}${pendingCount ? '<button id="ignoreAllReviewsBtn" class="secondary">Ignore all pending</button>' : ""}`;
+        heading.insertAdjacentElement("afterend", actions);
       }
       const intro = reviewCard.querySelector("h2 + p.muted");
       if (intro) intro.textContent = "Review the latest recognition results. The newest 10 recordings can be played back; older answers can still help recommendations.";
