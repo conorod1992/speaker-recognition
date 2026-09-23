@@ -43,6 +43,8 @@ def test_review_websocket_exposes_only_ten_decisions_and_lazy_audio() -> None:
     assert '"audio_expired"' in source
     assert 'f"{DOMAIN}/review_feedback"' in source
     assert "websocket_review_feedback" in source
+    assert 'f"{DOMAIN}/review_dismiss"' in source
+    assert 'f"{DOMAIN}/review_dismiss_all"' in source
 
 
 def test_calibration_ui_defaults_to_listen_decide_and_hides_diagnostics() -> None:
@@ -57,6 +59,10 @@ def test_calibration_ui_defaults_to_listen_decide_and_hides_diagnostics() -> Non
     assert "Correctly unknown" in source
     assert "That was me" in source
     assert "Not me" in source
+    assert "Ignore" in source
+    assert "Ignore all" in source
+    assert "speaker_recognition/review_dismiss" in source
+    assert "speaker_recognition/review_dismiss_all" in source
     assert "Review the latest recognition results" in source
     assert "newest 10 recordings can be played back" in source
 
@@ -73,6 +79,21 @@ def test_review_feedback_supports_not_enrolled_ground_truth() -> None:
     assert "__unknown__" in frontend
     assert "Someone not enrolled" in frontend
 
+
+
+def test_review_queue_can_hide_dismissed_results_without_losing_reviewed_history() -> None:
+    source = (ROOT / "telemetry.py").read_text(encoding="utf-8")
+    frontend = (
+        ROOT / "www" / "speaker-recognition-calibration-panel.js"
+    ).read_text(encoding="utf-8")
+
+    assert 'if item.get("review_dismissed"):' in source
+    assert "def dismiss_review" in source
+    assert "def dismiss_pending_reviews" in source
+    assert 'item["review_dismissed"] = True' in source
+    assert "this._showReviewed = false" in frontend
+    assert 'allDecisions.filter(item => !item.feedback)' in frontend
+    assert "Show reviewed" in frontend
 
 def test_review_audio_python_modules_compile() -> None:
     for name in ("telemetry.py", "review_audio_websocket.py"):
