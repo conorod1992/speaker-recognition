@@ -164,6 +164,7 @@ async def test_settings_websocket_returns_effective_entries_without_secret(
             "entry_id": stt_entry.entry_id,
             "title": "STT proxy",
             "stt_entity": "stt.source",
+            "stt_options": ["stt.source"],
             "use_basic_dsp": True,
         }
     ]
@@ -172,6 +173,7 @@ async def test_settings_websocket_returns_effective_entries_without_secret(
             "entry_id": conversation_entry.entry_id,
             "title": "Conversation proxy",
             "conversation_entity": "conversation.source",
+            "conversation_options": ["conversation.source"],
             "min_confidence": 0.7,
         }
     ]
