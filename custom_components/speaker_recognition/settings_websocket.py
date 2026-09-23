@@ -37,6 +37,42 @@ def _find_entry(hass: HomeAssistant, entry_id: str) -> ConfigEntry | None:
     return next((entry for entry in _entries(hass) if entry.entry_id == entry_id), None)
 
 
+def _available_proxy_sources(
+    hass: HomeAssistant,
+    entry_type: str,
+    *,
+    exclude_entry_id: str,
+    current: str | None,
+) -> list[str]:
+    """Return valid source entities, excluding Speaker Recognition proxies."""
+    prefix = "stt." if entry_type == ENTRY_TYPE_STT else "conversation."
+    candidates = {
+        state.entity_id
+        for state in hass.states.async_all()
+        if state.entity_id.startswith(prefix)
+        and validate_proxy_source(
+            hass,
+            entry_type,
+            state.entity_id,
+            exclude_entry_id=exclude_entry_id,
+        )
+        is None
+    }
+    if (
+        isinstance(current, str)
+        and current.startswith(prefix)
+        and validate_proxy_source(
+            hass,
+            entry_type,
+            current,
+            exclude_entry_id=exclude_entry_id,
+        )
+        is None
+    ):
+        candidates.add(current)
+    return sorted(candidates)
+
+
 def _conversation_threshold(entry: ConfigEntry) -> float:
     value = entry.options.get(
         CONF_MIN_CONFIDENCE,
@@ -109,12 +145,19 @@ def websocket_settings(
                 ),
             }
         elif entry_type == ENTRY_TYPE_STT:
+            stt_entity = entry.options.get(
+                CONF_STT_ENTITY, entry.data.get(CONF_STT_ENTITY)
+            )
             stt_entries.append(
                 {
                     "entry_id": entry.entry_id,
                     "title": entry.title,
-                    "stt_entity": entry.options.get(
-                        CONF_STT_ENTITY, entry.data.get(CONF_STT_ENTITY)
+                    "stt_entity": stt_entity,
+                    "stt_options": _available_proxy_sources(
+                        hass,
+                        ENTRY_TYPE_STT,
+                        exclude_entry_id=entry.entry_id,
+                        current=stt_entity if isinstance(stt_entity, str) else None,
                     ),
                     "use_basic_dsp": effective_use_basic_dsp(
                         entry.data, entry.options
@@ -122,13 +165,24 @@ def websocket_settings(
                 }
             )
         elif entry_type == ENTRY_TYPE_CONVERSATION:
+            conversation_entity = entry.options.get(
+                CONF_CONVERSATION_ENTITY,
+                entry.data.get(CONF_CONVERSATION_ENTITY),
+            )
             conversation_entries.append(
                 {
                     "entry_id": entry.entry_id,
                     "title": entry.title,
-                    "conversation_entity": entry.options.get(
-                        CONF_CONVERSATION_ENTITY,
-                        entry.data.get(CONF_CONVERSATION_ENTITY),
+                    "conversation_entity": conversation_entity,
+                    "conversation_options": _available_proxy_sources(
+                        hass,
+                        ENTRY_TYPE_CONVERSATION,
+                        exclude_entry_id=entry.entry_id,
+                        current=(
+                            conversation_entity
+                            if isinstance(conversation_entity, str)
+                            else None
+                        ),
                     ),
                     "min_confidence": _conversation_threshold(entry),
                 }
