@@ -9,6 +9,7 @@ class SpeakerRecognitionCalibrationPanel extends BasePanel {
     this._calibrationEntryId = "";
     this._calibrationMessage = "";
     this._calibrationBusy = false;
+    this._showReviewed = false;
     this._reviewAudioUrls = new Map();
   }
 
@@ -193,8 +194,15 @@ class SpeakerRecognitionCalibrationPanel extends BasePanel {
   }
 
   _renderHistory() {
-    const decisions = this._history && this._history.decisions ? this._history.decisions : [];
-    if (!decisions.length) return `<p class="muted">No recent normal Assist decisions are waiting for review yet.</p>`;
+    const allDecisions = this._history && this._history.decisions ? this._history.decisions : [];
+    const decisions = this._showReviewed
+      ? allDecisions
+      : allDecisions.filter(item => !item.feedback);
+    if (!decisions.length) {
+      return this._showReviewed
+        ? `<p class="muted">No recent recognition results are available.</p>`
+        : `<p class="muted">No recognition results are waiting for review.</p>`;
+    }
     const enrolled = this._status && Array.isArray(this._status.enrolled_users)
       ? this._status.enrolled_users : [];
     const soleUser = enrolled.length === 1 ? enrolled[0] : null;
@@ -211,10 +219,10 @@ class SpeakerRecognitionCalibrationPanel extends BasePanel {
       const audio = item.has_audio
         ? (url
           ? `<audio controls preload="metadata" data-review-audio="${this._escape(item.decision_id)}" src="${this._escape(url)}"></audio>`
-          : `<button class="secondary reviewPlay" data-review-play="${this._escape(item.decision_id)}">▶ Play clip</button>`)
+          : `<button class="secondary reviewPlay" data-review-play="${this._escape(item.decision_id)}">▶ Play recording</button>`)
         : `<span class="muted">Audio unavailable</span>`;
 
-      let feedback = "";
+      let actions = "";
       if (item.feedback) {
         const labels = {
           correct: "Marked correct",
@@ -224,41 +232,71 @@ class SpeakerRecognitionCalibrationPanel extends BasePanel {
         const actual = item.actual_user_id
           ? ` · ${this._escape(this._userName(item.actual_user_id))}`
           : (item.feedback === "wrong_speaker" ? " · someone not enrolled" : "");
-        feedback = `<span class="feedback-saved">${labels[item.feedback] || this._escape(item.feedback)}${actual}</span>`;
+        actions = `<span class="feedback-saved">${labels[item.feedback] || this._escape(item.feedback)}${actual}</span>`;
       } else if (soleUser) {
-        feedback = applied
+        actions = applied
           ? `<div class="feedback-actions compactFeedback">
               <button data-review-feedback="correct" data-review-decision="${this._escape(item.decision_id)}" data-review-actual="">Correct</button>
               <button class="secondary" data-review-feedback="wrong_speaker" data-review-decision="${this._escape(item.decision_id)}" data-review-actual="__unknown__">Not me</button>
+              <button class="secondary" data-review-ignore="${this._escape(item.decision_id)}">Ignore</button>
             </div>`
           : `<div class="feedback-actions compactFeedback">
               <button data-review-feedback="correct" data-review-decision="${this._escape(item.decision_id)}" data-review-actual="">Correctly unknown</button>
               <button class="secondary" data-review-feedback="missed_speaker" data-review-decision="${this._escape(item.decision_id)}" data-review-actual="${this._escape(soleUser)}">That was me</button>
+              <button class="secondary" data-review-ignore="${this._escape(item.decision_id)}">Ignore</button>
             </div>`;
       } else {
-        feedback = applied
+        actions = applied
           ? `<div class="feedback-actions compactFeedback">
               <button data-review-feedback="correct" data-review-decision="${this._escape(item.decision_id)}" data-review-actual="">Correct</button>
               <button class="secondary" data-review-feedback="wrong_speaker" data-review-decision="${this._escape(item.decision_id)}" data-review-actual="__selected__">Wrong person</button>
+              <button class="secondary" data-review-ignore="${this._escape(item.decision_id)}">Ignore</button>
             </div>`
           : `<div class="feedback-actions compactFeedback">
               <button data-review-feedback="correct" data-review-decision="${this._escape(item.decision_id)}" data-review-actual="">Correctly unknown</button>
               <button class="secondary" data-review-feedback="missed_speaker" data-review-decision="${this._escape(item.decision_id)}" data-review-actual="__selected__">Should recognise speaker</button>
+              <button class="secondary" data-review-ignore="${this._escape(item.decision_id)}">Ignore</button>
             </div>`;
       }
 
       return `<div class="decision reviewDecision">
         <div class="reviewDecisionTop"><div><strong>${outcome}</strong>${when ? `<span class="decisionTime">${this._escape(when)}</span>` : ""}</div>${audio}</div>
-        ${feedback}
+        ${actions}
         ${item.has_audio && item.feedback && !item.promoted_user_id && enrolled.includes(item.feedback === "correct" && item.identity_eligible ? item.user_id : item.actual_user_id) ? `<button class="secondary" data-promote-decision="${this._escape(item.decision_id)}">Add to voice profile</button>` : ""}
         ${item.promoted_user_id ? `<span class="muted">Previously added to profile training material</span>` : ""}
         <details class="decisionDiagnostics">
           <summary>Technical details</summary>
-          <div class="muted">Candidate ${candidate} · similarity ${Number(item.similarity || 0).toFixed(3)} · margin ${margin}</div>
+          <div class="muted">Best match ${candidate} · similarity ${Number(item.similarity || 0).toFixed(3)} · margin ${margin}</div>
           <div class="muted">Recognition ${this._formatMs(item.recognition_seconds)} · added delay ${this._formatMs(item.added_latency_seconds)} · speech-to-text ${this._formatMs(item.stt_seconds)}${item.audio_seconds == null ? "" : ` · audio ${Number(item.audio_seconds).toFixed(1)} s`}</div>
         </details>
       </div>`;
     }).join("");
+  }
+
+  async _dismissReview(decisionId) {
+    try {
+      await this._call({ type: "speaker_recognition/review_dismiss", decision_id: decisionId });
+      this._historyMessage = "Recognition result ignored.";
+      await this._refreshHistory(true);
+    } catch (err) {
+      this._historyMessage = this._errorText(err);
+      this._render();
+    }
+  }
+
+  async _dismissAllReviews() {
+    if (!window.confirm("Ignore all recognition results currently waiting for review?")) return;
+    try {
+      const result = await this._call({ type: "speaker_recognition/review_dismiss_all" });
+      const count = Number(result.dismissed || 0);
+      this._historyMessage = count
+        ? `${count} recognition result${count === 1 ? "" : "s"} ignored.`
+        : "No pending recognition results to ignore.";
+      await this._refreshHistory(true);
+    } catch (err) {
+      this._historyMessage = this._errorText(err);
+      this._render();
+    }
   }
 
   _bindEvents() {
@@ -284,6 +322,18 @@ class SpeakerRecognitionCalibrationPanel extends BasePanel {
         button.dataset.reviewFeedback,
         button.dataset.reviewActual,
       );
+    }
+    for (const button of this.shadowRoot.querySelectorAll("[data-review-ignore]")) {
+      button.onclick = () => this._dismissReview(button.dataset.reviewIgnore);
+    }
+    const ignoreAll = this.shadowRoot.getElementById("ignoreAllReviewsBtn");
+    if (ignoreAll) ignoreAll.onclick = () => this._dismissAllReviews();
+    const toggleReviewed = this.shadowRoot.getElementById("toggleReviewedBtn");
+    if (toggleReviewed) {
+      toggleReviewed.onclick = () => {
+        this._showReviewed = !this._showReviewed;
+        this._render();
+      };
     }
   }
 
@@ -457,6 +507,7 @@ class SpeakerRecognitionCalibrationPanel extends BasePanel {
       .decisionDiagnostics { margin-top:10px; }
       .decisionDiagnostics summary { cursor:pointer; color:var(--secondary-text-color); }
       .decisionDiagnostics .muted { margin-top:5px; }
+      .reviewHeaderActions { display:flex; gap:8px; flex-wrap:wrap; margin:0 0 10px; }
     `;
     this.shadowRoot.append(style);
   }
@@ -474,6 +525,15 @@ class SpeakerRecognitionCalibrationPanel extends BasePanel {
     if (reviewCard) {
       const heading = reviewCard.querySelector("h2");
       if (heading) heading.textContent = "Recent recognition results";
+      const allDecisions = this._history?.decisions || [];
+      const pendingCount = allDecisions.filter(item => !item.feedback).length;
+      const reviewedCount = allDecisions.filter(item => item.feedback).length;
+      if ((pendingCount || reviewedCount) && !reviewCard.querySelector(".reviewHeaderActions")) {
+        const actions = document.createElement("div");
+        actions.className = "reviewHeaderActions";
+        actions.innerHTML = `${reviewedCount ? `<button id="toggleReviewedBtn" class="secondary">${this._showReviewed ? "Hide reviewed" : "Show reviewed"}</button>` : ""}${pendingCount ? '<button id="ignoreAllReviewsBtn" class="secondary">Ignore all pending</button>' : ""}`;
+        heading.insertAdjacentElement("afterend", actions);
+      }
       const intro = reviewCard.querySelector("h2 + p.muted");
       if (intro) intro.textContent = "Review the latest recognition results. The newest 10 recordings can be played back; older answers can still help recommendations.";
       const select = reviewCard.querySelector("#feedbackUserSelect");
