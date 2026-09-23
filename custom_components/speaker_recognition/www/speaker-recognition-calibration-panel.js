@@ -429,7 +429,7 @@ class SpeakerRecognitionCalibrationPanel extends BasePanel {
     this._calibrationMessage = "Applying recommendation…";
     this._render();
     try {
-      const result = await this._call({
+      await this._call({
         type: "speaker_recognition/apply_recommended_threshold",
         entry_id: entry.entry_id,
       });
@@ -472,6 +472,8 @@ class SpeakerRecognitionCalibrationPanel extends BasePanel {
       return heading && heading.textContent.trim() === "Recognition calibration";
     });
     if (reviewCard) {
+      const heading = reviewCard.querySelector("h2");
+      if (heading) heading.textContent = "Recent recognition results";
       const intro = reviewCard.querySelector("h2 + p.muted");
       if (intro) intro.textContent = "Review the latest recognition results. The newest 10 recordings can be played back; older answers can still help recommendations.";
       const select = reviewCard.querySelector("#feedbackUserSelect");
