@@ -123,6 +123,56 @@ async def websocket_review_feedback(
     connection.send_result(msg["id"], {"saved": True})
 
 
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/review_dismiss",
+        vol.Required("decision_id"): str,
+    }
+)
+@websocket_api.require_admin
+@callback
+def websocket_review_dismiss(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Dismiss one unlabelled decision from the user-facing review queue."""
+    history = get_decision_history(hass)
+    if history is None:
+        connection.send_error(msg["id"], "history_unavailable", "History is unavailable")
+        return
+    if not history.dismiss_review(msg["decision_id"]):
+        connection.send_error(
+            msg["id"],
+            "decision_not_dismissible",
+            "This recognition result is unavailable or has already been reviewed",
+        )
+        return
+    connection.send_result(msg["id"], {"dismissed": True})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/review_dismiss_all",
+    }
+)
+@websocket_api.require_admin
+@callback
+def websocket_review_dismiss_all(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Dismiss all currently pending review decisions."""
+    history = get_decision_history(hass)
+    if history is None:
+        connection.send_error(msg["id"], "history_unavailable", "History is unavailable")
+        return
+    connection.send_result(
+        msg["id"], {"dismissed": history.dismiss_pending_reviews()}
+    )
+
 def async_register_review_audio_websocket(hass: HomeAssistant) -> None:
     """Register the bounded review queue, playback and simpler feedback commands."""
     data = hass.data.setdefault(DOMAIN, {})
@@ -131,4 +181,6 @@ def async_register_review_audio_websocket(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, websocket_review_decisions)
     websocket_api.async_register_command(hass, websocket_decision_audio)
     websocket_api.async_register_command(hass, websocket_review_feedback)
+    websocket_api.async_register_command(hass, websocket_review_dismiss)
+    websocket_api.async_register_command(hass, websocket_review_dismiss_all)
     data["review_audio_websocket_registered"] = True
