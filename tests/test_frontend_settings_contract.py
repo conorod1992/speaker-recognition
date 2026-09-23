@@ -58,6 +58,7 @@ def test_settings_only_offer_safe_proxy_sources() -> None:
 
     assert "def _available_proxy_sources(" in backend
     assert "validate_proxy_source(" in backend
+    assert "hass.states.async_all()" in backend
     assert '"stt_options": _available_proxy_sources(' in backend
     assert '"conversation_options": _available_proxy_sources(' in backend
     assert 'entry.stt_options' in panel
