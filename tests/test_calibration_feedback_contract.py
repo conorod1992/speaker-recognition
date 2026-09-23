@@ -95,6 +95,8 @@ def test_frontend_uses_compact_playable_review_workflow() -> None:
     assert "Correctly unknown" in calibration
     assert "That was me" in calibration
     assert "Not me" in calibration
+    assert 'data-review-ignore=' in calibration
+    assert "Recognition result ignored." in calibration
 
 
 def test_changed_ha_modules_compile() -> None:
