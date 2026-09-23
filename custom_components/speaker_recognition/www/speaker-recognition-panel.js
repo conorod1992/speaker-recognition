@@ -116,7 +116,7 @@ class SpeakerRecognitionPanel extends HTMLElement {
 
   async _startRecording() {
     if (!this._canUseMicrophone()) {
-      this._message = "Microphone recording needs a secure browser context. Open Home Assistant over HTTPS, or use the upload/satellite alternatives.";
+      this._message = "Microphone access is unavailable here. Open Home Assistant over HTTPS, record with a voice satellite, or upload an existing WAV file from the integration options.";
       this._render();
       return;
     }
@@ -249,7 +249,7 @@ class SpeakerRecognitionPanel extends HTMLElement {
     this._qualityPollAttempts = 0;
     if (!this._userId || !this._satelliteId) return;
     this._busy = true;
-    this._message = "The selected satellite will read the phrase and listen for your reply…";
+    this._message = "The selected satellite will read the phrase, then listen for your reply…";
     this._render();
     try {
       const started = await this._call({
@@ -299,7 +299,7 @@ class SpeakerRecognitionPanel extends HTMLElement {
         type: "speaker_recognition/commit_enrollment",
         user_id: this._userId,
       });
-      this._message = `${result.samples} samples committed. Home Assistant is applying the new profile transactionally.`;
+      this._message = `${result.samples} samples committed. Your voice profile is being updated.`;
       setTimeout(() => this._refresh(true), 1500);
     } catch (err) {
       this._message = this._errorText(err);
@@ -340,7 +340,7 @@ class SpeakerRecognitionPanel extends HTMLElement {
   async _startLiveTest() {
     if (!this._liveSatelliteId) return;
     this._liveBusy = true;
-    this._liveMessage = "Listening for the next normal Assist request from this satellite…";
+    this._liveMessage = "Waiting for your next voice request on this satellite…";
     this._render();
     try {
       const started = await this._call({
@@ -371,7 +371,7 @@ class SpeakerRecognitionPanel extends HTMLElement {
       }
       if (Date.now() - started > 90000) {
         this._liveBusy = false;
-        this._liveMessage = "No matching Assist turn was seen within 90 seconds. Make sure this pipeline uses the Speaker Recognition STT and Conversation proxies.";
+        this._liveMessage = "No voice request was detected within 90 seconds. Check that this satellite uses Speaker Recognition in its Assist pipeline.";
         this._render();
         return;
       }
@@ -412,7 +412,7 @@ class SpeakerRecognitionPanel extends HTMLElement {
     const candidate = this._escape(this._userName(result.candidate_user_id));
     const recognized = result.identity_eligible && result.user_id
       ? this._escape(this._userName(result.user_id))
-      : "Unknown / not applied";
+      : "No confident match";
     const similarity = Number(result.similarity || 0).toFixed(3);
     const margin = result.margin == null ? "n/a" : Number(result.margin).toFixed(3);
     const threshold = Number(result.threshold || 0).toFixed(2);
@@ -421,25 +421,27 @@ class SpeakerRecognitionPanel extends HTMLElement {
       .map(([userId, score]) => `<li>${this._escape(this._userName(userId))}: ${Number(score).toFixed(3)}</li>`)
       .join("");
     return `<div class="result ${result.identity_eligible ? "success" : ""}">
-      <strong>${result.identity_eligible ? "Recognised successfully" : "Speaker identity was not applied"}</strong>
-      <div class="metrics">
-        <span><b>Recognised as</b><br>${recognized}</span>
-        <span><b>Candidate</b><br>${candidate}</span>
-        <span><b>Similarity</b><br>${similarity}</span>
-        <span><b>Margin</b><br>${margin}</span>
-        <span><b>HA threshold</b><br>${threshold}</span>
-        <span><b>Recognition</b><br>${this._formatMs(result.recognition_seconds)}</span>
-        <span><b>Added Assist latency</b><br>${this._formatMs(result.added_latency_seconds)}</span>
-        <span><b>STT</b><br>${this._formatMs(result.stt_seconds)}</span>
-        <span><b>Audio</b><br>${Number(result.audio_seconds || 0).toFixed(1)} s</span>
-      </div>
-      ${scoreRows ? `<details><summary>All profile scores</summary><ul>${scoreRows}</ul></details>` : ""}
+      <strong>${result.identity_eligible ? `✓ Recognised as ${recognized}` : "No speaker was confidently recognised"}</strong>
+      <details>
+        <summary>Technical details</summary>
+        <div class="metrics">
+          <span><b>Best match</b><br>${candidate}</span>
+          <span><b>Similarity</b><br>${similarity}</span>
+          <span><b>Margin</b><br>${margin}</span>
+          <span><b>Identity threshold</b><br>${threshold}</span>
+          <span><b>Recognition time</b><br>${this._formatMs(result.recognition_seconds)}</span>
+          <span><b>Added delay</b><br>${this._formatMs(result.added_latency_seconds)}</span>
+          <span><b>Speech-to-text time</b><br>${this._formatMs(result.stt_seconds)}</span>
+          <span><b>Audio length</b><br>${Number(result.audio_seconds || 0).toFixed(1)} s</span>
+        </div>
+        ${scoreRows ? `<details><summary>All voice scores</summary><ul>${scoreRows}</ul></details>` : ""}
+      </details>
     </div>`;
   }
 
   _renderHistory() {
     const decisions = this._history && this._history.decisions ? this._history.decisions : [];
-    if (!decisions.length) return `<p class="muted">No normal Assist recognition decisions have been recorded yet.</p>`;
+    if (!decisions.length) return `<p class="muted">No recognition results have been recorded yet.</p>`;
     return decisions.slice(0, 10).map(item => {
       const candidate = this._escape(this._userName(item.candidate_user_id));
       const outcome = item.identity_eligible && item.user_id
@@ -470,15 +472,20 @@ class SpeakerRecognitionPanel extends HTMLElement {
   _renderEnrollmentQuality() {
     const quality = this._status?.enrollment_quality?.[this._userId];
     if (!quality) return "";
-    if (quality.state === "analyzing") return `<p class="muted">Checking sample consistency… Recording saved.</p>`;
-    if (quality.state === "unavailable") return `<p class="muted">Embedding analysis unavailable. Your recording is saved; final training checks still apply.</p>`;
-    const sampleLabel = index => Number(index) < 6 ? `Phrase ${Number(index) + 1}` : `Promoted Assist clip ${Number(index) - 5}`;
-    const labels = {good: "Good sample", inconsistent: "Inconsistent sample — retake recommended", insufficient_evidence: "Insufficient evidence yet"};
-    return `<div class="result"><strong>Staged sample quality</strong>
-      ${Object.entries(quality.samples || {}).map(([index, item]) => `<p>${sampleLabel(index)}: ${labels[item.assessment] || "Analysis unavailable"}</p>`).join("")}
-      <p class="muted">Advisory feedback; final training checks remain authoritative. At least three staged recordings are needed for a consistency assessment.</p>
-      <details><summary>Embedding diagnostics</summary><p>Internal consistency: ${quality.consistency == null ? "Not enough evidence" : Number(quality.consistency).toFixed(3)}</p>
-      ${Object.entries(quality.samples || {}).filter(([, item]) => item.profile_similarity != null).map(([index, item]) => `<p>${sampleLabel(index)}, existing-profile similarity: ${Number(item.profile_similarity).toFixed(3)}</p>`).join("")}</details>
+    if (quality.state === "analyzing") return `<p class="muted">Checking this recording…</p>`;
+    if (quality.state === "unavailable") return `<p class="muted">This recording was saved. The optional quality check is temporarily unavailable.</p>`;
+    const sampleLabel = index => Number(index) < 6 ? `Phrase ${Number(index) + 1}` : `Confirmed recording ${Number(index) - 5}`;
+    const labels = {good: "Looks good", inconsistent: "Sounds different from the others — consider recording it again", insufficient_evidence: "More recordings needed before this can be checked"};
+    const items = Object.entries(quality.samples || {});
+    const warnings = items.filter(([, item]) => item.assessment === "inconsistent");
+    return `<div class="result">
+      <strong>${warnings.length ? "Some recordings may need another try" : "Recording quality check"}</strong>
+      ${items.map(([index, item]) => `<p>${sampleLabel(index)}: ${labels[item.assessment] || "Could not check"}</p>`).join("")}
+      <details>
+        <summary>Technical details</summary>
+        <p>Internal consistency: ${quality.consistency == null ? "Not enough recordings yet" : Number(quality.consistency).toFixed(3)}</p>
+        ${items.filter(([, item]) => item.profile_similarity != null).map(([index, item]) => `<p>${sampleLabel(index)}, existing-profile similarity: ${Number(item.profile_similarity).toFixed(3)}</p>`).join("")}
+      </details>
     </div>`;
   }
 
@@ -538,12 +545,12 @@ class SpeakerRecognitionPanel extends HTMLElement {
             ${micAvailable ? `<div class="row">
               ${this._recording ? `<button id="stopBtn">Stop recording</button>` : `<button id="recordBtn" ${this._busy ? "disabled" : ""}>Start recording</button>`}
               ${this._lastWav ? `<button id="playBtn" class="secondary">Play back</button><button id="useBtn" ${this._busy ? "disabled" : ""}>Use this recording</button><button id="testBtn" class="secondary" ${this._busy ? "disabled" : ""}>Test profile</button>` : ""}
-            </div>` : `<p class="warning">Microphone access is unavailable in this browser context. Browser microphone APIs require HTTPS (or localhost). You can still use a compatible voice satellite or the existing WAV upload flow in the integration options.</p>`}
+            </div>` : `<p class="warning">Microphone access is unavailable here. Open Home Assistant over HTTPS, or record with a voice satellite instead.</p>`}
             <h3>Record with a voice satellite</h3>
-            ${enrollmentSatellites.length ? `<div class="row"><select id="satelliteSelect">${enrollmentSatellites.map(x => `<option value="${x.entity_id}" ${x.entity_id === this._satelliteId ? "selected" : ""}>${this._escape(x.name || x.entity_id)}${x.available ? "" : " (unavailable)"}</option>`).join("")}</select><button id="satelliteBtn" ${this._busy ? "disabled" : ""}>Prompt satellite</button></div>` : `<p class="muted">No Assist Satellite entity currently advertises remote Start Conversation support.</p>`}
-            <p class="muted">The satellite path is bound to the selected satellite and the exact Assist turn; unrelated speech from another satellite is ignored.</p>
-            ${s.profile_promoted_counts?.[this._userId] ? `<p class="muted">Current profile includes ${s.profile_promoted_counts[this._userId]} explicitly labelled real-world Assist clip(s).</p>` : ""}
-            ${promoted.length ? `<div class="result"><strong>Promoted real-world Assist clips: ${promoted.length}</strong><p>Explicitly labelled clips staged for profile improvement. Your current profile remains active until training succeeds.</p><button id="trainPromotedBtn" ${this._busy || staged.length ? "disabled" : ""}>Train with promoted clips</button><button id="discardPromotedBtn" class="secondary" ${this._busy ? "disabled" : ""}>Discard promoted clips</button>${staged.length ? `<p>Finish the phrase recordings below to train them together with these clips.</p>` : ""}</div>` : ""}
+            ${enrollmentSatellites.length ? `<div class="row"><select id="satelliteSelect">${enrollmentSatellites.map(x => `<option value="${x.entity_id}" ${x.entity_id === this._satelliteId ? "selected" : ""}>${this._escape(x.name || x.entity_id)}${x.available ? "" : " (unavailable)"}</option>`).join("")}</select><button id="satelliteBtn" ${this._busy ? "disabled" : ""}>Prompt satellite</button></div>` : `<p class="muted">No compatible voice satellite is available.</p>`}
+            <p class="muted">Only your response to the selected satellite will be recorded.</p>
+            ${s.profile_promoted_counts?.[this._userId] ? `<p class="muted">Current profile includes ${s.profile_promoted_counts[this._userId]} confirmed real-world recording(s).</p>` : ""}
+            ${promoted.length ? `<div class="result"><strong>Confirmed real-world recordings: ${promoted.length}</strong><p>These confirmed recordings can be used to improve the voice profile. The current profile keeps working until the update succeeds.</p><button id="trainPromotedBtn" ${this._busy || staged.length ? "disabled" : ""}>Update with confirmed recordings</button><button id="discardPromotedBtn" class="secondary" ${this._busy ? "disabled" : ""}>Discard recordings</button>${staged.length ? `<p>Finish recording the selected phrases first.</p>` : ""}</div>` : ""}
             <div class="row"><button id="commitBtn" ${staged.length < minimum || this._busy ? "disabled" : ""}>Train with ${staged.length} staged sample${staged.length === 1 ? "" : "s"}</button><span class="muted">Minimum ${minimum}; up to ${s.phrases.length}.</span></div>
             ${this._message ? `<div class="message">${this._escape(this._message)}</div>` : ""}
           </div>
@@ -554,17 +561,17 @@ class SpeakerRecognitionPanel extends HTMLElement {
           </div>
           <div class="card">
             <h2>Live satellite test</h2>
-            <p>Test the real microphone, room acoustics, distance and Assist path. Select a satellite, start the test, then address that satellite normally within 90 seconds. Ask a harmless question such as <em>“What time is it?”</em> or use a reversible command.</p>
-            ${s.satellites.length ? `<div class="row"><select id="liveSatelliteSelect">${s.satellites.map(x => `<option value="${x.entity_id}" ${x.entity_id === this._liveSatelliteId ? "selected" : ""}>${this._escape(x.name || x.entity_id)}${x.available ? "" : " (unavailable)"}</option>`).join("")}</select><button id="liveTestBtn" ${this._liveBusy ? "disabled" : ""}>${this._liveBusy ? "Waiting for Assist…" : "Start live test"}</button></div>` : `<p class="muted">No Assist Satellite entities are available.</p>`}
-            <p class="muted">Your normal Assist request still runs. The test only observes the exact correlated speaker decision from the selected satellite.</p>
+            <p>Check recognition using the microphone and room conditions you normally use. Select a satellite, start the test, then make a normal voice request within 90 seconds.</p>
+            ${s.satellites.length ? `<div class="row"><select id="liveSatelliteSelect">${s.satellites.map(x => `<option value="${x.entity_id}" ${x.entity_id === this._liveSatelliteId ? "selected" : ""}>${this._escape(x.name || x.entity_id)}${x.available ? "" : " (unavailable)"}</option>`).join("")}</select><button id="liveTestBtn" ${this._liveBusy ? "disabled" : ""}>${this._liveBusy ? "Waiting for voice request…" : "Start live test"}</button></div>` : `<p class="muted">No voice satellites are available.</p>`}
+            <p class="muted">Your voice request will run normally while Speaker Recognition checks who spoke.</p>
             ${this._liveMessage ? `<div class="message">${this._escape(this._liveMessage)}</div>` : ""}
             ${this._renderLiveResult(liveResult)}
           </div>
           <div class="card">
             <h2>Recognition calibration</h2>
-            <p class="muted">Recent normal Assist decisions are stored without audio or transcripts. Marking a few real results gives future threshold tuning reliable ground truth.</p>
+            <p class="muted">Review recent recognition results to help Speaker Recognition recommend better settings.</p>
             <div class="row">
-              <label for="feedbackUserSelect">Actual speaker for corrections</label>
+              <label for="feedbackUserSelect">Who actually spoke?</label>
               <select id="feedbackUserSelect">${s.users.map(u => `<option value="${u.id}" ${u.id === this._feedbackUserId ? "selected" : ""}>${this._escape(u.name)}</option>`).join("")}</select>
               <button id="refreshHistoryBtn" class="secondary">Refresh</button>
             </div>

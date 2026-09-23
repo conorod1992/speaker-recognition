@@ -38,10 +38,13 @@ def test_frontend_is_registered_to_settings_panel() -> None:
         encoding="utf-8"
     )
     assert 'PANEL_ELEMENT = "speaker-recognition-settings-panel"' in frontend
-    assert "speaker-recognition-settings-panel.js" in frontend
-    assert "Use basic DSP for speech-to-text" in panel
-    assert "Backend URL" in panel
-    assert "Minimum identity confidence" in panel
+    assert 'BASE_PANEL_MODULE = "speaker-recognition-settings-panel.js"' in frontend
+    assert 'module_url=f"{STATIC_URL}/{BASE_PANEL_MODULE}"' in frontend
+    assert "speaker-recognition-evaluation-panel.js" not in frontend
+    assert "Use basic audio cleanup for speech-to-text" in panel
+    assert "Advanced recognition settings" in panel
+    assert "Recognition service address" in panel
+    assert "Advanced identity setting" in panel
     assert "speaker_recognition/update_settings" in panel
 
 

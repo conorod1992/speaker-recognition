@@ -253,9 +253,9 @@ class SpeakerRecognitionCalibrationPanel extends BasePanel {
         ${item.has_audio && item.feedback && !item.promoted_user_id && enrolled.includes(item.feedback === "correct" && item.identity_eligible ? item.user_id : item.actual_user_id) ? `<button class="secondary" data-promote-decision="${this._escape(item.decision_id)}">Add to voice profile</button>` : ""}
         ${item.promoted_user_id ? `<span class="muted">Previously added to profile training material</span>` : ""}
         <details class="decisionDiagnostics">
-          <summary>Diagnostics</summary>
+          <summary>Technical details</summary>
           <div class="muted">Candidate ${candidate} · similarity ${Number(item.similarity || 0).toFixed(3)} · margin ${margin}</div>
-          <div class="muted">Recognition ${this._formatMs(item.recognition_seconds)} · added Assist latency ${this._formatMs(item.added_latency_seconds)} · STT ${this._formatMs(item.stt_seconds)}${item.audio_seconds == null ? "" : ` · audio ${Number(item.audio_seconds).toFixed(1)} s`}</div>
+          <div class="muted">Recognition ${this._formatMs(item.recognition_seconds)} · added delay ${this._formatMs(item.added_latency_seconds)} · speech-to-text ${this._formatMs(item.stt_seconds)}${item.audio_seconds == null ? "" : ` · audio ${Number(item.audio_seconds).toFixed(1)} s`}</div>
         </details>
       </div>`;
     }).join("");
@@ -269,7 +269,7 @@ class SpeakerRecognitionCalibrationPanel extends BasePanel {
         button.disabled = true;
         try {
           await this._call({type: "speaker_recognition/promote_decision", decision_id: button.dataset.promoteDecision});
-          this._historyMessage = "Clip staged. Use Train with promoted clips in enrollment to update the profile.";
+          this._historyMessage = "Recording added. Open Voices when you are ready to update the voice profile.";
           await this._refresh(true);
           await this._refreshHistory(true);
         } catch (err) { this._historyMessage = this._errorText(err); this._render(); }
@@ -295,26 +295,20 @@ class SpeakerRecognitionCalibrationPanel extends BasePanel {
     const total = (this._status.phrases || []).length;
     const remaining = Math.max(0, minimum - staged.length);
     const ready = staged.length >= minimum;
-    const mode = enrolled ? "Retraining existing profile" : "New enrollment";
     let guidance;
     if (ready) {
-      guidance = `Ready to train. ${staged.length} new sample${staged.length === 1 ? " is" : "s are"} staged.`;
+      guidance = `Ready to ${enrolled ? "update" : "create"} this voice profile.`;
     } else if (staged.length) {
-      guidance = `${remaining} more sample${remaining === 1 ? "" : "s"} needed before training.`;
+      guidance = `${remaining} more recording${remaining === 1 ? "" : "s"} needed.`;
     } else {
       guidance = enrolled
-        ? "No replacement samples staged yet. The current trained profile remains active."
-        : "No samples staged yet.";
+        ? `Your voice profile is active. Record at least ${minimum} of the ${total} phrases below if you want to replace it.`
+        : `Record at least ${minimum} of the ${total} phrases below to create a voice profile.`;
     }
     return `<div class="result" id="selectedEnrollmentStatus">
-      <strong>Selected user status</strong>
-      <div class="metrics">
-        <span><b>Current profile</b><br>${enrolled ? "Enrolled" : "Not enrolled"}</span>
-        <span><b>Enrollment mode</b><br>${mode}</span>
-        <span><b>New samples</b><br>${staged.length} staged<br><small>${minimum} minimum · ${total} available</small></span>
-        <span><b>Ready to train</b><br>${ready ? "Yes" : "No"}</span>
-      </div>
-      <p class="muted">${guidance}${enrolled && staged.length ? " Your existing trained profile stays in use until the replacement is successfully committed." : ""}</p>
+      <strong>${enrolled ? "✓ Voice profile active" : "No voice profile yet"}</strong>
+      <p>${staged.length} of ${minimum} recordings ready</p>
+      <p class="muted">${guidance}${enrolled && staged.length ? " Your existing profile keeps working until the update is ready." : ""}</p>
     </div>`;
   }
 
@@ -323,16 +317,31 @@ class SpeakerRecognitionCalibrationPanel extends BasePanel {
     if (!backend) return "";
     const a = backend.analysis;
     const policy = p => `similarity ${Number(p.min_similarity).toFixed(2)} · margin ${Number(p.min_margin).toFixed(2)}`;
-    const metrics = m => `${m.correct_identity} correct identities · ${m.wrong_speaker + m.false_accepts} wrong identities · ${m.false_unknowns} misses · ${m.correct_rejection} correctly unknown`;
+    const metrics = m => `${m.correct_identity} correct · ${m.wrong_speaker + m.false_accepts} wrong person · ${m.false_unknowns} missed · ${m.correct_rejection} correctly unknown`;
     const recommended = a.recommended_policy;
     const unchanged = recommended && recommended.min_similarity === a.current_policy.min_similarity && recommended.min_margin === a.current_policy.min_margin;
-    return `<div class="result" id="backendCalibration">
-      <h3>Backend acceptance policy</h3>
-      <p>Current: ${policy(a.current_policy)}</p>
-      <p>${a.labelled_count} of ${a.minimum_labelled} labelled raw decisions required.</p>
-      <p class="muted">${this._escape(a.summary)} These gates are separate from Conversation proxy confidence.</p>
-      ${recommended ? `<p><strong>Recommended: ${policy(recommended)}</strong></p><p>Current: ${metrics(a.current_metrics)}<br>Recommended: ${metrics(a.recommended_metrics)}</p>
-      <button id="applyBackendCalibrationBtn" ${unchanged || this._calibrationBusy ? "disabled" : ""}>Apply recommended backend thresholds</button>` : `<p>Insufficient evidence yet.</p>`}
+    if (!recommended) {
+      return `<div class="result" id="backendCalibration">
+        <h3>Recognition settings</h3>
+        <strong>Keep reviewing recognition results</strong>
+        <p>${a.labelled_count} of ${a.minimum_labelled} reviewed results collected.</p>
+        <p class="muted">Once there is enough evidence, Speaker Recognition can recommend safer recognition settings.</p>
+        <details><summary>Technical details</summary><p>Current: ${policy(a.current_policy)}</p><p>${this._escape(a.summary)}</p></details>
+      </div>`;
+    }
+    return `<div class="result ${unchanged ? "success" : ""}" id="backendCalibration">
+      <h3>Recognition settings</h3>
+      <strong>${unchanged ? "Current recognition settings fit the reviewed results" : "A settings change may improve recognition"}</strong>
+      <p>${a.labelled_count} reviewed results were used for this recommendation.</p>
+      ${unchanged ? "" : `<button id="applyBackendCalibrationBtn" ${this._calibrationBusy ? "disabled" : ""}>Apply recommendation</button>`}
+      <details>
+        <summary>Technical details</summary>
+        <p>Current: ${policy(a.current_policy)}</p>
+        <p>Recommended: ${policy(recommended)}</p>
+        <p>Current results: ${metrics(a.current_metrics)}</p>
+        <p>Recommended results: ${metrics(a.recommended_metrics)}</p>
+        <p>${this._escape(a.summary)}</p>
+      </details>
     </div>`;
   }
 
@@ -343,7 +352,7 @@ class SpeakerRecognitionCalibrationPanel extends BasePanel {
     this._render();
     try {
       await this._call({ type: "speaker_recognition/apply_recommended_backend_thresholds", entry_id: backend.entry_id });
-      this._calibrationMessage = "Backend thresholds updated using the latest labelled evidence.";
+      this._calibrationMessage = "Recognition settings updated using your reviewed results.";
       await this._refreshHistory(true);
     } catch (err) {
       this._calibrationMessage = this._errorText(err);
@@ -361,11 +370,12 @@ class SpeakerRecognitionCalibrationPanel extends BasePanel {
     const labelled = decisions.filter(item => item.feedback).length;
     if (!entries.length) {
       return `<div class="card" id="calibrationGuidanceCard">
-        <h2>Threshold guidance</h2>
-      ${this._renderBackendCalibration()}
+        <h2>Improve accuracy</h2>
+        <p class="muted">Review real recognition results and Speaker Recognition can suggest settings based on how it performs in your home.</p>
+        ${this._renderBackendCalibration()}
         ${this._calibrationMessage ? `<div class="message">${this._escape(this._calibrationMessage)}</div>` : ""}
-        <p><strong>${decisions.length} recent recognition decision${decisions.length === 1 ? "" : "s"} available</strong>${labelled ? ` · ${labelled} labelled` : ""}</p>
-        <p class="muted">The review queue above keeps only ten recent clips. Compact labelled decision metadata can continue contributing to calibration after its audio has expired. Add a Speaker Recognition Conversation proxy only if you want this section to recommend and apply a Home Assistant identity-confidence threshold.</p>
+        <p><strong>${labelled} recent result${labelled === 1 ? "" : "s"} reviewed</strong></p>
+        <p class="muted">The latest 10 recordings can be played back. Your earlier answers can still help future recommendations.</p>
       </div>`;
     }
 
@@ -379,33 +389,34 @@ class SpeakerRecognitionCalibrationPanel extends BasePanel {
     let guidance;
     if (!analysis.ready) {
       guidance = `<div class="result">
-        <strong>More labelled decisions needed</strong>
-        <p>${analysis.labelled_count} of ${analysis.minimum_labelled} labelled decisions collected.</p>
-        <p class="muted">Keep reviewing real Assist results. Older reviewed audio can expire from the ten-item queue while its compact feedback remains useful for threshold calibration.</p>
+        <strong>Keep reviewing recognition results</strong>
+        <p>${analysis.labelled_count} of ${analysis.minimum_labelled} reviewed results collected.</p>
+        <p class="muted">Once there is enough evidence, Speaker Recognition can recommend whether this identity setting should change.</p>
       </div>`;
     } else {
       const current = Number(analysis.current_threshold).toFixed(2);
       const recommended = Number(analysis.recommended_threshold).toFixed(2);
       const unchanged = current === recommended;
       guidance = `<div class="result ${unchanged ? "success" : ""}">
-        <strong>${unchanged ? "Current threshold already fits the labelled evidence" : `Suggested threshold: ${recommended}`}</strong>
-        <div class="metrics">
-          <span><b>Current</b><br>${current}<br><small>${this._escape(this._metricsText(analysis.current_metrics))}</small></span>
-          <span><b>Suggested</b><br>${recommended}<br><small>${this._escape(this._metricsText(analysis.recommended_metrics))}</small></span>
-          <span><b>Evidence</b><br>${analysis.labelled_count} labelled turns</span>
-          <span><b>Error weighting</b><br>wrong person ×${analysis.false_accept_weight}<br>missed ×${analysis.missed_speaker_weight}</span>
-        </div>
-        ${analysis.backend_rejected_misses ? `<p class="muted">${analysis.backend_rejected_misses} labelled missed recognition${analysis.backend_rejected_misses === 1 ? " was" : "s were"} already rejected by the backend. Changing the HA threshold cannot fix ${analysis.backend_rejected_misses === 1 ? "that case" : "those cases"}; profile/enrollment quality or backend decision settings are the relevant layer.</p>` : ""}
-        ${analysis.threshold_actionable_misses ? `<p class="muted">${analysis.threshold_actionable_misses} missed recognition${analysis.threshold_actionable_misses === 1 ? " appears" : "s appear"} potentially recoverable by the HA threshold.</p>` : ""}
-        <button id="applyCalibrationBtn" ${unchanged || this._calibrationBusy ? "disabled" : ""}>${this._calibrationBusy ? "Applying…" : `Apply suggested threshold ${recommended}`}</button>
+        <strong>${unchanged ? "Current identity setting fits the reviewed results" : "A conversation identity setting may improve recognition"}</strong>
+        <p>${analysis.labelled_count} reviewed results were used.</p>
+        ${unchanged ? "" : `<button id="applyCalibrationBtn" ${this._calibrationBusy ? "disabled" : ""}>${this._calibrationBusy ? "Applying…" : "Apply recommendation"}</button>`}
+        ${analysis.backend_rejected_misses ? `<p class="muted">Some missed recognitions happened before this identity setting was checked. Updating the affected voice profile or the advanced recognition settings may help those cases.</p>` : ""}
+        <details>
+          <summary>Technical details</summary>
+          <p>Current identity confidence: ${current} · ${this._escape(this._metricsText(analysis.current_metrics))}</p>
+          <p>Recommended identity confidence: ${recommended} · ${this._escape(this._metricsText(analysis.recommended_metrics))}</p>
+          <p>Wrong-person matches are weighted more heavily than missed recognitions when choosing a recommendation.</p>
+          ${analysis.threshold_actionable_misses ? `<p>${analysis.threshold_actionable_misses} missed recognition${analysis.threshold_actionable_misses === 1 ? " may be" : "s may be"} affected by this setting.</p>` : ""}
+        </details>
       </div>`;
     }
 
     return `<div class="card" id="calibrationGuidanceCard">
-      <h2>Threshold guidance</h2>
+      <h2>Improve accuracy</h2>
+      <p class="muted">Review real recognition results and apply recommendations only when you want to.</p>
       ${this._renderBackendCalibration()}
-      <p class="muted">Uses the explicit feedback you provide on normal Assist decisions. It simulates the Home Assistant confidence threshold and treats a wrong-person identity as much more costly than a missed recognition.</p>
-      ${entries.length > 1 ? `<label for="calibrationEntrySelect">Conversation proxy</label><select id="calibrationEntrySelect">${options}</select>` : `<p><strong>Conversation proxy:</strong> ${this._escape(entry.title || entry.conversation_entity || entry.entry_id)}</p>`}
+      ${entries.length > 1 ? `<label for="calibrationEntrySelect">Conversation setup</label><select id="calibrationEntrySelect">${options}</select>` : ""}
       ${this._calibrationMessage ? `<div class="message">${this._escape(this._calibrationMessage)}</div>` : ""}
       ${guidance}
     </div>`;
@@ -415,14 +426,14 @@ class SpeakerRecognitionCalibrationPanel extends BasePanel {
     const entry = this._selectedCalibrationEntry();
     if (!entry) return;
     this._calibrationBusy = true;
-    this._calibrationMessage = "Applying the current server-side recommendation…";
+    this._calibrationMessage = "Applying recommendation…";
     this._render();
     try {
-      const result = await this._call({
+      await this._call({
         type: "speaker_recognition/apply_recommended_threshold",
         entry_id: entry.entry_id,
       });
-      this._calibrationMessage = `Threshold updated from ${Number(result.previous_threshold).toFixed(2)} to ${Number(result.new_threshold).toFixed(2)}.`;
+      this._calibrationMessage = `Identity setting updated.`;
       await this._refreshCalibration(true);
     } catch (err) {
       this._calibrationMessage = this._errorText(err);
@@ -461,8 +472,10 @@ class SpeakerRecognitionCalibrationPanel extends BasePanel {
       return heading && heading.textContent.trim() === "Recognition calibration";
     });
     if (reviewCard) {
+      const heading = reviewCard.querySelector("h2");
+      if (heading) heading.textContent = "Recent recognition results";
       const intro = reviewCard.querySelector("h2 + p.muted");
-      if (intro) intro.textContent = "Review the newest ten Assist decisions. Recent clips are playable; when an eleventh decision arrives the oldest clip is discarded automatically.";
+      if (intro) intro.textContent = "Review the latest recognition results. The newest 10 recordings can be played back; older answers can still help recommendations.";
       const select = reviewCard.querySelector("#feedbackUserSelect");
       const label = reviewCard.querySelector('label[for="feedbackUserSelect"]');
       const enrolled = Array.isArray(this._status.enrolled_users) ? this._status.enrolled_users : [];

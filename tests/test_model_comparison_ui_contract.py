@@ -8,14 +8,15 @@ FRONTEND = ROOT / "frontend.py"
 SHADOW_WEBSOCKET = ROOT / "shadow_websocket.py"
 
 
-def test_main_panel_loads_evaluation_wrapper_without_renaming_element() -> None:
-    """The wrapper augments the established sidebar custom element in place."""
+def test_main_panel_does_not_load_maintainer_evaluation_wrapper() -> None:
+    """Model comparison remains in-tree without appearing in the normal sidebar panel."""
     frontend = FRONTEND.read_text(encoding="utf-8")
     panel = PANEL.read_text(encoding="utf-8")
 
     assert 'PANEL_ELEMENT = "speaker-recognition-settings-panel"' in frontend
     assert 'BASE_PANEL_MODULE = "speaker-recognition-settings-panel.js"' in frontend
-    assert 'module_url=f"{STATIC_URL}/speaker-recognition-evaluation-panel.js"' in frontend
+    assert 'module_url=f"{STATIC_URL}/{BASE_PANEL_MODULE}"' in frontend
+    assert "speaker-recognition-evaluation-panel.js" not in frontend
     assert 'import "./speaker-recognition-settings-panel.js"' in panel
     assert 'customElements.get("speaker-recognition-settings-panel")' in panel
     assert "proto._organizePanel = function()" in panel

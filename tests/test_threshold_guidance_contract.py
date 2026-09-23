@@ -28,11 +28,12 @@ def test_frontend_requires_explicit_apply_and_explains_limitations() -> None:
     assert 'PANEL_ELEMENT = "speaker-recognition-settings-panel"' in frontend
     assert "speaker-recognition-settings-panel.js" in frontend
     assert 'import "./speaker-recognition-calibration-panel.js"' in settings_panel
-    assert "More labelled decisions needed" in calibration_panel
-    assert "Apply suggested threshold" in calibration_panel
+    assert "Keep reviewing recognition results" in calibration_panel
+    assert "Apply recommendation" in calibration_panel
     assert "apply_recommended_threshold" in calibration_panel
-    assert "Changing the HA threshold cannot fix" in calibration_panel
-    assert "wrong person ×" in calibration_panel
+    assert "Some missed recognitions happened before this identity setting was checked" in calibration_panel
+    assert "Wrong-person matches are weighted more heavily" in calibration_panel
+    assert "<summary>Technical details</summary>" in calibration_panel
 
 
 def test_changed_python_modules_compile() -> None:
