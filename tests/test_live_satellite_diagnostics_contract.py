@@ -100,14 +100,15 @@ def test_live_test_exposes_whispering_independently_of_speaker_identity() -> Non
     assert "Spectral centroid" in panel
 
 
-def test_frontend_explains_live_test_and_cold_first_recognition() -> None:
-    """The panel explains realistic testing and first-use warm-up."""
+def test_frontend_explains_live_test_in_plain_language() -> None:
+    """The panel keeps realistic testing clear while hiding raw metrics by default."""
     panel = (ROOT / "www" / "speaker-recognition-panel.js").read_text(
         encoding="utf-8"
     )
 
     assert "Live satellite test" in panel
     assert "Start live test" in panel
-    assert "Added Assist latency" in panel
-    assert "first recognition after the backend starts can take longer" in panel
-    assert "normal Assist request still runs" in panel
+    assert "normal voice request" in panel
+    assert "Your voice request will run normally" in panel
+    assert "<summary>Technical details</summary>" in panel
+    assert "<b>Added delay</b>" in panel
