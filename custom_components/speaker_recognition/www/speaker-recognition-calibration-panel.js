@@ -583,15 +583,6 @@ class SpeakerRecognitionCalibrationPanel extends BasePanel {
         this._render();
       };
     }
-    const ignoreAll = this.shadowRoot.getElementById("ignoreAllReviewsBtn");
-    if (ignoreAll) ignoreAll.onclick = () => this._dismissAllReviews();
-    const toggleReviewed = this.shadowRoot.getElementById("toggleReviewedBtn");
-    if (toggleReviewed) {
-      toggleReviewed.onclick = () => {
-        this._showReviewed = !this._showReviewed;
-        this._render();
-      };
-    }
   }
 }
 
