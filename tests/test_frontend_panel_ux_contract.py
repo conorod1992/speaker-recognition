@@ -10,39 +10,57 @@ def _source() -> str:
     return PANEL.read_text(encoding="utf-8")
 
 
-def test_panel_separates_major_tasks_into_tabs() -> None:
-    """Enrollment, diagnostics, calibration and settings are separate surfaces."""
+def test_panel_separates_user_tasks_into_plain_language_tabs() -> None:
+    """The normal panel is organised around user goals rather than internals."""
     source = _source()
 
     assert 'this._panelSection = "enrollment"' in source
-    assert '["enrollment", "Enrollment"]' in source
-    assert '["diagnostics", "Diagnostics"]' in source
-    assert '["calibration", "Calibration"]' in source
+    assert '["enrollment", "Voices"]' in source
+    assert '["recognition", "Recognition"]' in source
+    assert '["improve", "Improve accuracy"]' in source
     assert '["settings", "Settings"]' in source
+    assert '["diagnostics", "Diagnostics"]' not in source
+    assert '["calibration", "Calibration"]' not in source
     assert 'tabs.setAttribute("role", "tablist")' in source
-    assert 'data-panel-section' in source
+    assert "data-panel-section" in source
 
 
-def test_enrollment_surface_has_compact_progress_and_selected_step() -> None:
-    """The primary enrollment workflow exposes progress without four large status tiles."""
+def test_enrollment_surface_explains_active_profile_and_progress() -> None:
+    """Enrollment distinguishes an active profile from an update in progress."""
     source = _source()
 
-    assert "profileSummaryChips" in source
-    assert "Training samples" in source
+    assert "✓ Voice profile active" in source
+    assert "Updating profile" in source
+    assert "Training phrases" in source
+    assert "of ${minimum} needed" in source
+    assert "Record at least ${minimum} of the ${total} phrases below." in source
     assert 'button.classList.toggle("active", index === this._sampleIndex)' in source
-    assert 'aria-current' in source
-    assert "more sample" in source
-    assert 'commit.textContent = enrolled ? "Retrain profile" : "Train profile"' in source
+    assert "aria-current" in source
+    assert 'commit.textContent = enrolled ? "Update voice profile" : "Create voice profile"' in source
+    assert ">Retraining<" not in source
 
 
-def test_user_facing_diagnostics_use_ha_names_not_raw_ids() -> None:
-    """Normal UI resolves configured IDs through the Home Assistant user list."""
+def test_user_facing_diagnostics_use_ha_names_and_hide_raw_metrics() -> None:
+    """Normal UI resolves names and keeps model metrics behind technical details."""
     source = _source()
 
     assert "this._status.users.find(item => item.id === userId)" in source
     assert "Unknown HA user" in source
     assert "this._userName(result.candidate_user_id)" in source
     assert "names = enrolled.map(userId => this._userName(userId))" in source
+    assert "<summary>Technical details</summary>" in source
+    assert "No voice-profile separation problems detected." in source
+
+
+def test_settings_keep_tuning_controls_advanced() -> None:
+    """Technical thresholds remain available without dominating normal settings."""
+    source = _source()
+
+    assert "Advanced recognition settings" in source
+    assert "Recognition strictness" in source
+    assert "Ambiguous-match protection" in source
+    assert "Advanced identity setting" in source
+    assert "Automatic recommendations are available under Improve accuracy." in source
 
 
 def test_panel_adds_responsive_and_semantic_visual_hierarchy() -> None:
