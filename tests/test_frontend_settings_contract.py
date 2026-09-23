@@ -48,5 +48,20 @@ def test_frontend_is_registered_to_settings_panel() -> None:
     assert "speaker_recognition/update_settings" in panel
 
 
+
+def test_settings_only_offer_safe_proxy_sources() -> None:
+    """The settings picker omits Speaker Recognition proxies and already wrapped sources."""
+    backend = (HA / "settings_websocket.py").read_text(encoding="utf-8")
+    panel = (HA / "www" / "speaker-recognition-settings-panel.js").read_text(
+        encoding="utf-8"
+    )
+
+    assert "def _available_proxy_sources(" in backend
+    assert "validate_proxy_source(" in backend
+    assert '"stt_options": _available_proxy_sources(' in backend
+    assert '"conversation_options": _available_proxy_sources(' in backend
+    assert 'entry.stt_options' in panel
+    assert 'entry.conversation_options' in panel
+
 def test_settings_backend_module_compiles() -> None:
     py_compile.compile(str(HA / "settings_websocket.py"), doraise=True)
