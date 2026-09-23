@@ -30,9 +30,9 @@ async def async_register_frontend(hass: HomeAssistant) -> None:
         hass,
         webcomponent_name=PANEL_ELEMENT,
         frontend_url_path=PANEL_URL_PATH,
-        # This wrapper imports and augments BASE_PANEL_MODULE before HA creates
-        # the stable speaker-recognition-settings-panel custom element.
-        module_url=f"{STATIC_URL}/speaker-recognition-evaluation-panel.js",
+        # Keep model-evaluation tooling in-tree for maintainer use, but do not
+        # load it as part of the normal user-facing panel.
+        module_url=f"{STATIC_URL}/{BASE_PANEL_MODULE}",
         sidebar_title="Speaker Recognition",
         sidebar_icon="mdi:account-voice",
         require_admin=True,
