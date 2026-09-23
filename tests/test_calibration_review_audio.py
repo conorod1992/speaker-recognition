@@ -16,7 +16,7 @@ def test_review_audio_is_separate_bounded_and_does_not_pollute_decision_schema()
     assert "_MAX_REVIEW_AUDIO_SECONDS = 30" in source
     assert "self._review_audio = self._review_audio[-_MAX_REVIEW_AUDIO:]" in source
     assert "def review_recent" in source
-    assert 'item["has_audio"]' in source
+    assert 'copy["has_audio"]' in source
     assert "pcm_base64" not in record_schema
     assert "audio_data" not in record_schema
     assert "transcript" not in record_schema
@@ -54,7 +54,7 @@ def test_calibration_ui_defaults_to_listen_decide_and_hides_diagnostics() -> Non
 
     assert 'type: "speaker_recognition/review_decisions"' in source
     assert 'type: "speaker_recognition/decision_audio"' in source
-    assert "▶ Play clip" in source
+    assert "▶ Play recording" in source
     assert "<summary>Technical details</summary>" in source
     assert "Correctly unknown" in source
     assert "That was me" in source
