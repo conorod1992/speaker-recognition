@@ -47,7 +47,7 @@ def test_user_facing_diagnostics_use_ha_names_and_hide_raw_metrics() -> None:
     assert "this._status.users.find(item => item.id === userId)" in source
     assert "Unknown HA user" in source
     assert "this._userName(result.candidate_user_id)" in source
-    assert "names = enrolled.map(userId => this._userName(userId))" in source
+    assert "names = enrolled.map(userId => ({ userId, name: this._userName(userId) }))" in source
     assert "<summary>Technical details</summary>" in source
     assert "No comparison needed yet" in source
     assert "No unusually similar enrolled voice was found." in source
