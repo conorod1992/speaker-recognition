@@ -87,22 +87,29 @@ class SpeakerRecognitionSettingsPanel extends BasePanel {
     if (!health) return '<p class="muted">Voice profile checks have not loaded yet.</p>';
     if (!health.available) return '<p class="muted">Voice profile checks are temporarily unavailable.</p>';
     if (!health.profiles.length) return '<p class="muted">No enrolled voices to check yet.</p>';
-    return health.profiles.map(profile => `<div class="profileHealth">
-      <p><strong>${this._escape(profile.user_name)}</strong></p>
-      ${profile.low_separation
-        ? `<p class="message">This voice is unusually similar to ${this._escape(profile.nearest_user_name)}. Recording some new samples may improve recognition.</p>`
-        : `<p>✓ No voice-profile separation problems detected.</p>`}
-      ${profile.sample_data_incomplete ? '<p class="muted">Some older profile data could not be checked.</p>' : ""}
-      ${(profile.sample_warnings || []).length ? `<p><strong>Some recordings may be worth replacing.</strong></p>` : ""}
-      <details>
+
+    const selected = health.profiles.find(profile => profile.user_id === this._profileHealthUserId)
+      || health.profiles[0];
+    if (!this._profileHealthUserId) this._profileHealthUserId = selected.user_id;
+
+    const comparison = selected.nearest_user_id
+      ? (selected.low_separation
+        ? `<div class="profileHealthStatus warningStatus"><strong>Voices may be hard to tell apart</strong><p>This voice is unusually similar to ${this._escape(selected.nearest_user_name)}. Recording some new samples may improve recognition.</p></div>`
+        : `<div class="profileHealthStatus successStatus"><strong>Voice looks distinct</strong><p>No unusually similar enrolled voice was found.</p></div>`)
+      : `<div class="profileHealthStatus neutralStatus"><strong>No comparison needed yet</strong><p>There are no other enrolled voices to compare with this one.</p></div>`;
+
+    return `${comparison}
+      ${selected.sample_data_incomplete ? '<p class="muted">Some older profile data could not be checked.</p>' : ""}
+      ${(selected.sample_warnings || []).length ? '<p><strong>Some recordings may be worth replacing.</strong></p>' : ""}
+      <details class="profileTechnicalDetails">
         <summary>Technical details</summary>
-        <p>Internal consistency: ${number(profile.internal_consistency)}</p>
-        <p>${profile.nearest_user_id
-          ? `Nearest other profile: ${this._escape(profile.nearest_user_name)} · separation: ${number(profile.separation)}`
+        <p><strong>Internal consistency:</strong> ${number(selected.internal_consistency)}</p>
+        <p class="muted">This measures how similar this voice's training recordings are to one another. Higher values usually mean the recordings are more consistent.</p>
+        <p>${selected.nearest_user_id
+          ? `Nearest other profile: ${this._escape(selected.nearest_user_name)} · separation: ${number(selected.separation)}`
           : "No other enrolled voices to compare."}</p>
-        ${(profile.sample_warnings || []).map(sample => `<p>Stored sample ${Number(sample.sample_index)} is close to ${this._escape(sample.competing_user_name)} (gap: ${number(sample.separation)}).</p>`).join("")}
-      </details>
-    </div>`).join("");
+        ${(selected.sample_warnings || []).map(sample => `<p>Stored sample ${Number(sample.sample_index)} is close to ${this._escape(sample.competing_user_name)} (gap: ${number(sample.separation)}).</p>`).join("")}
+      </details>`;
   }
 
   async _refreshSettings(silent = false) {
@@ -156,10 +163,12 @@ class SpeakerRecognitionSettingsPanel extends BasePanel {
     }
   }
 
-  _entityOptions(domain, current) {
-    const ids = this._hass
-      ? Object.keys(this._hass.states).filter(entityId => entityId.startsWith(`${domain}.`))
-      : [];
+  _entityOptions(domain, current, allowed = null) {
+    const ids = Array.isArray(allowed)
+      ? [...allowed]
+      : (this._hass
+        ? Object.keys(this._hass.states).filter(entityId => entityId.startsWith(`${domain}.`))
+        : []);
     if (current && !ids.includes(current)) ids.push(current);
     ids.sort();
     return ids.map(entityId => {
@@ -200,7 +209,7 @@ class SpeakerRecognitionSettingsPanel extends BasePanel {
     const stt = sttEntries.length ? sttEntries.map((entry, index) => `<div class="result" data-settings-entry="${this._escape(entry.entry_id)}">
       <strong>${this._escape(entry.title || `Speech-to-text ${index + 1}`)}</strong>
       <label for="sttEntity-${index}">Speech-to-text provider</label>
-      <select id="sttEntity-${index}" data-stt-entity="${this._escape(entry.entry_id)}">${this._entityOptions("stt", entry.stt_entity)}</select>
+      <select id="sttEntity-${index}" data-stt-entity="${this._escape(entry.entry_id)}">${this._entityOptions("stt", entry.stt_entity, entry.stt_options)}</select>
       <label style="display:flex;gap:10px;align-items:center;font-weight:600;margin-top:14px">
         <input type="checkbox" data-dsp="${this._escape(entry.entry_id)}" ${entry.use_basic_dsp ? "checked" : ""}>
         Use basic audio cleanup for speech-to-text
@@ -212,7 +221,7 @@ class SpeakerRecognitionSettingsPanel extends BasePanel {
     const conversation = conversationEntries.length ? conversationEntries.map((entry, index) => `<div class="result" data-settings-entry="${this._escape(entry.entry_id)}">
       <strong>${this._escape(entry.title || `Conversation ${index + 1}`)}</strong>
       <label for="conversationEntity-${index}">Conversation agent</label>
-      <select id="conversationEntity-${index}" data-conversation-entity="${this._escape(entry.entry_id)}">${this._entityOptions("conversation", entry.conversation_entity)}</select>
+      <select id="conversationEntity-${index}" data-conversation-entity="${this._escape(entry.entry_id)}">${this._entityOptions("conversation", entry.conversation_entity, entry.conversation_options)}</select>
       <details class="advancedSettings">
         <summary>Advanced identity setting</summary>
         <label for="confidence-${index}">Identity confidence: <span data-confidence-label="${this._escape(entry.entry_id)}">${Number(entry.min_confidence || 0).toFixed(2)}</span></label>
@@ -337,8 +346,30 @@ class SpeakerRecognitionSettingsPanel extends BasePanel {
       .message.message-success { border-left-color:var(--success-color, #43a047); }
       .message.message-error { border-left-color:var(--error-color, #db4437); }
       .profileNames { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
-      .profileName { display:inline-block; padding:5px 9px; border-radius:999px; background:var(--secondary-background-color); border:1px solid var(--divider-color); }
+      .profileName {
+        display:inline-block;
+        padding:6px 11px;
+        border-radius:999px;
+        background:var(--secondary-background-color);
+        color:var(--primary-text-color);
+        border:1px solid var(--divider-color);
+      }
+      button.profileName { cursor:pointer; }
+      .profileName.selected {
+        border:2px solid var(--primary-color);
+        background:var(--card-background-color);
+        color:var(--primary-color);
+        font-weight:600;
+      }
+      .profileHealthStatus { margin:14px 0; padding:12px 14px; border-radius:9px; border-left:4px solid var(--divider-color); background:var(--secondary-background-color); }
+      .profileHealthStatus p { margin:5px 0 0; }
+      .profileHealthStatus.successStatus { border-left-color:var(--success-color, #43a047); }
+      .profileHealthStatus.warningStatus { border-left-color:var(--warning-color, #ff9800); }
+      .profileTechnicalDetails { margin-top:12px; }
+      .profileHealthActions { margin-top:18px; }
       #settingsCard .result { border:1px solid var(--divider-color); background:transparent; }
+      #calibrationGuidanceCard { background:var(--card-background-color) !important; }
+      #calibrationGuidanceCard .result { background:transparent; border:1px solid var(--divider-color); }
       @media (max-width: 700px) {
         :host { padding:12px !important; }
         .wrap { max-width:none !important; }
@@ -428,18 +459,25 @@ class SpeakerRecognitionSettingsPanel extends BasePanel {
     const paragraphs = card.querySelectorAll("p");
     if (paragraphs.length) {
       const enrolled = this._status.enrolled_users || [];
-      const names = enrolled.map(userId => this._userName(userId));
+      const names = enrolled.map(userId => ({ userId, name: this._userName(userId) }));
+      if (!this._profileHealthUserId && enrolled.length) this._profileHealthUserId = enrolled[0];
       paragraphs[0].innerHTML = `<strong>Enrolled voices</strong>${names.length
-        ? `<div class="profileNames">${names.map(name => `<span class="profileName">${this._escape(name)}</span>`).join("")}</div>`
+        ? `<div class="profileNames">${names.map(item => `<button class="profileName ${item.userId === this._profileHealthUserId ? "selected" : ""}" data-profile-health-user="${this._escape(item.userId)}" aria-pressed="${item.userId === this._profileHealthUserId ? "true" : "false"}">${this._escape(item.name)}</button>`).join("")}</div>`
         : `<span class="muted"> None</span>`}`;
     }
     if (paragraphs.length > 1) {
-      paragraphs[1].innerHTML = "You can test recognition below using one of your normal voice satellites.";
+      paragraphs[1].innerHTML = "Select a voice above to check its profile, or test recognition below using one of your normal voice satellites.";
     }
     const health = document.createElement("div");
-    health.innerHTML = `<h3>Profile health</h3>${this._renderProfileHealth()}<button id="refreshProfileHealth">Refresh profile health</button>`;
+    health.innerHTML = `<h3>Profile health</h3>${this._renderProfileHealth()}<div class="profileHealthActions"><button id="refreshProfileHealth">Refresh profile health</button></div>`;
     card.appendChild(health);
-    health.querySelector("button").onclick = () => this._refreshProfileHealth();
+    health.querySelector("#refreshProfileHealth").onclick = () => this._refreshProfileHealth();
+    for (const button of card.querySelectorAll("[data-profile-health-user]")) {
+      button.onclick = () => {
+        this._profileHealthUserId = button.dataset.profileHealthUser;
+        this._render();
+      };
+    }
   }
 
   _classifyMessages() {
