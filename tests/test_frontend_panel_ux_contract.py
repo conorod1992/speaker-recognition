@@ -47,9 +47,14 @@ def test_user_facing_diagnostics_use_ha_names_and_hide_raw_metrics() -> None:
     assert "this._status.users.find(item => item.id === userId)" in source
     assert "Unknown HA user" in source
     assert "this._userName(result.candidate_user_id)" in source
-    assert "names = enrolled.map(userId => this._userName(userId))" in source
+    assert "names = enrolled.map(userId => ({ userId, name: this._userName(userId) }))" in source
     assert "<summary>Technical details</summary>" in source
-    assert "No voice-profile separation problems detected." in source
+    assert "No comparison needed yet" in source
+    assert "No unusually similar enrolled voice was found." in source
+    assert "data-profile-health-user" in source
+    assert 'class="profileName ${item.userId === this._profileHealthUserId ? "selected" : ""}"' in source
+    assert "This measures how similar this voice's training recordings are to one another." in source
+    assert ".profileHealthActions { margin-top:18px; }" in source
 
 
 def test_settings_keep_tuning_controls_advanced() -> None:
@@ -61,6 +66,7 @@ def test_settings_keep_tuning_controls_advanced() -> None:
     assert "Ambiguous-match protection" in source
     assert "Advanced identity setting" in source
     assert "Automatic recommendations are available under Improve accuracy." in source
+    assert "#calibrationGuidanceCard { background:var(--card-background-color) !important; }" in source
 
 
 def test_panel_adds_responsive_and_semantic_visual_hierarchy() -> None:

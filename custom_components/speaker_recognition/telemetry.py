@@ -406,16 +406,64 @@ class DecisionHistory:
         return [dict(item) for item in reversed(self._records[-limit:])]
 
     def review_recent(self, limit: int = _MAX_REVIEW_AUDIO) -> list[dict[str, Any]]:
-        """Return the compact newest-first review queue with playback availability."""
+        """Return pending review decisions newest first with playback availability."""
         audio_ids = {
             clip["decision_id"]
             for clip in self._review_audio
             if isinstance(clip.get("decision_id"), str)
         }
-        result = self.recent(min(max(0, limit), _MAX_REVIEW_AUDIO))
-        for item in result:
-            item["has_audio"] = item.get("decision_id") in audio_ids
+        bounded_limit = min(max(0, limit), _MAX_REVIEW_AUDIO)
+        result: list[dict[str, Any]] = []
+        for item in reversed(self._records):
+            if item.get("review_dismissed"):
+                continue
+            copy = dict(item)
+            copy["has_audio"] = copy.get("decision_id") in audio_ids
+            result.append(copy)
+            if len(result) >= bounded_limit:
+                break
         return result
+
+    def dismiss_review(self, decision_id: str) -> bool:
+        """Hide one unlabelled decision from the review queue."""
+        for item in reversed(self._records):
+            if item.get("decision_id") != decision_id:
+                continue
+            if item.get("feedback"):
+                return False
+            item["review_dismissed"] = True
+            self._review_audio = [
+                clip
+                for clip in self._review_audio
+                if clip.get("decision_id") != decision_id
+            ]
+            self._schedule_save()
+            self._schedule_audio_save()
+            return True
+        return False
+
+    def dismiss_pending_reviews(self) -> int:
+        """Hide all currently pending decisions from the review queue."""
+        dismissed_ids: set[str] = set()
+        for item in self._records:
+            decision_id = item.get("decision_id")
+            if (
+                isinstance(decision_id, str)
+                and not item.get("feedback")
+                and not item.get("review_dismissed")
+            ):
+                item["review_dismissed"] = True
+                dismissed_ids.add(decision_id)
+        if not dismissed_ids:
+            return 0
+        self._review_audio = [
+            clip
+            for clip in self._review_audio
+            if clip.get("decision_id") not in dismissed_ids
+        ]
+        self._schedule_save()
+        self._schedule_audio_save()
+        return len(dismissed_ids)
 
     def review_audio_ids(self) -> list[str]:
         """Return decision IDs whose bounded PCM clip is still retained."""
