@@ -53,12 +53,12 @@ def test_calibration_ui_defaults_to_listen_decide_and_hides_diagnostics() -> Non
     assert 'type: "speaker_recognition/review_decisions"' in source
     assert 'type: "speaker_recognition/decision_audio"' in source
     assert "▶ Play clip" in source
-    assert "<summary>Diagnostics</summary>" in source
+    assert "<summary>Technical details</summary>" in source
     assert "Correctly unknown" in source
     assert "That was me" in source
     assert "Not me" in source
-    assert "newest ten Assist decisions" in source
-    assert "oldest clip is discarded automatically" in source
+    assert "Review the latest recognition results" in source
+    assert "newest 10 recordings can be played back" in source
 
 
 def test_review_feedback_supports_not_enrolled_ground_truth() -> None:
