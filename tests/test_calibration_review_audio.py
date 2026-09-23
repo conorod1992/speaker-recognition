@@ -67,6 +67,30 @@ def test_calibration_ui_defaults_to_listen_decide_and_hides_diagnostics() -> Non
     assert "newest 10 recordings can be played back" in source
 
 
+def test_review_header_actions_are_bound_after_the_header_is_rendered() -> None:
+    source = (
+        ROOT / "www" / "speaker-recognition-calibration-panel.js"
+    ).read_text(encoding="utf-8")
+
+    render_position = source.index('actions.innerHTML =')
+    bind_method_position = source.index("  _bindCalibrationEvents() {")
+    ignore_binding_position = source.index(
+        'this.shadowRoot.getElementById("ignoreAllReviewsBtn")',
+        bind_method_position,
+    )
+    toggle_binding_position = source.index(
+        'this.shadowRoot.getElementById("toggleReviewedBtn")',
+        bind_method_position,
+    )
+
+    assert render_position < bind_method_position
+    assert ignore_binding_position > bind_method_position
+    assert toggle_binding_position > bind_method_position
+    assert source.count(
+        'this.shadowRoot.getElementById("ignoreAllReviewsBtn")'
+    ) == 1
+
+
 def test_review_feedback_supports_not_enrolled_ground_truth() -> None:
     websocket = (ROOT / "review_audio_websocket.py").read_text(encoding="utf-8")
     frontend = (

@@ -512,7 +512,7 @@ class SpeakerRecognitionPanel extends HTMLElement {
         select, button { font:inherit; }
         select { min-width:260px; padding:9px; border-radius:6px; background:var(--card-background-color); color:var(--primary-text-color); border:1px solid var(--divider-color); }
         button { padding:10px 15px; border:0; border-radius:8px; cursor:pointer; background:var(--primary-color); color:var(--text-primary-color, white); }
-        button.secondary { background:var(--secondary-background-color); color:var(--primary-text-color); border:1px solid var(--divider-color); }
+        button.secondary { background:var(--card-background-color); color:var(--primary-color); border:1px solid var(--primary-color); }
         button:disabled { opacity:.5; cursor:not-allowed; }
         .phrase { font-size:20px; line-height:1.45; padding:16px; border-left:4px solid var(--primary-color); background:var(--secondary-background-color); border-radius:6px; }
         .muted { color:var(--secondary-text-color); }

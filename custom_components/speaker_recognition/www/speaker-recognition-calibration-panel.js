@@ -326,15 +326,6 @@ class SpeakerRecognitionCalibrationPanel extends BasePanel {
     for (const button of this.shadowRoot.querySelectorAll("[data-review-ignore]")) {
       button.onclick = () => this._dismissReview(button.dataset.reviewIgnore);
     }
-    const ignoreAll = this.shadowRoot.getElementById("ignoreAllReviewsBtn");
-    if (ignoreAll) ignoreAll.onclick = () => this._dismissAllReviews();
-    const toggleReviewed = this.shadowRoot.getElementById("toggleReviewedBtn");
-    if (toggleReviewed) {
-      toggleReviewed.onclick = () => {
-        this._showReviewed = !this._showReviewed;
-        this._render();
-      };
-    }
   }
 
   _renderEnrollmentStatus() {
@@ -583,6 +574,15 @@ class SpeakerRecognitionCalibrationPanel extends BasePanel {
     if (applyBackend) applyBackend.onclick = () => this._applyBackendCalibration();
     const apply = this.shadowRoot.getElementById("applyCalibrationBtn");
     if (apply) apply.onclick = () => this._applyCalibration();
+    const ignoreAll = this.shadowRoot.getElementById("ignoreAllReviewsBtn");
+    if (ignoreAll) ignoreAll.onclick = () => this._dismissAllReviews();
+    const toggleReviewed = this.shadowRoot.getElementById("toggleReviewedBtn");
+    if (toggleReviewed) {
+      toggleReviewed.onclick = () => {
+        this._showReviewed = !this._showReviewed;
+        this._render();
+      };
+    }
   }
 }
 

@@ -69,6 +69,20 @@ def test_settings_keep_tuning_controls_advanced() -> None:
     assert "#calibrationGuidanceCard { background:var(--card-background-color) !important; }" in source
 
 
+def test_secondary_buttons_remain_visibly_active() -> None:
+    """Secondary actions use an outlined active style distinct from disabled controls."""
+    panel = (
+        ROOT / "www" / "speaker-recognition-panel.js"
+    ).read_text(encoding="utf-8")
+
+    assert (
+        "button.secondary { background:var(--card-background-color); "
+        "color:var(--primary-color); border:1px solid var(--primary-color); }"
+        in panel
+    )
+    assert "button:disabled { opacity:.5; cursor:not-allowed; }" in panel
+
+
 def test_panel_adds_responsive_and_semantic_visual_hierarchy() -> None:
     """The refresh includes narrow-screen controls and distinct result states."""
     source = _source()
