@@ -116,7 +116,7 @@ class SpeakerRecognitionPanel extends HTMLElement {
 
   async _startRecording() {
     if (!this._canUseMicrophone()) {
-      this._message = "Microphone access is unavailable here. Open Home Assistant over HTTPS, or record with a voice satellite instead.";
+      this._message = "Microphone access is unavailable here. Open Home Assistant over HTTPS, record with a voice satellite, or upload an existing WAV file from the integration options.";
       this._render();
       return;
     }
