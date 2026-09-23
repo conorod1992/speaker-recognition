@@ -84,18 +84,25 @@ class SpeakerRecognitionSettingsPanel extends BasePanel {
   _renderProfileHealth() {
     const health = this._profileHealth;
     const number = value => Number.isFinite(value) ? value.toFixed(2) : "Unavailable";
-    if (!health) return '<p class="muted">Profile health has not been loaded.</p>';
-    if (!health.available) return '<p class="muted">Profile health is temporarily unavailable. Update the backend if needed.</p>';
-    if (!health.profiles.length) return '<p class="muted">No enrolled profiles to compare.</p>';
+    if (!health) return '<p class="muted">Voice profile checks have not loaded yet.</p>';
+    if (!health.available) return '<p class="muted">Voice profile checks are temporarily unavailable.</p>';
+    if (!health.profiles.length) return '<p class="muted">No enrolled voices to check yet.</p>';
     return health.profiles.map(profile => `<div class="profileHealth">
-      <p><strong>${this._escape(profile.user_name)}</strong> · Internal consistency: ${number(profile.internal_consistency)}</p>
-      <p>${profile.nearest_user_id
-        ? `Nearest other profile: ${this._escape(profile.nearest_user_name)} · Separation: ${number(profile.separation)}`
-        : "No other enrolled speakers to compare"}</p>
-      ${profile.low_separation ? '<p class="message">Profiles are unusually close; review recordings. This is a conservative heuristic, not a recognition decision.</p>' : ""}
-      ${profile.sample_data_incomplete ? '<p class="muted">Some stored sample embeddings are unavailable; diagnostics may be incomplete.</p>' : ""}
-      ${(profile.sample_warnings || []).length ? `<details><summary>Samples to review</summary>${profile.sample_warnings.map(sample => `<p>Stored sample ${Number(sample.sample_index)} is close to ${this._escape(sample.competing_user_name)} (own-versus-other similarity gap: ${number(sample.separation)}).</p>`).join("")}</details>` : ""}
-    </div>`).join("") + '<p class="muted">Separation is 1 minus profile cosine similarity (0–2; higher means farther apart). These diagnostics do not change recognition.</p>';
+      <p><strong>${this._escape(profile.user_name)}</strong></p>
+      ${profile.low_separation
+        ? `<p class="message">This voice is unusually similar to ${this._escape(profile.nearest_user_name)}. Recording some new samples may improve recognition.</p>`
+        : `<p>✓ No voice-profile separation problems detected.</p>`}
+      ${profile.sample_data_incomplete ? '<p class="muted">Some older profile data could not be checked.</p>' : ""}
+      ${(profile.sample_warnings || []).length ? `<p><strong>Some recordings may be worth replacing.</strong></p>` : ""}
+      <details>
+        <summary>Technical details</summary>
+        <p>Internal consistency: ${number(profile.internal_consistency)}</p>
+        <p>${profile.nearest_user_id
+          ? `Nearest other profile: ${this._escape(profile.nearest_user_name)} · separation: ${number(profile.separation)}`
+          : "No other enrolled voices to compare."}</p>
+        ${(profile.sample_warnings || []).map(sample => `<p>Stored sample ${Number(sample.sample_index)} is close to ${this._escape(sample.competing_user_name)} (gap: ${number(sample.separation)}).</p>`).join("")}
+      </details>
+    </div>`).join("");
   }
 
   async _refreshSettings(silent = false) {
@@ -120,7 +127,7 @@ class SpeakerRecognitionSettingsPanel extends BasePanel {
 
   async _testProfile() {
     if (!this._lastWav) {
-      this._message = "Record an arbitrary phrase first, then choose Test profile.";
+      this._message = "Record a phrase first, then choose Test profile.";
       this._render();
       return;
     }
@@ -132,14 +139,14 @@ class SpeakerRecognitionSettingsPanel extends BasePanel {
         wav_base64: this._bytesToBase64(this._lastWav),
       });
       if (!result.available) {
-        this._message = "No trained speaker profile is currently available.";
+        this._message = "No trained voice profile is available yet.";
       } else {
-        const similarity = Number(result.similarity).toFixed(3);
-        const margin = result.margin == null ? "n/a" : Number(result.margin).toFixed(3);
         const candidate = result.candidate_user_id
           ? this._userName(result.candidate_user_id)
           : "Unknown";
-        this._message = `Candidate: ${candidate} · similarity ${similarity} · margin ${margin} · ${result.accepted ? "accepted" : "unknown/rejected"}`;
+        this._message = result.accepted
+          ? `Recognised as ${candidate}.`
+          : "No confident voice match was found.";
       }
     } catch (err) {
       this._message = this._errorText(err);
@@ -176,50 +183,54 @@ class SpeakerRecognitionSettingsPanel extends BasePanel {
     const conversationEntries = settings.conversation_entries || [];
     const fieldStyle = "width:100%;max-width:620px;padding:9px;border-radius:6px;background:var(--card-background-color);color:var(--primary-text-color);border:1px solid var(--divider-color);font:inherit";
 
-    const backend = main ? `<div class="result">
-      <strong>Recognition backend</strong>
-      <label for="backendUrl">Backend URL</label>
+    const backend = main ? `<details class="result advancedSettings">
+      <summary><strong>Advanced recognition settings</strong></summary>
+      <p class="muted">These controls are mainly for troubleshooting or manual tuning. Automatic recommendations are available under Improve accuracy.</p>
+      <label for="backendUrl">Recognition service address</label>
       <input id="backendUrl" style="${fieldStyle}" value="${this._escape(main.backend_url || "")}">
-      <h3>Advanced recognition thresholds</h3>
-      <p class="muted">Backend acceptance gates, separate from the Conversation proxy minimum identity confidence below. Lower values can increase incorrect identities. A margin of 0 disables the ambiguity gate. Requires a backend supporting configurable thresholds.</p>
-      <label for="backendSimilarity">Minimum accepted similarity</label>
+      <label for="backendSimilarity">Recognition strictness <span class="muted">(similarity threshold)</span></label>
       <input id="backendSimilarity" type="number" min="0" max="1" step="0.01" value="${main.acceptance_thresholds?.min_similarity ?? 0.55}">
-      <label for="backendMargin">Minimum accepted margin</label>
+      <p class="muted">How closely a voice must match an enrolled profile.</p>
+      <label for="backendMargin">Ambiguous-match protection <span class="muted">(margin threshold)</span></label>
       <input id="backendMargin" type="number" min="0" max="1" step="0.01" value="${main.acceptance_thresholds?.min_margin ?? 0.05}">
-      <div class="row" style="margin-top:12px"><button id="saveMainSettings" ${this._settingsBusy ? "disabled" : ""}>Save backend</button></div>
-    </div>` : "";
+      <p class="muted">How much better the best match must be than the next-best match.</p>
+      <div class="row" style="margin-top:12px"><button id="saveMainSettings" ${this._settingsBusy ? "disabled" : ""}>Save advanced settings</button></div>
+    </details>` : "";
 
     const stt = sttEntries.length ? sttEntries.map((entry, index) => `<div class="result" data-settings-entry="${this._escape(entry.entry_id)}">
-      <strong>${this._escape(entry.title || `STT proxy ${index + 1}`)}</strong>
+      <strong>${this._escape(entry.title || `Speech-to-text ${index + 1}`)}</strong>
       <label for="sttEntity-${index}">Speech-to-text provider</label>
       <select id="sttEntity-${index}" data-stt-entity="${this._escape(entry.entry_id)}">${this._entityOptions("stt", entry.stt_entity)}</select>
       <label style="display:flex;gap:10px;align-items:center;font-weight:600;margin-top:14px">
         <input type="checkbox" data-dsp="${this._escape(entry.entry_id)}" ${entry.use_basic_dsp ? "checked" : ""}>
-        Use basic DSP for speech-to-text
+        Use basic audio cleanup for speech-to-text
       </label>
-      <p class="muted">Filters the audio sent to the wrapped STT provider. Speaker recognition and whisper detection continue to use the original audio.</p>
-      <button data-save-stt="${this._escape(entry.entry_id)}" ${this._settingsBusy ? "disabled" : ""}>Save STT settings</button>
-    </div>`).join("") : `<p class="muted">No Speaker Recognition STT proxy is configured.</p>`;
+      <p class="muted">Applies light cleanup before speech-to-text. Voice recognition still uses the original audio.</p>
+      <button data-save-stt="${this._escape(entry.entry_id)}" ${this._settingsBusy ? "disabled" : ""}>Save speech-to-text settings</button>
+    </div>`).join("") : `<p class="muted">No Speaker Recognition speech-to-text service is configured.</p>`;
 
     const conversation = conversationEntries.length ? conversationEntries.map((entry, index) => `<div class="result" data-settings-entry="${this._escape(entry.entry_id)}">
-      <strong>${this._escape(entry.title || `Conversation proxy ${index + 1}`)}</strong>
+      <strong>${this._escape(entry.title || `Conversation ${index + 1}`)}</strong>
       <label for="conversationEntity-${index}">Conversation agent</label>
       <select id="conversationEntity-${index}" data-conversation-entity="${this._escape(entry.entry_id)}">${this._entityOptions("conversation", entry.conversation_entity)}</select>
-      <label for="confidence-${index}">Minimum identity confidence: <span data-confidence-label="${this._escape(entry.entry_id)}">${Number(entry.min_confidence || 0).toFixed(2)}</span></label>
-      <input id="confidence-${index}" type="range" min="0" max="1" step="0.05" value="${Number(entry.min_confidence || 0)}" data-confidence="${this._escape(entry.entry_id)}" style="width:100%;max-width:620px">
-      <p class="muted">A recognised speaker is only applied to the Conversation proxy when the backend score meets this threshold.</p>
-      <button data-save-conversation="${this._escape(entry.entry_id)}" ${this._settingsBusy ? "disabled" : ""}>Save Conversation settings</button>
-    </div>`).join("") : `<p class="muted">No Speaker Recognition Conversation proxy is configured.</p>`;
+      <details class="advancedSettings">
+        <summary>Advanced identity setting</summary>
+        <label for="confidence-${index}">Identity confidence: <span data-confidence-label="${this._escape(entry.entry_id)}">${Number(entry.min_confidence || 0).toFixed(2)}</span></label>
+        <input id="confidence-${index}" type="range" min="0" max="1" step="0.05" value="${Number(entry.min_confidence || 0)}" data-confidence="${this._escape(entry.entry_id)}" style="width:100%;max-width:620px">
+        <p class="muted">How confident recognition must be before Home Assistant uses the detected person\'s identity.</p>
+      </details>
+      <button data-save-conversation="${this._escape(entry.entry_id)}" ${this._settingsBusy ? "disabled" : ""}>Save conversation settings</button>
+    </div>`).join("") : `<p class="muted">No Speaker Recognition conversation agent is configured.</p>`;
 
     return `<div class="card" id="settingsCard">
       <h2>Settings</h2>
-      <p class="muted">These are the live settings used by your configured Speaker Recognition entries. Saving an entry reloads that proxy so the new value takes effect.</p>
+      <p class="muted">Choose the speech-to-text and conversation services Speaker Recognition works with. Most users can leave Advanced settings unchanged.</p>
       ${this._settingsMessage ? `<div class="message">${this._escape(this._settingsMessage)}</div>` : ""}
-      ${backend}
       <h3>Speech-to-text</h3>
       ${stt}
       <h3>Conversation</h3>
       ${conversation}
+      ${backend}
     </div>`;
   }
 
@@ -251,10 +262,10 @@ class SpeakerRecognitionSettingsPanel extends BasePanel {
     const heading = card.querySelector("h2");
     const title = heading ? heading.textContent.trim() : "";
     if (title === "Enroll or retrain a voice" || title === "Voice enrollment") return "enrollment";
-    if (title === "Profile diagnostics" || title === "Profiles" || title === "Live satellite test") return "diagnostics";
-    if (title === "Recognition calibration" || title === "Threshold guidance") return "calibration";
+    if (title === "Profile diagnostics" || title === "Profiles" || title === "Live satellite test" || title === "Recognition calibration") return "recognition";
+    if (title === "Threshold guidance" || title === "Improve accuracy") return "improve";
     if (title === "Settings") return "settings";
-    return "diagnostics";
+    return "recognition";
   }
 
   _installUxStyles() {
@@ -362,27 +373,29 @@ class SpeakerRecognitionSettingsPanel extends BasePanel {
       existingStatus.className = "profileSummary";
       existingStatus.innerHTML = `
         <div class="profileSummaryChips">
-          <span class="profileChip ${enrolled ? "ready" : ""}">${enrolled ? "✓ Enrolled" : "Not enrolled"}</span>
-          <span class="profileChip">${enrolled ? "Retraining" : "New enrollment"}</span>
-          <span class="profileChip ${staged.length >= minimum ? "ready" : ""}">${staged.length} of ${minimum} required samples</span>
+          <span class="profileChip ${enrolled ? "ready" : ""}">${enrolled ? "✓ Voice profile active" : "No voice profile yet"}</span>
+          ${staged.length ? `<span class="profileChip">Updating profile</span>` : ""}
+          <span class="profileChip ${staged.length >= minimum ? "ready" : ""}">${staged.length} of ${minimum} needed</span>
         </div>
         <p class="muted">${enrolled
-          ? "Your current trained profile remains active until the replacement is successfully trained."
-          : (staged.length >= minimum ? "Enough samples are staged to train this voice profile." : "Record the phrases below to create this voice profile.")}</p>`;
+          ? (staged.length
+            ? "Your existing voice profile keeps working until the updated profile is ready."
+            : `To replace this profile, record at least ${minimum} of the ${total} phrases below.`)
+          : (staged.length >= minimum ? "Enough recordings are ready to create this voice profile." : `Record at least ${minimum} of the ${total} phrases below.`)}</p>`;
     }
 
     const samples = card.querySelector(".samples");
     if (samples) {
       const progress = document.createElement("div");
       progress.className = "sampleProgress";
-      progress.innerHTML = `<strong>Training samples</strong><span>${staged.length} of ${minimum} required · ${total} available</span>`;
+      progress.innerHTML = `<strong>Training phrases</strong><span>${staged.length} of ${minimum} needed</span>`;
       samples.insertAdjacentElement("beforebegin", progress);
       for (const button of samples.querySelectorAll("[data-sample]")) {
         const index = Number(button.dataset.sample);
         button.classList.toggle("active", index === this._sampleIndex);
         button.setAttribute("aria-current", index === this._sampleIndex ? "step" : "false");
         button.title = staged.includes(index)
-          ? `Phrase ${index + 1}: sample staged`
+          ? `Phrase ${index + 1}: recording ready`
           : `Phrase ${index + 1}: not recorded`;
       }
     }
@@ -397,12 +410,12 @@ class SpeakerRecognitionSettingsPanel extends BasePanel {
     if (commit) {
       const actionRow = commit.closest(".row");
       if (actionRow) actionRow.classList.add("trainingAction");
-      commit.textContent = enrolled ? "Retrain profile" : "Train profile";
+      commit.textContent = enrolled ? "Update voice profile" : "Create voice profile";
       const guidance = commit.nextElementSibling;
       if (guidance) {
         guidance.textContent = remaining
-          ? `${remaining} more sample${remaining === 1 ? "" : "s"} required.`
-          : `${staged.length} sample${staged.length === 1 ? "" : "s"} ready to train.`;
+          ? `${remaining} more recording${remaining === 1 ? "" : "s"} needed.`
+          : `${staged.length} recording${staged.length === 1 ? "" : "s"} ready.`;
       }
     }
   }
@@ -421,7 +434,7 @@ class SpeakerRecognitionSettingsPanel extends BasePanel {
         : `<span class="muted"> None</span>`}`;
     }
     if (paragraphs.length > 1) {
-      paragraphs[1].innerHTML = "To test a profile directly, record any phrase in <strong>Enrollment</strong> and choose <strong>Test profile</strong>. Use the live satellite test below for a real Assist-path check.";
+      paragraphs[1].innerHTML = "You can test recognition below using one of your normal voice satellites.";
     }
     const health = document.createElement("div");
     health.innerHTML = `<h3>Profile health</h3>${this._renderProfileHealth()}<button id="refreshProfileHealth">Refresh profile health</button>`;
@@ -456,9 +469,9 @@ class SpeakerRecognitionSettingsPanel extends BasePanel {
     tabs.setAttribute("role", "tablist");
     tabs.setAttribute("aria-label", "Speaker Recognition sections");
     const sections = [
-      ["enrollment", "Enrollment"],
-      ["diagnostics", "Diagnostics"],
-      ["calibration", "Calibration"],
+      ["enrollment", "Voices"],
+      ["recognition", "Recognition"],
+      ["improve", "Improve accuracy"],
       ["settings", "Settings"],
     ];
     tabs.innerHTML = sections.map(([key, label]) => `<button class="panelTab ${key === this._panelSection ? "active" : ""}" data-panel-tab="${key}" role="tab" aria-selected="${key === this._panelSection ? "true" : "false"}">${label}</button>`).join("");
