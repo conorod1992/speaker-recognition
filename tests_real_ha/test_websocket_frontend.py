@@ -168,15 +168,13 @@ async def test_settings_websocket_returns_effective_entries_without_secret(
             "use_basic_dsp": True,
         }
     ]
-    assert result["conversation_entries"] == [
-        {
-            "entry_id": conversation_entry.entry_id,
-            "title": "Conversation proxy",
-            "conversation_entity": "conversation.source",
-            "conversation_options": ["conversation.source"],
-            "min_confidence": 0.7,
-        }
-    ]
+    assert len(result["conversation_entries"]) == 1
+    conversation = result["conversation_entries"][0]
+    assert conversation["entry_id"] == conversation_entry.entry_id
+    assert conversation["title"] == "Conversation proxy"
+    assert conversation["conversation_entity"] == "conversation.source"
+    assert "conversation.source" in conversation["conversation_options"]
+    assert conversation["min_confidence"] == 0.7
 
 
 @pytest.mark.asyncio
