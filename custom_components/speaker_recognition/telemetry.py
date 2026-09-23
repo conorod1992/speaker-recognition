@@ -415,7 +415,7 @@ class DecisionHistory:
         bounded_limit = min(max(0, limit), _MAX_REVIEW_AUDIO)
         result: list[dict[str, Any]] = []
         for item in reversed(self._records):
-            if item.get("feedback") or item.get("review_dismissed"):
+            if item.get("review_dismissed"):
                 continue
             copy = dict(item)
             copy["has_audio"] = copy.get("decision_id") in audio_ids
