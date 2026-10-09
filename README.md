@@ -650,6 +650,17 @@ Run the tests:
 uv run pytest tests/ -v
 ```
 
+For `tests_real_ha`, use the Home Assistant Python version and dependencies from
+`.github/workflows/real-ha.yml`, then run:
+
+```bash
+python -m scripts.run_real_ha_tests tests_real_ha -v --tb=short --asyncio-mode=auto
+```
+
+The launcher imports Home Assistant before pytest auto-loads HTTP mocking
+plugins, allowing HA to initialize its dependency aliases. This matches Home
+Assistant's own test bootstrap and supports stable and upcoming versions.
+
 Run linting:
 
 ```bash

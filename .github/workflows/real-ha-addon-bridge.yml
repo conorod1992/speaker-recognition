@@ -197,7 +197,7 @@ jobs:
           SPEAKER_RECOGNITION_REAL_ADDON_TOKEN: ha-addon-acceptance-token
           SPEAKER_RECOGNITION_REAL_ADDON_AUDIO_DIR: ${{ runner.temp }}/speaker-recognition-ha/audio
         run: |
-          python -m pytest tests_real_ha/test_real_addon_bridge.py \
+          python -m scripts.run_real_ha_tests tests_real_ha/test_real_addon_bridge.py \
             -v --tb=short --asyncio-mode=auto
 
       - name: Show add-on logs
