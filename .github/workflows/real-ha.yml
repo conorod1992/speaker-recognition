@@ -140,4 +140,4 @@ jobs:
         run: python -m pip check
 
       - name: Run Real HA tests
-        run: python -m pytest tests_real_ha -v --tb=short --asyncio-mode=auto
+        run: python -m scripts.run_real_ha_tests tests_real_ha -v --tb=short --asyncio-mode=auto
