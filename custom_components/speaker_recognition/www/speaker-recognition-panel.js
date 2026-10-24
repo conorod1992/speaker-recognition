@@ -290,6 +290,26 @@ class SpeakerRecognitionPanel extends HTMLElement {
     this._pollTimer = setTimeout(poll, 1000);
   }
 
+  async _discardStagedEnrollment() {
+    if (!this._userId || !window.confirm("Discard unfinished voice recordings? Your active profile will be kept.")) return;
+    this._busy = true;
+    this._render();
+    try {
+      const result = await this._call({
+        type: "speaker_recognition/discard_staged_samples",
+        user_id: this._userId,
+      });
+      this._lastWav = null;
+      this._message = `${result.discarded} unfinished recording(s) discarded. Active profile unchanged.`;
+      await this._refresh(true);
+    } catch (err) {
+      this._message = this._errorText(err);
+    } finally {
+      this._busy = false;
+      this._render();
+    }
+  }
+
   async _commitEnrollment() {
     this._busy = true;
     this._message = "Training the updated profile…";
@@ -551,7 +571,7 @@ class SpeakerRecognitionPanel extends HTMLElement {
             <p class="muted">Only your response to the selected satellite will be recorded.</p>
             ${s.profile_promoted_counts?.[this._userId] ? `<p class="muted">Current profile includes ${s.profile_promoted_counts[this._userId]} confirmed real-world recording(s).</p>` : ""}
             ${promoted.length ? `<div class="result"><strong>Confirmed real-world recordings: ${promoted.length}</strong><p>These confirmed recordings can be used to improve the voice profile. The current profile keeps working until the update succeeds.</p><button id="trainPromotedBtn" ${this._busy || staged.length ? "disabled" : ""}>Update with confirmed recordings</button><button id="discardPromotedBtn" class="secondary" ${this._busy ? "disabled" : ""}>Discard recordings</button>${staged.length ? `<p>Finish recording the selected phrases first.</p>` : ""}</div>` : ""}
-            <div class="row"><button id="commitBtn" ${staged.length < minimum || this._busy ? "disabled" : ""}>Train with ${staged.length} staged sample${staged.length === 1 ? "" : "s"}</button><span class="muted">Minimum ${minimum}; up to ${s.phrases.length}.</span></div>
+            <div class="row"><button id="commitBtn" ${staged.length < minimum || this._busy ? "disabled" : ""}>Train with ${staged.length} staged sample${staged.length === 1 ? "" : "s"}</button><span class="muted">Minimum ${minimum}; up to ${s.phrases.length}.</span>${staged.length ? `<button class="secondary" id="discardStagedBtn" ${this._busy ? "disabled" : ""}>Discard unfinished recordings</button>` : ""}</div>
             ${this._message ? `<div class="message">${this._escape(this._message)}</div>` : ""}
           </div>
           <div class="card">
@@ -605,6 +625,7 @@ class SpeakerRecognitionPanel extends HTMLElement {
     if ($("testBtn")) $("testBtn").onclick = () => this._testProfile();
     if ($("satelliteBtn")) $("satelliteBtn").onclick = () => this._startSatellite();
     if ($("commitBtn")) $("commitBtn").onclick = () => this._commitEnrollment();
+    if ($("discardStagedBtn")) $("discardStagedBtn").onclick = () => this._discardStagedEnrollment();
     if ($("trainPromotedBtn")) $("trainPromotedBtn").onclick = () => this._commitEnrollment();
     if ($("discardPromotedBtn")) $("discardPromotedBtn").onclick = async () => {
       try {
