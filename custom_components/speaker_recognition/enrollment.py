@@ -188,6 +188,20 @@ def _satellite_sessions(hass: HomeAssistant) -> dict[str, SatelliteEnrollmentSes
     return _domain_data(hass).setdefault("enrollment_satellite_sessions", {})
 
 
+def _completed_enrollment_turns(hass: HomeAssistant) -> set[int]:
+    """Return recently captured STT turns that must not reach the conversation agent."""
+    return _domain_data(hass).setdefault("completed_enrollment_turns", set())
+
+
+def consume_completed_enrollment_turn(hass: HomeAssistant, sequence: int) -> bool:
+    """Consume an enrollment turn once, preventing ordinary agent execution."""
+    turns = _completed_enrollment_turns(hass)
+    if sequence not in turns:
+        return False
+    turns.discard(sequence)
+    return True
+
+
 def _completed_satellite_captures(hass: HomeAssistant) -> dict[str, float]:
     """Return recent satellite capture completions and prune stale entries."""
     completed = _domain_data(hass).setdefault("completed_satellite_captures", {})
@@ -293,6 +307,11 @@ async def async_capture_claimed_satellite_sample(
     )
     sessions.pop(session.satellite_id, None)
     _completed_satellite_captures(hass)[session.session_id] = time.monotonic()
+    completed_turns = _completed_enrollment_turns(hass)
+    completed_turns.add(utterance_sequence)
+    # Bound the marker cache if an Assist pipeline has no conversation proxy.
+    if len(completed_turns) > 128:
+        completed_turns.intersection_update(sorted(completed_turns)[-64:])
     _domain_data(hass).setdefault("calibration_excluded_utterances", set()).add(
         utterance_sequence
     )

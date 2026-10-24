@@ -35,7 +35,7 @@ from .const import (
 )
 from .correlation import take_correlated_recognition
 from .diagnostics import record_live_test_result
-from .enrollment import async_capture_satellite_sample
+from .enrollment import async_capture_satellite_sample, consume_completed_enrollment_turn
 from .recognition import SpeakerRecognition
 from .telemetry import get_decision_history
 
@@ -209,6 +209,18 @@ class SpeakerRecognitionConversationEntity(
             return ConversationResult(response=response, conversation_id=None)
 
         speaker_data = take_correlated_recognition()
+        if speaker_data is not None and consume_completed_enrollment_turn(
+            self.hass, speaker_data.utterance_sequence
+        ):
+            self.hass.data.setdefault(DOMAIN, {}).setdefault(
+                "utterance_audio", {}
+            ).pop(speaker_data.utterance_sequence, None)
+            response = IntentResponse(language=user_input.language)
+            response.async_set_speech("Voice sample recorded.")
+            return ConversationResult(
+                response=response,
+                conversation_id=user_input.conversation_id,
+            )
         if speaker_data is not None:
             min_confidence = self.min_confidence
             identity_eligible = bool(

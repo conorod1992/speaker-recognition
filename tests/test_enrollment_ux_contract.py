@@ -119,3 +119,12 @@ def test_panel_advances_to_the_next_incomplete_phrase() -> None:
     assert "this._sampleIndex = this._nextIncompleteSample(savedIndex)" in panel
     assert "this._sampleIndex = this._nextIncompleteSample(index)" in panel
     assert "Math.min(staged.length" not in panel
+
+
+def test_successful_stt_enrollment_is_consumed_before_original_conversation_agent() -> None:
+    """Captured enrollment audio must not execute normal agent commands."""
+    enrollment_source = (ROOT / "enrollment.py").read_text(encoding="utf-8")
+    conversation_source = (ROOT / "conversation.py").read_text(encoding="utf-8")
+    assert "completed_turns.add(utterance_sequence)" in enrollment_source
+    assert "consume_completed_enrollment_turn(" in conversation_source
+    assert conversation_source.index("consume_completed_enrollment_turn(") < conversation_source.index("return await source_agent.async_process(user_input)")
