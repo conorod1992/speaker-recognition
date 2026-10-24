@@ -115,6 +115,63 @@ async def async_discard_staged_samples(hass: HomeAssistant, user_id: str) -> int
     return len(samples)
 
 
+_ORPHAN_GRACE_SECONDS = 24 * 60 * 60
+
+
+def _old_unreferenced_recordings(
+    roots: list[Path], referenced: set[Path], cutoff: float
+) -> list[Path]:
+    """Locate old orphaned WAVs only under integration-managed media roots."""
+    found = []
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for path in root.glob("*/*.wav"):
+            try:
+                if (
+                    path.is_file()
+                    and not path.is_symlink()
+                    and path.resolve() not in referenced
+                    and path.stat().st_mtime < cutoff
+                ):
+                    found.append(path)
+            except OSError:
+                continue
+    return found
+
+
+async def async_cleanup_orphaned_samples(
+    hass: HomeAssistant, configured_samples: list[dict]
+) -> None:
+    """Reclaim interrupted enrollment files after a safe grace period."""
+    from .promotions import pending_promotions
+
+    media_ids: set[str] = set()
+    for row in configured_samples:
+        values = row.get("samples", [])
+        for value in values if isinstance(values, list) else [values]:
+            if isinstance(value, dict) and isinstance(value.get("media_content_id"), str):
+                media_ids.add(value["media_content_id"])
+    for staged in _domain_data(hass).get("enrollment_staged", {}).values():
+        for value in staged.values():
+            if isinstance(value, dict) and isinstance(value.get("media_content_id"), str):
+                media_ids.add(value["media_content_id"])
+    for item in pending_promotions(hass):
+        media_ids.add(item["media_content_id"])
+    referenced = set()
+    for media_id in media_ids:
+        path = _managed_media_path(hass, media_id)
+        if path is not None:
+            referenced.add(path.resolve())
+    roots = [Path(folder).resolve() / _MEDIA_SUBDIR for folder in hass.config.media_dirs.values()]
+    stale = await hass.async_add_executor_job(
+        _old_unreferenced_recordings, roots, referenced,
+        time.time() - _ORPHAN_GRACE_SECONDS,
+    )
+    if stale:
+        await hass.async_add_executor_job(_delete_paths, stale)
+
+
 def _delete_paths(paths: list[Path]) -> None:
     """Delete integration-owned enrollment files without failing lifecycle updates."""
     for path in paths:
