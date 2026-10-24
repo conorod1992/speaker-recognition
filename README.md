@@ -240,9 +240,21 @@ adding no perceived delay if it finishes before STT.
 
 # Recognition calibration
 
-The panel keeps a bounded history of recent normal Assist recognition decisions
-for calibration. It stores decision metadata such as scores and timing, but **not
-the spoken audio or transcript**.
+The panel stores up to 200 recent Assist decisions as metadata (scores,
+timing, and feedback), without transcripts. **Separately, it retains up to ten
+recent playable audio clips** in Home Assistant storage to support explicit
+review and optional promotion to training material. These clips are retained
+across restarts and may be included in Home Assistant backups. Older clips
+are replaced as new results arrive; ignoring a pending review also deletes its
+clip. Administrators can review or ignore these decisions under
+**Improve accuracy**.
+
+Unfinished browser or satellite enrollment samples are saved as WAV files
+within Home Assistant's managed media directory until committed or discarded.
+You can select **Discard unfinished recordings** without deleting an existing
+voice profile. Files abandoned by interrupted enrollment are cleaned during
+later integration startup after a 24-hour grace period; files still referenced
+by configured enrollment or pending promoted samples are preserved.
 
 For recent decisions you can mark the result as:
 
