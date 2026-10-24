@@ -204,7 +204,11 @@ jobs:
           SPEAKER_RECOGNITION_REAL_ADDON_AUDIO_DIR: ${{ runner.temp }}/speaker-recognition-ha/audio
         run: |
           python -m scripts.run_real_ha_tests tests_real_ha/test_real_addon_bridge.py \
-            -v --tb=short --asyncio-mode=auto
+            -v --tb=short --asyncio-mode=auto \
+            --junitxml="${RUNNER_TEMP}/ha-bridge-results.xml"
+
+      - name: Assert both real add-on acceptance cases executed
+        run: python scripts/assert_ha_bridge_results.py "${RUNNER_TEMP}/ha-bridge-results.xml"
 
       - name: Show add-on logs
         if: always()
