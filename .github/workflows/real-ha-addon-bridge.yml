@@ -158,7 +158,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r tests_real_ha/requirements.txt
-          python -m pip install --upgrade homeassistant
+          # pytest-homeassistant-custom-component selects a compatible HA Core.
+
+      - name: Verify compatible Home Assistant test environment
+        run: python -m pip check
 
       - name: Install Home Assistant integration dependency requirements
         run: |
@@ -190,6 +193,9 @@ jobs:
           if requirements:
               subprocess.check_call([sys.executable, "-m", "pip", "install", *sorted(requirements)])
           PY
+
+      - name: Verify integration dependency environment
+        run: python -m pip check
 
       - name: Run Real HA to real add-on bridge tests
         env:
