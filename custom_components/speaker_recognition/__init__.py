@@ -24,7 +24,7 @@ from .const import (
     effective_backend_url,
 )
 from .enhancement_websocket import async_register_enhancement_websocket
-from .enrollment import async_cleanup_managed_samples
+from .enrollment import async_cleanup_managed_samples, async_cleanup_orphaned_samples
 from .frontend import async_register_frontend
 from .lifecycle import (
     EnrollmentUpdateFailed,
@@ -229,6 +229,10 @@ async def async_setup_main_entry(
         await async_reconcile_promotions(hass, voice_samples)
     except OSError:
         _LOGGER.warning("Unable to reconcile promoted sample metadata; will retry on reload")
+    try:
+        await async_cleanup_orphaned_samples(hass, voice_samples)
+    except OSError:
+        _LOGGER.warning("Abandoned enrollment recordings could not be cleaned")
     entry.runtime_data = recognition
     entry.async_on_unload(entry.add_update_listener(async_update_main_listener))
     return True
