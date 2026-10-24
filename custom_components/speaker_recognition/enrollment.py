@@ -96,6 +96,25 @@ def _managed_media_path(hass: HomeAssistant, media_id: str) -> Path | None:
     return None
 
 
+async def async_discard_staged_samples(hass: HomeAssistant, user_id: str) -> int:
+    """Discard uncommitted audio for one user without touching active profiles."""
+    staging = _domain_data(hass).setdefault("enrollment_staged", {})
+    samples = staging.pop(user_id, {})
+    paths = []
+    for sample in samples.values():
+        if not isinstance(sample, dict):
+            continue
+        media_id = sample.get("media_content_id")
+        if isinstance(media_id, str):
+            path = _managed_media_path(hass, media_id)
+            if path is not None:
+                paths.append(path)
+    if paths:
+        await hass.async_add_executor_job(_delete_paths, paths)
+    _domain_data(hass).setdefault("enrollment_quality", {}).pop(user_id, None)
+    return len(samples)
+
+
 def _delete_paths(paths: list[Path]) -> None:
     """Delete integration-owned enrollment files without failing lifecycle updates."""
     for path in paths:
