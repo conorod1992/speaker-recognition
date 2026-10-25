@@ -11,6 +11,8 @@ on:
       - "speaker_recognition_addon/**"
       - "tests_real_ha/**"
       - "scripts/set_release_version.py"
+      - "scripts/resolve_ha_python.py"
+      - "scripts/assert_ha_bridge_results.py"
   schedule:
     - cron: "50 3 * * *"
 
