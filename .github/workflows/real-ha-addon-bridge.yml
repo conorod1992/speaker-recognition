@@ -139,12 +139,10 @@ jobs:
           docker logs speaker-recognition-ha-acceptance
           exit 1
 
-      - name: Resolve Home Assistant Python version
+      - name: Resolve harness-compatible Home Assistant Python
         id: ha-python
         run: |
-          version="$(curl -fsSL https://raw.githubusercontent.com/home-assistant/core/dev/.python-version | tr -d '\n')"
-          test -n "$version"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "version=$(python scripts/resolve_ha_python.py stable)" >> "$GITHUB_OUTPUT"
 
       - name: Set up Home Assistant Python
         uses: actions/setup-python@v6
