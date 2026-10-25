@@ -68,3 +68,34 @@ def test_rejects_malformed_report(tmp_path: Path) -> None:
     path.write_text("<testsuite>", encoding="utf-8")
     with pytest.raises(ET.ParseError):
         verify_results(path)
+
+
+def test_rejects_duplicate_cases(tmp_path: Path) -> None:
+    path = _write_report(tmp_path)
+    tree = ET.parse(path)
+    suite = next(tree.iter("testsuite"))
+    ET.SubElement(
+        suite, "testcase",
+        classname="tests_real_ha.test_real_addon_bridge",
+        name=sorted(REQUIRED_TESTS)[0],
+    )
+    tree.write(path)
+    with pytest.raises(RuntimeError, match="Duplicate"):
+        verify_results(path)
+
+
+def test_bridge_workflow_requires_junit_assertion() -> None:
+    workflow = (
+        Path(__file__).parents[1] / ".github/workflows/real-ha-addon-bridge.yml"
+    ).read_text(encoding="utf-8")
+    assert "--junitxml=" in workflow
+    assert "scripts/assert_ha_bridge_results.py" in workflow
+    assert "python -m pip check" in workflow
+
+
+def test_stable_ha_workflow_does_not_override_harness_pin() -> None:
+    workflow = (
+        Path(__file__).parents[1] / ".github/workflows/real-ha.yml"
+    ).read_text(encoding="utf-8")
+    assert "python -m pip install --upgrade homeassistant" not in workflow
+    assert "python -m pip check" in workflow
