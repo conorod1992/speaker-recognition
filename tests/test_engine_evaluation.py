@@ -19,6 +19,7 @@ from speaker_recognition.evaluation import (
     evaluate_records,
     find_best_operating_point,
     find_best_operating_points,
+    split_evaluation_records,
 )
 from speaker_recognition.models import AudioInput, Config, RecognitionRequest
 
@@ -232,3 +233,48 @@ def test_operating_point_search_calibrates_engines_independently() -> None:
 
     assert best["resemblyzer"].similarity_threshold == 0.60
     assert best["ecapa"].similarity_threshold == 0.80
+
+
+def test_evaluation_reports_known_and_unknown_rates_separately() -> None:
+    rows = [
+        EvaluationRecord("model", {"alice": 0.9}, "alice"),
+        EvaluationRecord("model", {"alice": 0.8}, "bob"),
+        EvaluationRecord("model", {"alice": 0.2}, None),
+        EvaluationRecord("model", {"alice": 0.9}, None),
+    ]
+    metrics = evaluate_records(rows, 0.6, 0.05)
+    assert metrics.known_trials == 2
+    assert metrics.unknown_trials == 2
+    assert metrics.known_identification_rate == pytest.approx(0.5)
+    assert metrics.known_wrong_speaker_rate == pytest.approx(0.5)
+    assert metrics.unknown_rejection_rate == pytest.approx(0.5)
+    assert metrics.unknown_false_accept_rate == pytest.approx(0.5)
+
+
+def test_evaluation_rate_denominators_handle_absent_classes() -> None:
+    metrics = evaluate_records([EvaluationRecord("model", {"a": 0.9}, "a")], 0.6, 0.05)
+    assert metrics.unknown_false_accept_rate == 0.0
+    assert metrics.unknown_rejection_rate == 0.0
+
+
+def test_holdout_split_is_stable_and_keeps_engine_pairs_together() -> None:
+    records = [
+        EvaluationRecord(engine, {"alice": 0.9}, "alice", trial_id=f"trial-{i}")
+        for i in range(100) for engine in ("resemblyzer", "ecapa")
+    ]
+    training, holdout = split_evaluation_records(records)
+    train_ids = {record.trial_id for record in training}
+    held_ids = {record.trial_id for record in holdout}
+    assert train_ids.isdisjoint(held_ids)
+    assert len(train_ids | held_ids) == 100
+    assert train_ids and held_ids
+    assert {record.trial_id for record in split_evaluation_records(reversed(records))[1]} == held_ids
+    assert all(sum(record.trial_id == trial for record in holdout) == 2 for trial in held_ids)
+
+
+def test_holdout_split_rejects_untracked_trials_and_invalid_fraction() -> None:
+    record = EvaluationRecord("model", {"alice": 0.9}, "alice")
+    with pytest.raises(ValueError, match="trial_id"):
+        split_evaluation_records([record])
+    with pytest.raises(ValueError, match="holdout_fraction"):
+        split_evaluation_records([record], holdout_fraction=1.0)
