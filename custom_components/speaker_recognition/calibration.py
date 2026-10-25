@@ -88,6 +88,12 @@ def _classify(record: dict[str, Any], threshold: float) -> tuple[str, int]:
         return "correct_rejection", 0
 
     if feedback == "wrong_speaker":
+        # A wrong-speaker label without an enrolled actual user represents
+        # an unknown voice. Rejecting it is a success, not a missed speaker.
+        if actual_user_id is None:
+            if applies:
+                return "false_accept", FALSE_ACCEPT_WEIGHT
+            return "correct_rejection", 0
         if applies and candidate_user_id != actual_user_id:
             return "false_accept", FALSE_ACCEPT_WEIGHT
         if applies and candidate_user_id == actual_user_id:
