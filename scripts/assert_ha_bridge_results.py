@@ -20,6 +20,8 @@ def verify_results(path: Path) -> None:
         if case.get("classname", "").endswith("test_real_addon_bridge")
     ]
     by_name = {case.get("name"): case for case in cases}
+    if len(by_name) != len(cases):
+        raise RuntimeError("Duplicate real add-on bridge JUnit test cases")
     missing = REQUIRED_TESTS - by_name.keys()
     if missing:
         raise RuntimeError(f"Real add-on bridge tests not collected: {sorted(missing)}")
