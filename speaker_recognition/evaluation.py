@@ -54,6 +54,26 @@ class EvaluationMetrics:
         return self.false_identifications / self.trials if self.trials else 0.0
 
     @property
+    def unknown_false_accept_rate(self) -> float:
+        """Fraction of unknown-speaker trials assigned an enrolled identity."""
+        return self.false_accepts / self.unknown_trials if self.unknown_trials else 0.0
+
+    @property
+    def known_wrong_speaker_rate(self) -> float:
+        """Fraction of enrolled-speaker trials attributed to the wrong person."""
+        return self.wrong_speaker / self.known_trials if self.known_trials else 0.0
+
+    @property
+    def known_identification_rate(self) -> float:
+        """Fraction of enrolled-speaker trials identified correctly."""
+        return self.correct_known / self.known_trials if self.known_trials else 0.0
+
+    @property
+    def unknown_rejection_rate(self) -> float:
+        """Fraction of unknown-speaker trials correctly rejected."""
+        return self.correct_unknown / self.unknown_trials if self.unknown_trials else 0.0
+
+    @property
     def false_unknown_rate(self) -> float:
         """Return missed known speakers as a share of known-speaker trials."""
         return self.false_unknowns / self.known_trials if self.known_trials else 0.0
