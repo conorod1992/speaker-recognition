@@ -143,9 +143,14 @@ class SpeakerRecognizer:
                     user_id = str(profile["user_id"].item())
                     if self._profile_path(user_id) != target:
                         continue
-                    self._normalize_embedding(profile["centroid"])
+                    centroid = self._normalize_embedding(profile["centroid"])
                     samples = np.asarray(profile["sample_embeddings"])
-                    if samples.ndim != 2 or not samples.size or not np.isfinite(samples).all():
+                    if (
+                        samples.ndim != 2
+                        or samples.shape[0] == 0
+                        or samples.shape[1] != centroid.size
+                        or not np.isfinite(samples).all()
+                    ):
                         continue
                 backup.replace(target)
                 _LOGGER.warning("Recovered interrupted speaker profile update: %s", target)
