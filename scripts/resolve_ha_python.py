@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sys
 from urllib.request import urlopen
 
 CORE_RAW = "https://raw.githubusercontent.com/home-assistant/core"
@@ -53,7 +54,7 @@ def main() -> None:
     parser.add_argument("lane", choices=("stable", "upcoming"))
     args = parser.parse_args()
     ref, python_version = resolve_python(args.lane)
-    print(f"Home Assistant {args.lane}: Core {ref}; Python {python_version}")
+    print(f"Home Assistant {args.lane}: Core {ref}; Python {python_version}", file=sys.stderr)
     print(python_version, end="")
 
 
