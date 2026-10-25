@@ -22,6 +22,7 @@ class SpeakerRecognitionPanel extends HTMLElement {
     this._livePollTimer = null;
     this._qualityPollTimer = null;
     this._qualityPollAttempts = 0;
+    this._recordingStopTimer = null;
   }
 
   set hass(value) {
@@ -37,6 +38,8 @@ class SpeakerRecognitionPanel extends HTMLElement {
     if (this._pollTimer) clearTimeout(this._pollTimer);
     if (this._livePollTimer) clearTimeout(this._livePollTimer);
     if (this._qualityPollTimer) clearTimeout(this._qualityPollTimer);
+    if (this._recordingStopTimer) clearTimeout(this._recordingStopTimer);
+    this._recordingStopTimer = null;
     this._stopRecorderTracks();
   }
 
@@ -134,6 +137,7 @@ class SpeakerRecognitionPanel extends HTMLElement {
       source.connect(processor);
       processor.connect(context.destination);
       this._recording = { stream, context, source, processor, chunks, sampleRate: context.sampleRate };
+      this._recordingStopTimer = setTimeout(() => this._stopRecording(), 30000);
       this._render();
     } catch (err) {
       this._message = `Could not access the microphone: ${this._errorText(err)}`;
@@ -151,6 +155,8 @@ class SpeakerRecognitionPanel extends HTMLElement {
   }
 
   async _stopRecording() {
+    if (this._recordingStopTimer) clearTimeout(this._recordingStopTimer);
+    this._recordingStopTimer = null;
     const rec = this._recording;
     if (!rec) return;
     this._stopRecorderTracks();
@@ -440,7 +446,7 @@ class SpeakerRecognitionPanel extends HTMLElement {
       .sort((a, b) => Number(b[1]) - Number(a[1]))
       .map(([userId, score]) => `<li>${this._escape(this._userName(userId))}: ${Number(score).toFixed(3)}</li>`)
       .join("");
-    return `<div class="result ${result.identity_eligible ? "success" : ""}">
+    return `<div class="result ${result.identity_eligible ? "success" : ""}" role="status">
       <strong>${result.identity_eligible ? `✓ Recognised as ${recognized}` : "No speaker was confidently recognised"}</strong>
       <details>
         <summary>Technical details</summary>
@@ -563,7 +569,7 @@ class SpeakerRecognitionPanel extends HTMLElement {
             <div class="phrase"><strong>Phrase ${this._sampleIndex + 1}:</strong><br>${this._escape(phrase)}</div>
             <h3>Record with this device</h3>
             ${micAvailable ? `<div class="row">
-              ${this._recording ? `<button id="stopBtn">Stop recording</button>` : `<button id="recordBtn" ${this._busy ? "disabled" : ""}>Start recording</button>`}
+              ${this._recording ? `<button id="stopBtn">Stop recording (maximum 30 seconds)</button>` : `<button id="recordBtn" ${this._busy ? "disabled" : ""}>Start recording</button>`}
               ${this._lastWav ? `<button id="playBtn" class="secondary">Play back</button><button id="useBtn" ${this._busy ? "disabled" : ""}>Use this recording</button><button id="testBtn" class="secondary" ${this._busy ? "disabled" : ""}>Test profile</button>` : ""}
             </div>` : `<p class="warning">Microphone access is unavailable here. Open Home Assistant over HTTPS, or record with a voice satellite instead.</p>`}
             <h3>Record with a voice satellite</h3>
@@ -572,7 +578,7 @@ class SpeakerRecognitionPanel extends HTMLElement {
             ${s.profile_promoted_counts?.[this._userId] ? `<p class="muted">Current profile includes ${s.profile_promoted_counts[this._userId]} confirmed real-world recording(s).</p>` : ""}
             ${promoted.length ? `<div class="result"><strong>Confirmed real-world recordings: ${promoted.length}</strong><p>These confirmed recordings can be used to improve the voice profile. The current profile keeps working until the update succeeds.</p><button id="trainPromotedBtn" ${this._busy || staged.length ? "disabled" : ""}>Update with confirmed recordings</button><button id="discardPromotedBtn" class="secondary" ${this._busy ? "disabled" : ""}>Discard recordings</button>${staged.length ? `<p>Finish recording the selected phrases first.</p>` : ""}</div>` : ""}
             <div class="row"><button id="commitBtn" ${staged.length < minimum || this._busy ? "disabled" : ""}>Train with ${staged.length} staged sample${staged.length === 1 ? "" : "s"}</button><span class="muted">Minimum ${minimum}; up to ${s.phrases.length}.</span>${staged.length ? `<button class="secondary" id="discardStagedBtn" ${this._busy ? "disabled" : ""}>Discard unfinished recordings</button>` : ""}</div>
-            ${this._message ? `<div class="message">${this._escape(this._message)}</div>` : ""}
+            ${this._message ? `<div class="message" role="status" aria-live="polite">${this._escape(this._message)}</div>` : ""}
           </div>
           <div class="card">
             <h2>Profile diagnostics</h2>
@@ -584,7 +590,7 @@ class SpeakerRecognitionPanel extends HTMLElement {
             <p>Check recognition using the microphone and room conditions you normally use. Select a satellite, start the test, then make a normal voice request within 90 seconds.</p>
             ${s.satellites.length ? `<div class="row"><select id="liveSatelliteSelect">${s.satellites.map(x => `<option value="${x.entity_id}" ${x.entity_id === this._liveSatelliteId ? "selected" : ""}>${this._escape(x.name || x.entity_id)}${x.available ? "" : " (unavailable)"}</option>`).join("")}</select><button id="liveTestBtn" ${this._liveBusy ? "disabled" : ""}>${this._liveBusy ? "Waiting for voice request…" : "Start live test"}</button></div>` : `<p class="muted">No voice satellites are available.</p>`}
             <p class="muted">Your voice request will run normally while Speaker Recognition checks who spoke.</p>
-            ${this._liveMessage ? `<div class="message">${this._escape(this._liveMessage)}</div>` : ""}
+            ${this._liveMessage ? `<div class="message" role="status" aria-live="polite">${this._escape(this._liveMessage)}</div>` : ""}
             ${this._renderLiveResult(liveResult)}
           </div>
           <div class="card">
