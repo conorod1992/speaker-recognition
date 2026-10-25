@@ -23,18 +23,23 @@ env:
 
 jobs:
   prepare:
-    name: Resolve HA Python version
+    name: Resolve HA Python versions
     runs-on: ubuntu-latest
     outputs:
-      python-version: ${{ steps.versions.outputs.python-version }}
+      stable-python: ${{ steps.versions.outputs.stable-python }}
+      upcoming-python: ${{ steps.versions.outputs.upcoming-python }}
+      harness-version: ${{ steps.versions.outputs.harness-version }}
     steps:
-      - name: Read Python version from Home Assistant Core
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Resolve Python versions for each HA lane
         id: versions
         run: |
-          PYTHON_VERSION="$(curl -fsSL "https://raw.githubusercontent.com/${{ env.HA_CORE_REPO }}/${{ env.HA_CORE_BRANCH }}/.python-version" | tr -d '\n')"
-          test -n "$PYTHON_VERSION"
-          echo "python-version=$PYTHON_VERSION" >> "$GITHUB_OUTPUT"
-          echo "Home Assistant Python version: $PYTHON_VERSION"
+          HARNESS_VERSION="$(python scripts/resolve_ha_python.py harness-version)"
+          echo "harness-version=$HARNESS_VERSION" >> "$GITHUB_OUTPUT"
+          echo "stable-python=$(python scripts/resolve_ha_python.py stable --harness-version "$HARNESS_VERSION")" >> "$GITHUB_OUTPUT"
+          echo "upcoming-python=$(python scripts/resolve_ha_python.py upcoming)" >> "$GITHUB_OUTPUT"
 
   real-ha:
     name: Home Assistant (${{ matrix.home-assistant }})
@@ -55,7 +60,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: ${{ needs.prepare.outputs.python-version }}
+          python-version: ${{ matrix.home-assistant == 'stable' && needs.prepare.outputs.stable-python || needs.prepare.outputs.upcoming-python }}
           allow-prereleases: true
           cache: pip
           cache-dependency-path: tests_real_ha/requirements.txt
@@ -63,12 +68,11 @@ jobs:
       - name: Install Real HA test harness
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r tests_real_ha/requirements.txt
+          python -m pip install -r tests_real_ha/requirements.txt \
+            "pytest-homeassistant-custom-component==${{ needs.prepare.outputs.harness-version }}"
 
-      - name: Install latest stable Home Assistant
-        if: matrix.home-assistant == 'stable'
-        run: python -m pip install --upgrade homeassistant
-
+      # The pytest HA harness pins an exact Core version. Do not independently
+      # upgrade Core in the stable lane: it would invalidate that requirement.
       - name: Install upcoming Home Assistant Core dev
         if: matrix.home-assistant == 'upcoming'
         run: |
