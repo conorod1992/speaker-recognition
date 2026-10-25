@@ -23,18 +23,20 @@ env:
 
 jobs:
   prepare:
-    name: Resolve HA Python version
+    name: Resolve HA Python versions
     runs-on: ubuntu-latest
     outputs:
-      python-version: ${{ steps.versions.outputs.python-version }}
+      stable-python: ${{ steps.versions.outputs.stable-python }}
+      upcoming-python: ${{ steps.versions.outputs.upcoming-python }}
     steps:
-      - name: Read Python version from Home Assistant Core
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Resolve Python versions for each HA lane
         id: versions
         run: |
-          PYTHON_VERSION="$(curl -fsSL "https://raw.githubusercontent.com/${{ env.HA_CORE_REPO }}/${{ env.HA_CORE_BRANCH }}/.python-version" | tr -d '\n')"
-          test -n "$PYTHON_VERSION"
-          echo "python-version=$PYTHON_VERSION" >> "$GITHUB_OUTPUT"
-          echo "Home Assistant Python version: $PYTHON_VERSION"
+          echo "stable-python=$(python scripts/resolve_ha_python.py stable)" >> "$GITHUB_OUTPUT"
+          echo "upcoming-python=$(python scripts/resolve_ha_python.py upcoming)" >> "$GITHUB_OUTPUT"
 
   real-ha:
     name: Home Assistant (${{ matrix.home-assistant }})
