@@ -34,11 +34,22 @@ def harness_core_version(requires_dist: list[str]) -> str:
     return versions.pop()
 
 
-def resolve_python(lane: str) -> tuple[str, str]:
+def latest_harness_version() -> str:
+    """Select a single published harness release for every CI job."""
+    version = _get_json(PYPI_HARNESS)["info"]["version"]
+    if not re.fullmatch(r"\d+(?:\.\d+){2,3}", version):
+        raise ValueError(f"Unexpected HA harness release version: {version!r}")
+    return version
+
+
+def resolve_python(lane: str, *, harness_version: str | None = None) -> tuple[str, str]:
     if lane == "upcoming":
         ref = "dev"
     elif lane == "stable":
-        harness = _get_json(PYPI_HARNESS)
+        harness = _get_json(
+            f"https://pypi.org/pypi/pytest-homeassistant-custom-component/{harness_version}/json"
+            if harness_version else PYPI_HARNESS
+        )
         ref = harness_core_version(harness["info"]["requires_dist"])
     else:
         raise ValueError(f"Unknown HA lane: {lane}")
@@ -51,9 +62,13 @@ def resolve_python(lane: str) -> tuple[str, str]:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("lane", choices=("stable", "upcoming"))
+    parser.add_argument("lane", choices=("stable", "upcoming", "harness-version"))
+    parser.add_argument("--harness-version")
     args = parser.parse_args()
-    ref, python_version = resolve_python(args.lane)
+    if args.lane == "harness-version":
+        print(latest_harness_version(), end="")
+        return
+    ref, python_version = resolve_python(args.lane, harness_version=args.harness_version)
     print(f"Home Assistant {args.lane}: Core {ref}; Python {python_version}", file=sys.stderr)
     print(python_version, end="")
 
