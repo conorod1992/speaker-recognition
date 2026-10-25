@@ -55,7 +55,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: ${{ needs.prepare.outputs.python-version }}
+          python-version: ${{ matrix.home-assistant == 'stable' && needs.prepare.outputs.stable-python || needs.prepare.outputs.upcoming-python }}
           allow-prereleases: true
           cache: pip
           cache-dependency-path: tests_real_ha/requirements.txt
