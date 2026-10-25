@@ -133,3 +133,25 @@ def test_rejecting_known_wrong_speaker_still_counts_as_a_miss() -> None:
     result = simulate_threshold(records, 0.73)
     assert result.missed_speakers == 1
     assert result.correct_rejection == 0
+
+
+def test_unavailable_recognition_does_not_qualify_for_calibration() -> None:
+    unavailable = {
+        **_record(0.0, "correct", accepted=False, identity_eligible=False),
+        "candidate_user_id": "",
+        "recognition_status": "unavailable",
+    }
+    evaluated = _record(0.81, "correct")
+    analysis = analyze_thresholds([unavailable] * 20 + [evaluated] * 14, 0.70)
+    assert analysis["labelled_count"] == 14
+    assert analysis["ready"] is False
+
+
+def test_status_flag_excludes_invalid_trials_even_with_candidate() -> None:
+    failed = {
+        **_record(0.80, "correct"),
+        "recognition_status": "unavailable",
+    }
+    analysis = analyze_thresholds([failed] * 15, 0.70)
+    assert analysis["labelled_count"] == 0
+    assert analysis["recommended_threshold"] is None
