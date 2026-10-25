@@ -503,6 +503,9 @@ class SpeakerRecognitionSTTEntity(SpeechToTextEntity):
                 "similarity": correlated.similarity,
                 "margin": correlated.margin,
                 "accepted": correlated.accepted,
+                "recognition_status": (
+                    "evaluated" if recognition_result is not None else "unavailable"
+                ),
                 "all_scores": correlated.all_scores,
                 "whispering": correlated.whispering,
                 "whisper_score": correlated.whisper_score,
