@@ -29,6 +29,7 @@ from .const import (
 )
 from .diagnostics import live_test_status, start_live_test
 from .enrollment import (
+    async_discard_staged_samples,
     ENROLLMENT_PHRASES,
     MIN_ENROLLMENT_SAMPLES,
     async_stage_pcm_sample,
@@ -681,6 +682,22 @@ async def websocket_test_sample(
     )
 
 
+@websocket_api.websocket_command({
+    vol.Required("type"): f"{DOMAIN}/discard_staged_samples",
+    vol.Required("user_id"): str,
+})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def websocket_discard_staged_samples(hass, connection, msg):
+    """Allow explicit cleanup of unfinished recordings."""
+    waiters = hass.data.get(DOMAIN, {}).get("enrollment_commit_waiters", {})
+    if any(not waiter.done() for waiter in waiters.values()):
+        connection.send_error(msg["id"], "commit_in_progress", "Enrollment is being saved")
+        return
+    count = await async_discard_staged_samples(hass, msg["user_id"])
+    connection.send_result(msg["id"], {"discarded": count})
+
+
 def async_register_websocket_commands(hass: HomeAssistant) -> None:
     """Register all Speaker Recognition frontend commands once."""
     websocket_api.async_register_command(hass, websocket_status)
@@ -694,6 +711,7 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, websocket_start_satellite_sample)
     websocket_api.async_register_command(hass, websocket_start_live_test)
     websocket_api.async_register_command(hass, websocket_commit_enrollment)
+    websocket_api.async_register_command(hass, websocket_discard_staged_samples)
     websocket_api.async_register_command(hass, websocket_promote_decision)
     websocket_api.async_register_command(hass, websocket_discard_promoted_samples)
     websocket_api.async_register_command(hass, websocket_test_sample)

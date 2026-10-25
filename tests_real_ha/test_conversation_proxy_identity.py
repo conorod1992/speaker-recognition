@@ -428,3 +428,30 @@ async def test_source_conversation_failure_propagates_after_identity_consumption
 
     assert clean_source.received is not None
     assert clean_source.received.context.user_id is None
+
+
+@pytest.mark.asyncio
+async def test_captured_enrollment_turn_never_reaches_source_agent(
+    hass: HomeAssistant,
+) -> None:
+    """A spoken enrollment phrase must be consumed even when it sounds like a command."""
+    from custom_components.speaker_recognition.enrollment import (
+        consume_completed_enrollment_turn,
+    )
+
+    main = _main_entry(hass)
+    entity = _proxy_entity(hass, main)
+    agent = FakeSourceAgent()
+    sequence = 987654
+    hass.data.setdefault(DOMAIN, {})["completed_enrollment_turns"] = {sequence}
+    set_correlated_recognition(_recognition("enrolled-user", sequence=sequence))
+
+    with patch(
+        "custom_components.speaker_recognition.conversation.conversation.async_get_agent",
+        return_value=agent,
+    ):
+        response = await entity.async_process(_input())
+
+    assert agent.received is None
+    assert response.conversation_id == "conversation-1"
+    assert not consume_completed_enrollment_turn(hass, sequence)

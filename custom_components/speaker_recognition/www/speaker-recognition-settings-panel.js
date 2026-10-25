@@ -190,6 +190,18 @@ class SpeakerRecognitionSettingsPanel extends BasePanel {
     const main = settings.main;
     const sttEntries = settings.stt_entries || [];
     const conversationEntries = settings.conversation_entries || [];
+    const configuredVoices = this._status?.enrolled_users || [];
+    const readiness = [
+      [Boolean(main), "Recognition service configured", "Add the integration to connect the recognition service"],
+      [configuredVoices.length > 0, "At least one voice enrolled", "Open Voices to record an enrollment"],
+      [sttEntries.length > 0, "Speech-to-text proxy configured", "Add an STT proxy in Devices & services"],
+      [conversationEntries.length > 0, "Conversation proxy configured", "Add a Conversation proxy in Devices & services"],
+    ];
+    const readinessHtml = `<div class="result" id="setupReadiness" role="group" aria-label="Setup readiness">
+      <strong>Setup readiness</strong>
+      <ul>${readiness.map(([ready, label, advice]) => `<li>${ready ? "✓" : "○"} ${label}${ready ? "" : ` — ${advice}`}</li>`).join("")}</ul>
+      <p class="muted">Configured proxies do not guarantee an Assist pipeline is using them. Verify by making a live satellite test under Recognition.</p>
+    </div>`;
     const fieldStyle = "width:100%;max-width:620px;padding:9px;border-radius:6px;background:var(--card-background-color);color:var(--primary-text-color);border:1px solid var(--divider-color);font:inherit";
 
     const backend = main ? `<details class="result advancedSettings">
@@ -233,6 +245,7 @@ class SpeakerRecognitionSettingsPanel extends BasePanel {
 
     return `<div class="card" id="settingsCard">
       <h2>Settings</h2>
+      ${readinessHtml}
       <p class="muted">Choose the speech-to-text and conversation services Speaker Recognition works with. Most users can leave Advanced settings unchanged.</p>
       ${this._settingsMessage ? `<div class="message">${this._escape(this._settingsMessage)}</div>` : ""}
       <h3>Speech-to-text</h3>

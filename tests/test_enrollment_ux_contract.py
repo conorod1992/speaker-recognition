@@ -119,3 +119,31 @@ def test_panel_advances_to_the_next_incomplete_phrase() -> None:
     assert "this._sampleIndex = this._nextIncompleteSample(savedIndex)" in panel
     assert "this._sampleIndex = this._nextIncompleteSample(index)" in panel
     assert "Math.min(staged.length" not in panel
+
+
+def test_successful_stt_enrollment_is_consumed_before_original_conversation_agent() -> None:
+    """Captured enrollment audio must not execute normal agent commands."""
+    enrollment_source = (ROOT / "enrollment.py").read_text(encoding="utf-8")
+    conversation_source = (ROOT / "conversation.py").read_text(encoding="utf-8")
+    assert "completed_turns.add(utterance_sequence)" in enrollment_source
+    assert "consume_completed_enrollment_turn(" in conversation_source
+    assert conversation_source.index("consume_completed_enrollment_turn(") < conversation_source.index("return await source_agent.async_process(user_input)")
+
+
+def test_unfinished_enrollment_discard_is_wired_end_to_end() -> None:
+    enrollment = (ROOT / "enrollment.py").read_text(encoding="utf-8")
+    websocket = (ROOT / "websocket.py").read_text(encoding="utf-8")
+    panel = (ROOT / "www" / "speaker-recognition-panel.js").read_text(encoding="utf-8")
+    assert "async_discard_staged_samples" in enrollment
+    assert 'staging.pop(user_id, {})' in enrollment
+    assert "websocket_discard_staged_samples" in websocket
+    assert "discardStagedBtn" in panel
+
+
+def test_orphaned_media_cleanup_excludes_referenced_recordings() -> None:
+    enrollment = (ROOT / "enrollment.py").read_text(encoding="utf-8")
+    integration = (ROOT / "__init__.py").read_text(encoding="utf-8")
+    assert "_ORPHAN_GRACE_SECONDS = 24 * 60 * 60" in enrollment
+    assert "pending_promotions(hass)" in enrollment
+    assert "path.resolve() not in referenced" in enrollment
+    assert "async_cleanup_orphaned_samples(hass, voice_samples)" in integration

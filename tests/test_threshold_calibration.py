@@ -106,3 +106,52 @@ def test_equal_best_score_keeps_current_threshold_when_possible() -> None:
 
     assert result["recommended_threshold"] == 0.70
     assert simulate_threshold(records, 0.70).score == 0
+
+
+def test_rejecting_unenrolled_voice_is_correct_rejection() -> None:
+    """A threshold must not be penalised for rejecting a stranger."""
+    records = [
+        _record(0.72, "wrong_speaker", candidate="user-a", actual=None)
+        for _ in range(15)
+    ]
+    accepted = simulate_threshold(records, 0.70)
+    rejected = simulate_threshold(records, 0.73)
+    assert accepted.false_accepts == 15
+    assert accepted.correct_rejection == 0
+    assert rejected.correct_rejection == 15
+    assert rejected.missed_speakers == 0
+    assert rejected.score == 0
+    analysis = analyze_thresholds(records, 0.70)
+    assert analysis["recommended_threshold"] == 0.73
+    assert analysis["recommended_metrics"]["correct_rejection"] == 15
+
+
+def test_rejecting_known_wrong_speaker_still_counts_as_a_miss() -> None:
+    records = [
+        _record(0.72, "wrong_speaker", candidate="user-a", actual="user-b")
+    ]
+    result = simulate_threshold(records, 0.73)
+    assert result.missed_speakers == 1
+    assert result.correct_rejection == 0
+
+
+def test_unavailable_recognition_does_not_qualify_for_calibration() -> None:
+    unavailable = {
+        **_record(0.0, "correct", accepted=False, identity_eligible=False),
+        "candidate_user_id": "",
+        "recognition_status": "unavailable",
+    }
+    evaluated = _record(0.81, "correct")
+    analysis = analyze_thresholds([unavailable] * 20 + [evaluated] * 14, 0.70)
+    assert analysis["labelled_count"] == 14
+    assert analysis["ready"] is False
+
+
+def test_status_flag_excludes_invalid_trials_even_with_candidate() -> None:
+    failed = {
+        **_record(0.80, "correct"),
+        "recognition_status": "unavailable",
+    }
+    analysis = analyze_thresholds([failed] * 15, 0.70)
+    assert analysis["labelled_count"] == 0
+    assert analysis["recommended_threshold"] is None

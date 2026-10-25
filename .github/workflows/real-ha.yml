@@ -65,9 +65,12 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r tests_real_ha/requirements.txt
 
-      - name: Install latest stable Home Assistant
+      - name: Verify stable Home Assistant selected by test harness
         if: matrix.home-assistant == 'stable'
-        run: python -m pip install --upgrade homeassistant
+        run: |
+          # The published test harness pins a compatible HA patch release.
+          # Upgrading HA independently breaks pip check before test collection.
+          python -m pip show homeassistant pytest-homeassistant-custom-component
 
       - name: Install upcoming Home Assistant Core dev
         if: matrix.home-assistant == 'upcoming'

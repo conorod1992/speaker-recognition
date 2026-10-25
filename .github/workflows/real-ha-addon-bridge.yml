@@ -157,8 +157,10 @@ jobs:
       - name: Install stable Home Assistant test harness
         run: |
           python -m pip install --upgrade pip
+          # The test harness pins its compatible Home Assistant patch release.
+          # Do not independently upgrade HA beyond that pinned version.
           python -m pip install -r tests_real_ha/requirements.txt
-          python -m pip install --upgrade homeassistant
+          python -m pip check
 
       - name: Install Home Assistant integration dependency requirements
         run: |

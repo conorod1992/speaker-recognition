@@ -92,3 +92,22 @@ def test_panel_adds_responsive_and_semantic_visual_hierarchy() -> None:
     assert ".message.message-success" in source
     assert ".message.message-error" in source
     assert ".trainingAction" in source
+
+
+def test_browser_recording_is_bounded_and_timer_is_cancelled() -> None:
+    panel = (ROOT / "www" / "speaker-recognition-panel.js").read_text(encoding="utf-8")
+    assert "setTimeout(() => this._stopRecording(), 30000)" in panel
+    assert "clearTimeout(this._recordingStopTimer)" in panel
+    assert 'this._recordingStopTimer = null' in panel
+
+
+def test_setup_readiness_is_honest_about_assist_pipeline_selection() -> None:
+    panel = (ROOT / "www" / "speaker-recognition-settings-panel.js").read_text(encoding="utf-8")
+    assert 'id="setupReadiness"' in panel
+    assert "Configured proxies do not guarantee an Assist pipeline is using them" in panel
+    assert "Verify by making a live satellite test" in panel
+
+
+def test_recording_feedback_is_accessible_to_screen_readers() -> None:
+    panel = (ROOT / "www" / "speaker-recognition-panel.js").read_text(encoding="utf-8")
+    assert 'role="status" aria-live="polite"' in panel

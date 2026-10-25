@@ -209,9 +209,11 @@ class SpeakerRecognitionCalibrationPanel extends BasePanel {
 
     return decisions.slice(0, 10).map(item => {
       const applied = Boolean(item.identity_eligible && item.user_id);
-      const outcome = applied
-        ? `Recognised as ${this._escape(this._userName(item.user_id))}`
-        : "Not recognised";
+      const outcome = item.recognition_status === "unavailable"
+        ? "Recognition unavailable"
+        : applied
+          ? `Recognised as ${this._escape(this._userName(item.user_id))}`
+          : "Not recognised";
       const when = this._reviewWhen(item.created_at);
       const candidate = this._escape(this._userName(item.candidate_user_id));
       const margin = item.margin == null ? "n/a" : Number(item.margin).toFixed(3);
