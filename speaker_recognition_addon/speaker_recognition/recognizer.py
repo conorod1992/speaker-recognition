@@ -128,6 +128,35 @@ class SpeakerRecognizer:
             self._is_trained = False
             return
 
+        # A process crash may occur after the old profile was moved to .bak
+        # but before its replacement was installed. Restore only a missing
+        # target; never overwrite a profile that completed replacement.
+        for backup in self._embeddings_directory.glob("*_profile.bak"):
+            target = backup.with_suffix(".npz")
+            if target.exists():
+                continue
+            try:
+                with np.load(backup, allow_pickle=False) as profile:
+                    schema_version = int(profile["schema_version"].item())
+                    if self._profile_engine_id(profile, schema_version) != self.engine_id:
+                        continue
+                    user_id = str(profile["user_id"].item())
+                    if self._profile_path(user_id) != target:
+                        continue
+                    centroid = self._normalize_embedding(profile["centroid"])
+                    samples = np.asarray(profile["sample_embeddings"])
+                    if (
+                        samples.ndim != 2
+                        or samples.shape[0] == 0
+                        or samples.shape[1] != centroid.size
+                        or not np.isfinite(samples).all()
+                    ):
+                        continue
+                backup.replace(target)
+                _LOGGER.warning("Recovered interrupted speaker profile update: %s", target)
+            except (OSError, ValueError, KeyError):
+                _LOGGER.warning("Unable to recover interrupted profile backup: %s", backup)
+
         expected_dimension: Optional[int] = None
         for profile_path in self._embeddings_directory.glob("*_profile.npz"):
             try:
