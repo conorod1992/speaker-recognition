@@ -144,7 +144,9 @@ jobs:
       - name: Resolve harness-compatible Home Assistant Python
         id: ha-python
         run: |
-          echo "version=$(python scripts/resolve_ha_python.py stable)" >> "$GITHUB_OUTPUT"
+          HARNESS_VERSION="$(python scripts/resolve_ha_python.py harness-version)"
+          echo "harness-version=$HARNESS_VERSION" >> "$GITHUB_OUTPUT"
+          echo "version=$(python scripts/resolve_ha_python.py stable --harness-version "$HARNESS_VERSION")" >> "$GITHUB_OUTPUT"
 
       - name: Set up Home Assistant Python
         uses: actions/setup-python@v6
@@ -157,7 +159,8 @@ jobs:
       - name: Install stable Home Assistant test harness
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r tests_real_ha/requirements.txt
+          python -m pip install -r tests_real_ha/requirements.txt \
+            "pytest-homeassistant-custom-component==${{ steps.ha-python.outputs.harness-version }}"
           # pytest-homeassistant-custom-component selects a compatible HA Core.
 
       - name: Verify compatible Home Assistant test environment
