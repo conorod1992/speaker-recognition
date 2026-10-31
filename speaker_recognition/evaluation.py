@@ -225,6 +225,7 @@ def find_best_operating_point(
     if not materialized:
         raise ValueError("At least one labelled evaluation record is required")
     candidates: list[EvaluationOperatingPoint] = []
+    margin_thresholds = tuple(margin_thresholds)
     for similarity_threshold in similarity_thresholds:
         for margin_threshold in margin_thresholds:
             metrics = evaluate_records(

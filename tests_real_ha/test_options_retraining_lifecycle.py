@@ -10,7 +10,6 @@ import wave
 
 from aiohttp import web
 import pytest
-from homeassistant import config_entries
 from homeassistant.components import media_source
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
@@ -215,7 +214,9 @@ async def test_main_options_load_current_values_and_preserve_enrollment(
     """Main options use effective values and do not discard existing speakers."""
     existing = _enrollment("alice", "old")
     entry = _main_entry("http://old.invalid", [existing], token="old-token")
+    policy = {"min_similarity": 0.9, "min_margin": 0.3}
     entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(entry, options={**entry.options, "acceptance_thresholds": policy})
 
     result = await _start_options_flow(hass, entry)
     result = await hass.config_entries.options.async_configure(
@@ -233,6 +234,7 @@ async def test_main_options_load_current_values_and_preserve_enrollment(
     assert entry.options[CONF_BACKEND_URL] == "http://new.invalid"
     assert entry.options[CONF_BACKEND_TOKEN] == "new-token"
     assert entry.options[CONF_VOICE_SAMPLES] == [existing]
+    assert entry.options["acceptance_thresholds"] == policy
 
 
 @pytest.mark.asyncio
@@ -244,7 +246,9 @@ async def test_options_enrollment_adds_second_user_without_changing_first(
     bob = await hass.auth.async_create_user("Bob")
     alice_enrollment = _enrollment(alice.id, "alice-old")
     entry = _main_entry("http://backend.invalid", [alice_enrollment])
+    policy = {"min_similarity": 0.9, "min_margin": 0.3}
     entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(entry, options={**entry.options, "acceptance_thresholds": policy})
     wav_path = tmp_path / "bob.wav"
     _write_wav(wav_path)
 
@@ -254,6 +258,7 @@ async def test_options_enrollment_adds_second_user_without_changing_first(
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
     by_user = {item[CONF_USER]: item for item in entry.options[CONF_VOICE_SAMPLES]}
+    assert entry.options["acceptance_thresholds"] == policy
     assert by_user[alice.id] == alice_enrollment
     assert by_user[bob.id][CONF_SAMPLES] == [
         _media_item(f"bob-{index}.wav") for index in range(5)

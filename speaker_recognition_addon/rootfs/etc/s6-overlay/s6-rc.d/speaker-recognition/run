@@ -5,7 +5,9 @@ set -e
 bashio::log.info "Starting Speaker Recognition Service..."
 
 export HOST=$(bashio::config 'host')
-export PORT=$(bashio::config 'port')
+# Supervisor publishes this fixed container port. Configure the host-facing port
+# in the add-on Network section, rather than moving the internal listener.
+export PORT=8099
 export LOG_LEVEL=$(bashio::config 'log_level' | tr '[:lower:]' '[:upper:]')
 export ACCESS_LOG=$(bashio::config 'access_log')
 export EMBEDDINGS_DIR=$(bashio::config 'embeddings_dir')

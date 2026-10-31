@@ -475,6 +475,7 @@ class SpeakerRecognitionOptionsFlow(EnrollmentFlowMixin, OptionsFlow):
             return self.async_create_entry(
                 title="",
                 data={
+                    **self.config_entry.options,
                     CONF_BACKEND_URL: user_input[CONF_BACKEND_URL],
                     CONF_BACKEND_TOKEN: user_input.get(CONF_BACKEND_TOKEN, ""),
                     CONF_VOICE_SAMPLES: self.config_entry.options.get(
@@ -514,6 +515,7 @@ class SpeakerRecognitionOptionsFlow(EnrollmentFlowMixin, OptionsFlow):
         return self.async_create_entry(
             title="",
             data={
+                **self.config_entry.options,
                 CONF_BACKEND_URL: current_url,
                 CONF_BACKEND_TOKEN: current_token,
                 CONF_VOICE_SAMPLES: _replace_enrolled_user(

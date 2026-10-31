@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+from copy import deepcopy
 from datetime import datetime, timezone
 import hashlib
 from time import perf_counter
@@ -12,6 +14,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 
 from .const import DOMAIN
+from .live_evaluation_analysis import analyze_live_evaluation
 from .recognition import (
     RecognitionResult,
     ShadowRecognitionResult,
@@ -65,15 +68,34 @@ class LiveModelEvaluation:
         self.running = False
         self.pending: dict[str, Any] | None = None
         self._current: dict[str, Any] | None = None
+        self._analysis_revision = 0
+        self._analysis_cache: dict[str, Any] | None = None
+        self._analysis_lock = asyncio.Lock()
 
     async def async_load(self) -> None:
         data = await self._store.async_load()
         records = data.get("records", []) if isinstance(data, dict) else []
         if isinstance(records, list):
             self._records = [dict(item) for item in records if isinstance(item, dict)]
+        self._analysis_revision += 1
+        self._analysis_cache = None
 
     def _schedule_save(self) -> None:
+        self._analysis_revision += 1
+        self._analysis_cache = None
         self._store.async_delay_save(lambda: {"records": self._records}, _SAVE_DELAY)
+
+    async def async_analysis(self) -> dict[str, Any]:
+        """Coalesce polls and calculate each changed snapshot outside HA's loop."""
+        async with self._analysis_lock:
+            while self._analysis_cache is None:
+                revision = self._analysis_revision
+                result = await self.hass.async_add_executor_job(
+                    analyze_live_evaluation, deepcopy(self._records)
+                )
+                if revision == self._analysis_revision:
+                    self._analysis_cache = result
+            return deepcopy(self._analysis_cache)
 
     @property
     def records(self) -> list[dict[str, Any]]:

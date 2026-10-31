@@ -10,7 +10,8 @@ def test_backend_exposes_separate_shadow_endpoints_and_lock() -> None:
     assert '"/shadow/profiles/sync"' in source
     assert '"/shadow/recognize"' in source
     assert "with _RECOGNIZER_LOCK:" in source
-    assert "with _SHADOW_LOCK:" in source
+    assert "_SHADOW_LOCK.acquire(blocking=False)" in source
+    assert "_SHADOW_LOCK.release()" in source
 
 
 def test_addon_defaults_shadow_engine_off() -> None:

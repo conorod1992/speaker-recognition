@@ -662,6 +662,13 @@ Run the tests:
 uv run pytest tests/ -v
 ```
 
+The browser panel has behavioral regression tests using Node.js 24.15 or newer:
+
+```bash
+npm ci
+npm test
+```
+
 For `tests_real_ha`, use the Home Assistant Python version and dependencies from
 `.github/workflows/real-ha.yml`, then run:
 

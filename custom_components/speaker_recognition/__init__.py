@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from homeassistant.config_entries import ConfigEntry
@@ -280,15 +281,44 @@ async def async_update_main_listener(
     hass: HomeAssistant, entry: SpeakerRecognitionConfigEntry
 ) -> None:
     """Handle main config options update."""
+    lock = hass.data.setdefault(DOMAIN, {}).setdefault("main_update_lock", asyncio.Lock())
+    async with lock:
+        await _async_update_main_entry(hass, entry)
+
+
+async def _async_update_main_entry(
+    hass: HomeAssistant, entry: SpeakerRecognitionConfigEntry
+) -> None:
+    """Apply one serialized update, reading the latest options after acquiring the lock."""
     voice_samples = entry.options.get(CONF_VOICE_SAMPLES, [])
-    previous_samples = list(entry.runtime_data.voice_samples)
+    recognition = getattr(entry, "runtime_data", None)
+    if recognition is None:
+        await hass.config_entries.async_reload(entry.entry_id)
+        return
+    previous_samples = list(recognition.voice_samples)
     try:
         changed_users = await async_apply_enrollment_update(
-            entry.runtime_data, voice_samples
+            recognition, voice_samples
         )
     except EnrollmentUpdateFailed as error:
         updated_options = dict(entry.options)
-        updated_options[CONF_VOICE_SAMPLES] = error.previous_samples
+        # Another options flow may have saved during training. Restore only the
+        # failed users whose requested samples have not since been replaced.
+        latest = list(updated_options.get(CONF_VOICE_SAMPLES, []))
+        requested = {row.get("user"): row for row in voice_samples}
+        previous = {row.get("user"): row for row in error.previous_samples}
+        for user_id in error.changed_users:
+            current = next((row for row in latest if row.get("user") == user_id), None)
+            if current != requested.get(user_id):
+                continue
+            if user_id in previous:
+                latest = [
+                    previous[user_id] if row.get("user") == user_id else row
+                    for row in latest
+                ]
+            else:
+                latest = [row for row in latest if row.get("user") != user_id]
+        updated_options[CONF_VOICE_SAMPLES] = latest
         hass.config_entries.async_update_entry(entry, options=updated_options)
         _resolve_enrollment_commits(hass, error.changed_users, False)
         return
@@ -307,8 +337,12 @@ async def async_update_main_listener(
         for user_id in changed_users:
             staged.pop(user_id, None)
 
-    _resolve_enrollment_commits(hass, changed_users, True)
-    await hass.config_entries.async_reload(entry.entry_id)
+    try:
+        await hass.config_entries.async_reload(entry.entry_id)
+    finally:
+        # Training has committed, even if availability delays the new runtime.
+        # Keep sidebar transactions excluded until the reload has finished.
+        _resolve_enrollment_commits(hass, changed_users, True)
 
 
 async def async_update_stt_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:

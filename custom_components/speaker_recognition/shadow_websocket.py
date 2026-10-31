@@ -7,7 +7,7 @@ from typing import Any
 import voluptuous as vol
 
 from homeassistant.components import websocket_api
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant
 
 from .calibration import analyze_engine_comparison
 from .const import CONF_ENTRY_TYPE, DOMAIN, ENTRY_TYPE_MAIN
@@ -50,10 +50,9 @@ def _shadow_status(hass: HomeAssistant) -> dict[str, Any]:
     }
 
 
-def _live_status(hass: HomeAssistant) -> dict[str, Any]:
+async def _live_status(hass: HomeAssistant) -> dict[str, Any]:
     evaluation = get_live_model_evaluation(hass)
-    records = evaluation.records if evaluation is not None else []
-    result = analyze_live_evaluation(records)
+    result = await evaluation.async_analysis() if evaluation is not None else analyze_live_evaluation([])
     result["shadow_status"] = _shadow_status(hass)
     if evaluation is None:
         result.update(
@@ -74,8 +73,8 @@ def _live_status(hass: HomeAssistant) -> dict[str, Any]:
     {vol.Required("type"): f"{DOMAIN}/shadow_comparison"}
 )
 @websocket_api.require_admin
-@callback
-def websocket_shadow_comparison(
+@websocket_api.async_response
+async def websocket_shadow_comparison(
     hass: HomeAssistant,
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
@@ -83,7 +82,7 @@ def websocket_shadow_comparison(
     """Retain the legacy history-based comparison endpoint for compatibility."""
     history = get_decision_history(hass)
     records = history.labelled() if history is not None else []
-    result = analyze_engine_comparison(records)
+    result = await hass.async_add_executor_job(analyze_engine_comparison, records)
     result["shadow_status"] = _shadow_status(hass)
     connection.send_result(msg["id"], result)
 
@@ -92,22 +91,22 @@ def websocket_shadow_comparison(
     {vol.Required("type"): f"{DOMAIN}/evaluation_status"}
 )
 @websocket_api.require_admin
-@callback
-def websocket_evaluation_status(
+@websocket_api.async_response
+async def websocket_evaluation_status(
     hass: HomeAssistant,
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
 ) -> None:
     """Return dedicated live A/B state and explicitly labelled aggregate metrics."""
-    connection.send_result(msg["id"], _live_status(hass))
+    connection.send_result(msg["id"], await _live_status(hass))
 
 
 @websocket_api.websocket_command(
     {vol.Required("type"): f"{DOMAIN}/evaluation_start"}
 )
 @websocket_api.require_admin
-@callback
-def websocket_evaluation_start(
+@websocket_api.async_response
+async def websocket_evaluation_start(
     hass: HomeAssistant,
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
@@ -128,15 +127,15 @@ def websocket_evaluation_start(
         )
         return
     evaluation.start()
-    connection.send_result(msg["id"], _live_status(hass))
+    connection.send_result(msg["id"], await _live_status(hass))
 
 
 @websocket_api.websocket_command(
     {vol.Required("type"): f"{DOMAIN}/evaluation_stop"}
 )
 @websocket_api.require_admin
-@callback
-def websocket_evaluation_stop(
+@websocket_api.async_response
+async def websocket_evaluation_stop(
     hass: HomeAssistant,
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
@@ -144,7 +143,7 @@ def websocket_evaluation_stop(
     evaluation = get_live_model_evaluation(hass)
     if evaluation is not None:
         evaluation.stop()
-    connection.send_result(msg["id"], _live_status(hass))
+    connection.send_result(msg["id"], await _live_status(hass))
 
 
 @websocket_api.websocket_command(
@@ -154,8 +153,8 @@ def websocket_evaluation_stop(
     }
 )
 @websocket_api.require_admin
-@callback
-def websocket_evaluation_label(
+@websocket_api.async_response
+async def websocket_evaluation_label(
     hass: HomeAssistant,
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
@@ -174,15 +173,15 @@ def websocket_evaluation_label(
             msg["id"], "no_pending_trial", "There is no completed paired trial to label"
         )
         return
-    connection.send_result(msg["id"], _live_status(hass))
+    connection.send_result(msg["id"], await _live_status(hass))
 
 
 @websocket_api.websocket_command(
     {vol.Required("type"): f"{DOMAIN}/evaluation_discard"}
 )
 @websocket_api.require_admin
-@callback
-def websocket_evaluation_discard(
+@websocket_api.async_response
+async def websocket_evaluation_discard(
     hass: HomeAssistant,
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
@@ -193,15 +192,15 @@ def websocket_evaluation_discard(
             msg["id"], "no_pending_trial", "There is no completed trial to discard"
         )
         return
-    connection.send_result(msg["id"], _live_status(hass))
+    connection.send_result(msg["id"], await _live_status(hass))
 
 
 @websocket_api.websocket_command(
     {vol.Required("type"): f"{DOMAIN}/evaluation_clear"}
 )
 @websocket_api.require_admin
-@callback
-def websocket_evaluation_clear(
+@websocket_api.async_response
+async def websocket_evaluation_clear(
     hass: HomeAssistant,
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
@@ -210,7 +209,7 @@ def websocket_evaluation_clear(
     evaluation = get_live_model_evaluation(hass)
     if evaluation is not None:
         evaluation.clear()
-    connection.send_result(msg["id"], _live_status(hass))
+    connection.send_result(msg["id"], await _live_status(hass))
 
 
 def async_register_shadow_websocket(hass: HomeAssistant) -> None:

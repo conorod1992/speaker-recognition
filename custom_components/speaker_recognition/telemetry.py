@@ -83,6 +83,18 @@ class DecisionHistory:
                 -_MAX_DECISIONS:
             ]
 
+        # STT sequences are process-local, while decisions survive restart. Start
+        # beyond every retained turn so new scores/audio cannot inherit old labels.
+        domain_data = self._hass.data.setdefault(DOMAIN, {})
+        domain_data["utterance_sequence"] = max(
+            [int(domain_data.get("utterance_sequence", 0))]
+            + [
+                item["utterance_sequence"]
+                for item in self._records
+                if type(item.get("utterance_sequence")) is int
+            ]
+        )
+
         audio_data = await self._audio_store.async_load()
         clips = audio_data.get("clips", []) if isinstance(audio_data, dict) else []
         if isinstance(clips, list):

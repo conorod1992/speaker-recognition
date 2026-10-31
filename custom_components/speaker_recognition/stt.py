@@ -208,9 +208,9 @@ class SpeakerRecognitionSTTEntity(SpeechToTextEntity):
         _state_changed_listener()
 
     @property
-    def recognition(self) -> SpeakerRecognition:
+    def recognition(self) -> SpeakerRecognition | None:
         """Get the speaker recognition instance."""
-        return self._main_entry.runtime_data
+        return getattr(self._main_entry, "runtime_data", None)
 
     @property
     def supported_languages(self) -> list[str]:
@@ -365,6 +365,9 @@ class SpeakerRecognitionSTTEntity(SpeechToTextEntity):
                             "Failed to capture satellite enrollment audio for utterance %d",
                             utterance_sequence,
                         )
+
+                if recognition is None:
+                    return None
 
                 async def analyze_whisper() -> WhisperDetection:
                     try:

@@ -1,5 +1,9 @@
 # Speaker Recognition Add-on
 
+The service listens on container port **8099**. To use a different host-facing
+port, change the mapping in the app's **Network** section and use that port in
+the integration's backend URL. The configuration `port` value stays at 8099.
+
 Speaker recognition service for Home Assistant using voice embeddings.
 
 This app (formerly called an add-on) supports 64-bit x86 (`amd64`) and 64-bit
