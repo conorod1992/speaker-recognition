@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from array import array
+import asyncio
 from dataclasses import dataclass
 from pathlib import Path
 import secrets
@@ -42,6 +43,13 @@ class SatelliteEnrollmentSession:
 
 def _domain_data(hass: HomeAssistant) -> dict:
     return hass.data.setdefault(DOMAIN, {})
+
+
+def _sample_lock(hass: HomeAssistant, user_id: str) -> asyncio.Lock:
+    """Serialize writes and discards for one speaker."""
+    return _domain_data(hass).setdefault("enrollment_sample_locks", {}).setdefault(
+        user_id, asyncio.Lock()
+    )
 
 
 def staged_samples(hass: HomeAssistant, user_id: str) -> dict[int, dict[str, str]]:
@@ -98,21 +106,22 @@ def _managed_media_path(hass: HomeAssistant, media_id: str) -> Path | None:
 
 async def async_discard_staged_samples(hass: HomeAssistant, user_id: str) -> int:
     """Discard uncommitted audio for one user without touching active profiles."""
-    staging = _domain_data(hass).setdefault("enrollment_staged", {})
-    samples = staging.pop(user_id, {})
-    paths = []
-    for sample in samples.values():
-        if not isinstance(sample, dict):
-            continue
-        media_id = sample.get("media_content_id")
-        if isinstance(media_id, str):
-            path = _managed_media_path(hass, media_id)
-            if path is not None:
-                paths.append(path)
-    if paths:
-        await hass.async_add_executor_job(_delete_paths, paths)
-    _domain_data(hass).setdefault("enrollment_quality", {}).pop(user_id, None)
-    return len(samples)
+    async with _sample_lock(hass, user_id):
+        staging = _domain_data(hass).setdefault("enrollment_staged", {})
+        samples = staging.pop(user_id, {})
+        paths = []
+        for sample in samples.values():
+            if not isinstance(sample, dict):
+                continue
+            media_id = sample.get("media_content_id")
+            if isinstance(media_id, str):
+                path = _managed_media_path(hass, media_id)
+                if path is not None:
+                    paths.append(path)
+        if paths:
+            await hass.async_add_executor_job(_delete_paths, paths)
+        _domain_data(hass).setdefault("enrollment_quality", {}).pop(user_id, None)
+        return len(samples)
 
 
 _ORPHAN_GRACE_SECONDS = 24 * 60 * 60
@@ -223,20 +232,21 @@ async def async_stage_pcm_sample(
     if len(pcm_data) > sample_rate * 2 * 30:
         raise ValueError("Enrollment sample is too long")
 
-    staged = staged_samples(hass, user_id)
-    previous = staged.get(sample_index)
-    previous_path: Path | None = None
-    if isinstance(previous, dict):
-        previous_media_id = previous.get("media_content_id")
-        if isinstance(previous_media_id, str):
-            previous_path = _managed_media_path(hass, previous_media_id)
+    async with _sample_lock(hass, user_id):
+        staged = staged_samples(hass, user_id)
+        previous = staged.get(sample_index)
+        previous_path: Path | None = None
+        if isinstance(previous, dict):
+            previous_media_id = previous.get("media_content_id")
+            if isinstance(previous_media_id, str):
+                previous_path = _managed_media_path(hass, previous_media_id)
 
-    absolute_path, media_id = _sample_location(hass, user_id, sample_index)
-    await hass.async_add_executor_job(_write_wav, absolute_path, pcm_data, sample_rate)
-    staged[sample_index] = {"media_content_id": media_id}
+        absolute_path, media_id = _sample_location(hass, user_id, sample_index)
+        await hass.async_add_executor_job(_write_wav, absolute_path, pcm_data, sample_rate)
+        staged[sample_index] = {"media_content_id": media_id}
 
-    if previous_path is not None and previous_path != absolute_path:
-        await hass.async_add_executor_job(_delete_paths, [previous_path])
+        if previous_path is not None and previous_path != absolute_path:
+            await hass.async_add_executor_job(_delete_paths, [previous_path])
 
     # Imported lazily so capture/media primitives remain independently reusable.
     from .enrollment_quality import schedule_quality_analysis
