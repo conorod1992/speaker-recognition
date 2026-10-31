@@ -31,7 +31,7 @@ options:
   allow_insecure_remote: false
 schema:
   host: str
-  port: port
+  port: int(8099,8099)
   log_level: list(debug|info|warning|error|critical)
   access_log: bool
   embeddings_dir: str

@@ -12,6 +12,8 @@ class SpeakerRecognitionPanel extends HTMLElement {
     this._liveSatelliteId = "";
     this._liveTestSessionId = "";
     this._recording = null;
+    this._recordingPending = false;
+    this._recordingGeneration = 0;
     this._lastWav = null;
     this._message = "";
     this._liveMessage = "";
@@ -35,6 +37,8 @@ class SpeakerRecognitionPanel extends HTMLElement {
   }
 
   disconnectedCallback() {
+    this._recordingGeneration += 1;
+    this._recordingPending = false;
     if (this._pollTimer) clearTimeout(this._pollTimer);
     if (this._livePollTimer) clearTimeout(this._livePollTimer);
     if (this._qualityPollTimer) clearTimeout(this._qualityPollTimer);
@@ -120,18 +124,28 @@ class SpeakerRecognitionPanel extends HTMLElement {
   }
 
   async _startRecording() {
+    if (this._recordingPending || this._recording || this._busy) return;
+    this._lastWav = null;
     if (!this._canUseMicrophone()) {
       this._message = "Microphone access is unavailable here. Open Home Assistant over HTTPS, record with a voice satellite, or upload an existing WAV file from the integration options.";
       this._render();
       return;
     }
+    const generation = ++this._recordingGeneration;
+    this._recordingPending = true;
+    this._message = "";
+    this._render();
+    let stream, context, source, processor;
     try {
-      this._message = "";
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (generation !== this._recordingGeneration || !this.isConnected) {
+        for (const track of stream.getTracks()) track.stop();
+        return;
+      }
       const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-      const context = new AudioContextClass();
-      const source = context.createMediaStreamSource(stream);
-      const processor = context.createScriptProcessor(4096, 1, 1);
+      context = new AudioContextClass();
+      source = context.createMediaStreamSource(stream);
+      processor = context.createScriptProcessor(4096, 1, 1);
       const chunks = [];
       processor.onaudioprocess = (event) => {
         chunks.push(new Float32Array(event.inputBuffer.getChannelData(0)));
@@ -142,18 +156,24 @@ class SpeakerRecognitionPanel extends HTMLElement {
       this._recordingStopTimer = setTimeout(() => this._stopRecording(), 30000);
       this._render();
     } catch (err) {
-      this._message = `Could not access the microphone: ${this._errorText(err)}`;
-      this._render();
+      this._stopRecorderTracks({ stream, context, source, processor });
+      if (generation === this._recordingGeneration) {
+        this._message = `Could not access the microphone: ${this._errorText(err)}`;
+      }
+    } finally {
+      if (generation === this._recordingGeneration) {
+        this._recordingPending = false;
+        this._render();
+      }
     }
   }
 
-  _stopRecorderTracks() {
-    const rec = this._recording;
+  _stopRecorderTracks(rec = this._recording) {
     if (!rec) return;
     try { rec.processor.disconnect(); } catch (_) {}
     try { rec.source.disconnect(); } catch (_) {}
-    for (const track of rec.stream.getTracks()) track.stop();
-    rec.context.close().catch(() => {});
+    for (const track of rec.stream?.getTracks() || []) track.stop();
+    rec.context?.close().catch(() => {});
   }
 
   async _stopRecording() {
@@ -216,7 +236,7 @@ class SpeakerRecognitionPanel extends HTMLElement {
   }
 
   _playRecording() {
-    if (!this._lastWav) return;
+    if (!this._lastWav || this._recordingPending || this._recording) return;
     const url = URL.createObjectURL(new Blob([this._lastWav], { type: "audio/wav" }));
     const audio = new Audio(url);
     audio.onended = () => URL.revokeObjectURL(url);
@@ -224,7 +244,7 @@ class SpeakerRecognitionPanel extends HTMLElement {
   }
 
   async _useRecording() {
-    if (!this._lastWav || !this._userId) return;
+    if (!this._lastWav || !this._userId || this._recordingPending || this._recording) return;
     this._busy = true;
     this._message = "Saving sample…";
     this._render();
@@ -338,6 +358,7 @@ class SpeakerRecognitionPanel extends HTMLElement {
   }
 
   async _testProfile() {
+    if (this._recordingPending || this._recording) return;
     if (!this._lastWav) {
       this._message = "Record an arbitrary phrase first, then choose Test profile.";
       this._render();
@@ -527,7 +548,11 @@ class SpeakerRecognitionPanel extends HTMLElement {
     const micAvailable = this._canUseMicrophone();
     const enrollmentSatellites = s ? (s.enrollment_satellites || s.satellites || []) : [];
     const liveResult = s ? s.live_test_result : null;
-    this.shadowRoot.innerHTML = `
+    const viewState = this._captureViewState();
+    const previousNodes = Array.from(this.shadowRoot.childNodes);
+    const retainedAudio = new Map(Array.from(this.shadowRoot.querySelectorAll("audio[src]")).map(audio => [audio.getAttribute("src"), audio]));
+    const template = document.createElement("template");
+    template.innerHTML = `
       <style>
         :host { display:block; box-sizing:border-box; padding:24px; color:var(--primary-text-color); background:var(--primary-background-color); min-height:100vh; }
         * { box-sizing:border-box; }
@@ -561,21 +586,21 @@ class SpeakerRecognitionPanel extends HTMLElement {
       </style>
       <div class="wrap">
         <h1>Speaker Recognition</h1>
-        ${!s ? `<div class="card">Loading…</div>` : !s.configured ? `<div class="card"><strong>Finish setting up the Speaker Recognition integration first.</strong></div>` : `
+        ${!s ? `<div class="card">${this._message ? `<p role="alert">${this._escape(this._message)}</p><button id="retryStatusBtn">Retry connection</button>` : "Loading…"}</div>` : !s.configured ? `<div class="card"><strong>Finish setting up the Speaker Recognition integration first.</strong></div>` : `
           <div class="card">
             <h2>Enroll or retrain a voice</h2>
-            <label>User</label>
+            <label for="userSelect">User</label>
             <select id="userSelect">${s.users.map(u => `<option value="${u.id}" ${u.id === this._userId ? "selected" : ""}>${this._escape(u.name)}</option>`).join("")}</select>
             ${this._renderEnrollmentQuality()}
             <div class="samples">${s.phrases.map((_, i) => `<button class="sample ${staged.includes(i) ? "done" : "secondary"}" data-sample="${i}">${i + 1}${staged.includes(i) ? " ✓" : ""}</button>`).join("")}</div>
             <div class="phrase"><strong>Phrase ${this._sampleIndex + 1}:</strong><br>${this._escape(phrase)}</div>
             <h3>Record with this device</h3>
             ${micAvailable ? `<div class="row">
-              ${this._recording ? `<button id="stopBtn">Stop recording (maximum 30 seconds)</button>` : `<button id="recordBtn" ${this._busy ? "disabled" : ""}>Start recording</button>`}
+              ${this._recording ? `<button id="stopBtn">Stop recording (maximum 30 seconds)</button>` : `<button id="recordBtn" ${this._busy || this._recordingPending ? "disabled" : ""}>${this._recordingPending ? "Waiting for microphone…" : "Start recording"}</button>`}
               ${this._lastWav ? `<button id="playBtn" class="secondary">Play back</button><button id="useBtn" ${this._busy ? "disabled" : ""}>Use this recording</button><button id="testBtn" class="secondary" ${this._busy ? "disabled" : ""}>Test profile</button>` : ""}
             </div>` : `<p class="warning">Microphone access is unavailable here. Open Home Assistant over HTTPS, or record with a voice satellite instead.</p>`}
             <h3>Record with a voice satellite</h3>
-            ${enrollmentSatellites.length ? `<div class="row"><select id="satelliteSelect">${enrollmentSatellites.map(x => `<option value="${x.entity_id}" ${x.entity_id === this._satelliteId ? "selected" : ""}>${this._escape(x.name || x.entity_id)}${x.available ? "" : " (unavailable)"}</option>`).join("")}</select><button id="satelliteBtn" ${this._busy ? "disabled" : ""}>Prompt satellite</button></div>` : `<p class="muted">No compatible voice satellite is available.</p>`}
+            ${enrollmentSatellites.length ? `<div class="row"><select id="satelliteSelect" aria-label="Enrollment voice satellite">${enrollmentSatellites.map(x => `<option value="${x.entity_id}" ${x.entity_id === this._satelliteId ? "selected" : ""}>${this._escape(x.name || x.entity_id)}${x.available ? "" : " (unavailable)"}</option>`).join("")}</select><button id="satelliteBtn" ${this._busy ? "disabled" : ""}>Prompt satellite</button></div>` : `<p class="muted">No compatible voice satellite is available.</p>`}
             <p class="muted">Only your response to the selected satellite will be recorded.</p>
             ${s.profile_promoted_counts?.[this._userId] ? `<p class="muted">Current profile includes ${s.profile_promoted_counts[this._userId]} confirmed real-world recording(s).</p>` : ""}
             ${promoted.length ? `<div class="result"><strong>Confirmed real-world recordings: ${promoted.length}</strong><p>These confirmed recordings can be used to improve the voice profile. The current profile keeps working until the update succeeds.</p><button id="trainPromotedBtn" ${this._busy || staged.length ? "disabled" : ""}>Update with confirmed recordings</button><button id="discardPromotedBtn" class="secondary" ${this._busy ? "disabled" : ""}>Discard recordings</button>${staged.length ? `<p>Finish recording the selected phrases first.</p>` : ""}</div>` : ""}
@@ -590,7 +615,7 @@ class SpeakerRecognitionPanel extends HTMLElement {
           <div class="card">
             <h2>Live satellite test</h2>
             <p>Check recognition using the microphone and room conditions you normally use. Select a satellite, start the test, then make a normal voice request within 90 seconds.</p>
-            ${s.satellites.length ? `<div class="row"><select id="liveSatelliteSelect">${s.satellites.map(x => `<option value="${x.entity_id}" ${x.entity_id === this._liveSatelliteId ? "selected" : ""}>${this._escape(x.name || x.entity_id)}${x.available ? "" : " (unavailable)"}</option>`).join("")}</select><button id="liveTestBtn" ${this._liveBusy ? "disabled" : ""}>${this._liveBusy ? "Waiting for voice request…" : "Start live test"}</button></div>` : `<p class="muted">No voice satellites are available.</p>`}
+            ${s.satellites.length ? `<div class="row"><select id="liveSatelliteSelect" aria-label="Live test voice satellite">${s.satellites.map(x => `<option value="${x.entity_id}" ${x.entity_id === this._liveSatelliteId ? "selected" : ""}>${this._escape(x.name || x.entity_id)}${x.available ? "" : " (unavailable)"}</option>`).join("")}</select><button id="liveTestBtn" ${this._liveBusy ? "disabled" : ""}>${this._liveBusy ? "Waiting for voice request…" : "Start live test"}</button></div>` : `<p class="muted">No voice satellites are available.</p>`}
             <p class="muted">Your voice request will run normally while Speaker Recognition checks who spoke.</p>
             ${this._liveMessage ? `<div class="message" role="status" aria-live="polite">${this._escape(this._liveMessage)}</div>` : ""}
             ${this._renderLiveResult(liveResult)}
@@ -600,7 +625,7 @@ class SpeakerRecognitionPanel extends HTMLElement {
             <p class="muted">Review recent recognition results to help Speaker Recognition recommend better settings.</p>
             <div class="row">
               <label for="feedbackUserSelect">Who actually spoke?</label>
-              <select id="feedbackUserSelect">${s.users.map(u => `<option value="${u.id}" ${u.id === this._feedbackUserId ? "selected" : ""}>${this._escape(u.name)}</option>`).join("")}</select>
+              <select id="feedbackUserSelect">${s.users.map(u => `<option value="${u.id}" ${u.id === this._feedbackUserId ? "selected" : ""}>${this._escape(u.name)}</option>`).join("")}<option value="__unknown__" ${this._feedbackUserId === "__unknown__" ? "selected" : ""}>Someone not enrolled</option></select>
               <button id="refreshHistoryBtn" class="secondary">Refresh</button>
             </div>
             ${this._historyMessage ? `<div class="message">${this._escape(this._historyMessage)}</div>` : ""}
@@ -608,7 +633,55 @@ class SpeakerRecognitionPanel extends HTMLElement {
           </div>
         `}
       </div>`;
+    const incoming = template.content.querySelector(".wrap");
+    this.shadowRoot.append(template.content);
+    for (const audio of incoming.querySelectorAll("audio[src]")) {
+      const retained = retainedAudio.get(audio.getAttribute("src"));
+      if (!retained) continue;
+      retainedAudio.delete(audio.getAttribute("src"));
+      // State-preserving moves keep playback alive on browsers that support them.
+      if (audio.parentNode.moveBefore) {
+        audio.parentNode.moveBefore(retained, audio);
+        audio.remove();
+      } else {
+        audio.replaceWith(retained);
+      }
+    }
+    for (const node of previousNodes) node.remove();
+    if (this._recording || this._recordingPending) {
+      for (const control of this.shadowRoot.querySelectorAll("#userSelect, [data-sample]")) control.disabled = true;
+    }
+    this._restoreViewState(viewState);
     this._bindEvents();
+  }
+
+  _captureViewState() {
+    const active = this.shadowRoot.activeElement;
+    return {
+      focusId: active?.id,
+      selection: active && typeof active.selectionStart === "number" ? [active.selectionStart, active.selectionEnd] : null,
+      details: new Map(Array.from(this.shadowRoot.querySelectorAll("details")).map(details => [this._detailsKey(details), details.open])),
+    };
+  }
+
+  _detailsKey(details) {
+    const card = details.closest(".card");
+    const entry = details.closest("[data-settings-entry]")?.dataset.settingsEntry || "";
+    const review = details.closest(".reviewDecision")?.querySelector("[data-review-decision], [data-decision]");
+    const decision = review?.dataset.reviewDecision || review?.dataset.decision || "";
+    return `${card?.id || card?.querySelector("h2")?.textContent}:${entry}:${decision}:${details.querySelector("summary")?.textContent}`;
+  }
+
+  _restoreViewState(state) {
+    for (const details of this.shadowRoot.querySelectorAll("details")) {
+      const key = this._detailsKey(details);
+      if (state.details.has(key)) details.open = state.details.get(key);
+    }
+    const active = state.focusId && this.shadowRoot.getElementById(state.focusId);
+    if (active && !active.disabled && !active.closest("[hidden]")) {
+      active.focus({ preventScroll: true });
+      if (state.selection && active.setSelectionRange) active.setSelectionRange(...state.selection);
+    }
   }
 
   _escape(value) {
@@ -617,6 +690,7 @@ class SpeakerRecognitionPanel extends HTMLElement {
 
   _bindEvents() {
     const $ = (id) => this.shadowRoot.getElementById(id);
+    if ($("retryStatusBtn")) $("retryStatusBtn").onclick = () => this._refresh();
     if ($("userSelect")) $("userSelect").onchange = (e) => {
       this._userId = e.target.value;
       this._sampleIndex = this._nextIncompleteSample(-1);

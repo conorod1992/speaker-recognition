@@ -24,6 +24,14 @@ from speaker_recognition.evaluation import (
 from speaker_recognition.models import AudioInput, Config, RecognitionRequest
 
 
+def test_operating_point_accepts_one_shot_threshold_grids() -> None:
+    records = [EvaluationRecord("test", {"alice": 0.6}, None)]
+    expected = find_best_operating_point(records, [0.5, 0.8], [0.0, 0.1])
+    actual = find_best_operating_point(records, iter([0.5, 0.8]), iter([0.0, 0.1]))
+    assert actual == expected
+    assert actual.similarity_threshold == 0.8
+
+
 class _FixedEngine:
     """Small deterministic engine used to exercise the generic recognizer."""
 

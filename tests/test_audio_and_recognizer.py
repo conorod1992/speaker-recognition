@@ -343,3 +343,28 @@ def test_removed_profile_is_not_recovered_from_stale_backup(recognizer_factory) 
     assert restarted.sync_profiles(set()) == ["alice"]
     assert not backup.exists()
     assert recognizer_factory().enrolled_users == []
+
+
+@pytest.mark.parametrize("suffix", [".bak", ".npy"])
+def test_committed_training_survives_cleanup_failure(
+    recognizer_factory, monkeypatch, suffix,
+) -> None:
+    """Post-commit cleanup errors cannot split live and persisted identities."""
+    recognizer = recognizer_factory()
+    request = TrainingRequest(voice_samples=_samples("alice", _audio_input([100, 200])))
+    recognizer._encoder = _SequenceEncoder([[1.0, 0.0]] * 3)
+    recognizer.train(request)
+    np.save(recognizer.embeddings_directory / "alice_embedding.npy", [1.0, 0.0])
+    recognizer._encoder = _SequenceEncoder([[0.0, 1.0]] * 3)
+    original = Path.unlink
+
+    def fail_cleanup(path, *args, **kwargs):
+        if path.suffix == suffix:
+            raise OSError("injected cleanup failure")
+        return original(path, *args, **kwargs)
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(Path, "unlink", fail_cleanup)
+        assert recognizer.train(request).trained_users == ["alice"]
+    np.testing.assert_allclose(recognizer._reference_embeddings["alice"], [0.0, 1.0])
+    np.testing.assert_allclose(recognizer_factory()._reference_embeddings["alice"], [0.0, 1.0])

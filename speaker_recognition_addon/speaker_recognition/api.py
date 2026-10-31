@@ -282,26 +282,28 @@ def train(request: TrainingRequest) -> TrainingResult:
 @app.post(
     "/shadow/train",
     response_model=TrainingResult,
-    responses={409: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+    responses={409: {"model": ErrorResponse}, 503: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
     tags=["Experimental"],
 )
 def train_shadow(request: TrainingRequest) -> TrainingResult:
     """Train the optional shadow engine without touching authoritative profiles."""
     if not shadow_service.enabled:
         raise HTTPException(status_code=409, detail="No shadow engine is configured")
+    if not _SHADOW_LOCK.acquire(blocking=False):
+        raise HTTPException(status_code=503, detail="Shadow engine is temporarily busy")
     try:
-        with _SHADOW_LOCK:
-            result = shadow_service.recognizer.train(request)
-            shadow_service.clear_error()
-            return result
+        result = shadow_service.recognizer.train(request)
+        shadow_service.clear_error()
+        return result
     except ValueError as error:
         _LOGGER.warning("Shadow training rejected samples: %s", error)
         raise HTTPException(status_code=400, detail=str(error)) from error
     except Exception as error:
-        with _SHADOW_LOCK:
-            shadow_service.record_error(error)
+        shadow_service.record_error(error)
         _LOGGER.exception("Experimental shadow training failed")
         raise HTTPException(status_code=500, detail="Shadow training failed") from error
+    finally:
+        _SHADOW_LOCK.release()
 
 
 @app.post(
@@ -330,27 +332,29 @@ def sync_profiles(request: ProfileSyncRequest) -> ProfileSyncResult:
 @app.post(
     "/shadow/profiles/sync",
     response_model=ProfileSyncResult,
-    responses={409: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+    responses={409: {"model": ErrorResponse}, 503: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
     tags=["Experimental"],
 )
 def sync_shadow_profiles(request: ProfileSyncRequest) -> ProfileSyncResult:
     """Synchronize shadow profiles independently of authoritative profiles."""
     if not shadow_service.enabled:
         raise HTTPException(status_code=409, detail="No shadow engine is configured")
+    if not _SHADOW_LOCK.acquire(blocking=False):
+        raise HTTPException(status_code=503, detail="Shadow engine is temporarily busy")
     try:
-        with _SHADOW_LOCK:
-            shadow = shadow_service.recognizer
-            removed_users = shadow.sync_profiles(set(request.desired_users))
-            shadow_service.clear_error()
-            return ProfileSyncResult(
-                enrolled_users=shadow.enrolled_users,
-                removed_users=removed_users,
-            )
+        shadow = shadow_service.recognizer
+        removed_users = shadow.sync_profiles(set(request.desired_users))
+        shadow_service.clear_error()
+        return ProfileSyncResult(
+            enrolled_users=shadow.enrolled_users,
+            removed_users=removed_users,
+        )
     except Exception as error:
-        with _SHADOW_LOCK:
-            shadow_service.record_error(error)
+        shadow_service.record_error(error)
         _LOGGER.exception("Error synchronizing experimental shadow profiles")
         raise HTTPException(status_code=500, detail="Shadow profile sync failed") from error
+    finally:
+        _SHADOW_LOCK.release()
 
 
 @app.post(
@@ -394,31 +398,33 @@ def recognize(request: RecognitionRequest) -> RecognitionResult:
 @app.post(
     "/shadow/recognize",
     response_model=ShadowRecognitionScores,
-    responses={409: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+    responses={409: {"model": ErrorResponse}, 503: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
     tags=["Experimental"],
 )
 def recognize_shadow(request: RecognitionRequest) -> ShadowRecognitionScores:
     """Score audio with the shadow engine without applying an identity decision."""
     if not shadow_service.enabled:
         raise HTTPException(status_code=409, detail="No shadow engine is configured")
+    if not _SHADOW_LOCK.acquire(blocking=False):
+        raise HTTPException(status_code=503, detail="Shadow engine is temporarily busy")
     started = perf_counter()
     try:
-        with _SHADOW_LOCK:
-            shadow = shadow_service.recognizer
-            if not shadow.is_trained:
-                raise HTTPException(status_code=409, detail="Shadow engine is not trained")
-            scores = shadow.score(request)
-            shadow_service.clear_error()
+        shadow = shadow_service.recognizer
+        if not shadow.is_trained:
+            raise HTTPException(status_code=409, detail="Shadow engine is not trained")
+        scores = shadow.score(request)
+        shadow_service.clear_error()
     except HTTPException:
         raise
     except (ValueError, RuntimeError) as error:
         _LOGGER.warning("Experimental shadow scoring failed: %s", error)
         raise HTTPException(status_code=400, detail=str(error)) from error
     except Exception as error:
-        with _SHADOW_LOCK:
-            shadow_service.record_error(error)
+        shadow_service.record_error(error)
         _LOGGER.exception("Experimental shadow scoring failed")
         raise HTTPException(status_code=500, detail="Shadow scoring failed") from error
+    finally:
+        _SHADOW_LOCK.release()
     return ShadowRecognitionScores(
         engine_id=scores.engine_id,
         candidate_user_id=scores.candidate_user_id,

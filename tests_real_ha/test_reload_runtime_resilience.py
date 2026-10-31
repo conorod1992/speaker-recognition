@@ -136,6 +136,28 @@ class TimeoutRecognition:
         return None
 
 
+@pytest.mark.asyncio
+async def test_turn_during_main_unload_transcribes_and_next_turn_recovers(hass) -> None:
+    """HA removes runtime_data during unload while the proxy remains available."""
+    main = _main_entry(hass)
+    main.runtime_data = IdentityRecognition("alice")
+    entity = _entity(hass, main)
+    del main.runtime_data
+    with patch(
+        "custom_components.speaker_recognition.stt.async_get_speech_to_text_entity",
+        return_value=SourceSTT(),
+    ):
+        result = await entity.async_process_audio_stream(_metadata(), _stream())
+        correlated = take_correlated_recognition()
+        assert result.text == "ok"
+        assert result.result is stt.SpeechResultState.SUCCESS
+        assert correlated is not None and correlated.user_id is None
+        main.runtime_data = IdentityRecognition("bob")
+        result = await entity.async_process_audio_stream(_metadata(), _stream())
+        assert result.text == "ok"
+        assert take_correlated_recognition().user_id == "bob"
+
+
 @pytest.fixture(autouse=True)
 def _clear_correlation() -> None:
     clear_correlated_recognition()

@@ -421,15 +421,19 @@ class SpeakerRecognizer:
                     temporary.unlink()
 
         for backup in backups.values():
-            if backup.exists():
-                backup.unlink()
+            try:
+                backup.unlink(missing_ok=True)
+            except OSError:
+                _LOGGER.warning("Committed profile backup cleanup deferred: %s", backup)
         if self.engine_id == DEFAULT_ENGINE_ID:
             for user_id in profiles:
                 legacy_name = f"{user_id}_embedding.npy"
                 if Path(legacy_name).name == legacy_name:
                     legacy = self._embeddings_directory / legacy_name
-                    if legacy.exists():
-                        legacy.unlink()
+                    try:
+                        legacy.unlink(missing_ok=True)
+                    except OSError:
+                        _LOGGER.warning("Committed legacy profile cleanup deferred: %s", legacy)
 
     def sync_profiles(self, desired_users: set[str]) -> list[str]:
         """Remove persisted profiles that are no longer configured."""

@@ -46,6 +46,11 @@ torch = { index = "torch" }
 [[tool.uv.index]]
 name = "torch"
 url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.ruff.lint]
+# Keep the existing correctness checks stable across Ruff default-rule changes.
+select = ["E4", "E7", "E9", "F"]
 
 [tool.pytest.ini_options]
 pythonpath = [

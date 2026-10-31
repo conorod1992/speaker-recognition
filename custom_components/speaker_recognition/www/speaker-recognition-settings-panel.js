@@ -10,6 +10,16 @@ class SpeakerRecognitionSettingsPanel extends BasePanel {
     this._settingsMessage = "";
     this._settingsBusy = "";
     this._panelSection = "enrollment";
+    this._settingsDrafts = new Map();
+    const rememberDraft = event => {
+      const field = event.target;
+      const entry = field.closest?.("#settingsCard [data-settings-entry]");
+      if (!entry || !field.matches("input, select")) return;
+      const key = this._settingsFieldKey(field, entry.dataset.settingsEntry);
+      this._settingsDrafts.set(key, field.type === "checkbox" ? field.checked : field.value);
+    };
+    this.shadowRoot.addEventListener("input", rememberDraft);
+    this.shadowRoot.addEventListener("change", rememberDraft);
   }
 
   _pollForSatelliteCapture(index, sessionId) {
@@ -23,7 +33,7 @@ class SpeakerRecognitionSettingsPanel extends BasePanel {
       if (completed.includes(sessionId)) {
         this._busy = false;
         this._message = `Sample ${index + 1} captured from the satellite.`;
-        if (this._sampleIndex < this._status.phrases.length - 1) this._sampleIndex += 1;
+        this._sampleIndex = this._nextIncompleteSample(index);
         this._render();
         return;
       }
@@ -204,7 +214,7 @@ class SpeakerRecognitionSettingsPanel extends BasePanel {
     </div>`;
     const fieldStyle = "width:100%;max-width:620px;padding:9px;border-radius:6px;background:var(--card-background-color);color:var(--primary-text-color);border:1px solid var(--divider-color);font:inherit";
 
-    const backend = main ? `<details class="result advancedSettings">
+    const backend = main ? `<details class="result advancedSettings" data-settings-entry="${this._escape(main.entry_id)}">
       <summary><strong>Advanced recognition settings</strong></summary>
       <p class="muted">These controls are mainly for troubleshooting or manual tuning. Automatic recommendations are available under Improve accuracy.</p>
       <label for="backendUrl">Recognition service address</label>
@@ -237,7 +247,7 @@ class SpeakerRecognitionSettingsPanel extends BasePanel {
       <details class="advancedSettings">
         <summary>Advanced identity setting</summary>
         <label for="confidence-${index}">Identity confidence: <span data-confidence-label="${this._escape(entry.entry_id)}">${Number(entry.min_confidence || 0).toFixed(2)}</span></label>
-        <input id="confidence-${index}" type="range" min="0" max="1" step="0.05" value="${Number(entry.min_confidence || 0)}" data-confidence="${this._escape(entry.entry_id)}" style="width:100%;max-width:620px">
+        <input id="confidence-${index}" type="range" min="0" max="1" step="0.01" value="${Number(entry.min_confidence || 0)}" data-confidence="${this._escape(entry.entry_id)}" style="width:100%;max-width:620px">
         <p class="muted">How confident recognition must be before Home Assistant uses the detected person\'s identity.</p>
       </details>
       <button data-save-conversation="${this._escape(entry.entry_id)}" ${this._settingsBusy ? "disabled" : ""}>Save conversation settings</button>
@@ -262,6 +272,9 @@ class SpeakerRecognitionSettingsPanel extends BasePanel {
     this._render();
     try {
       await this._call({ type: "speaker_recognition/update_settings", ...message });
+      for (const key of this._settingsDrafts.keys()) {
+        if (key.startsWith(`${busyKey}:`)) this._settingsDrafts.delete(key);
+      }
       this._settingsMessage = "Settings saved.";
       await this._refreshSettings(true);
     } catch (err) {
@@ -529,10 +542,20 @@ class SpeakerRecognitionSettingsPanel extends BasePanel {
     const title = wrap.querySelector("h1");
     if (title) title.insertAdjacentElement("afterend", tabs);
 
-    for (const card of wrap.querySelectorAll(":scope > .card")) {
+    for (const card of Array.from(wrap.children).filter(node => node.classList.contains("card"))) {
       const section = this._panelSectionForCard(card);
       card.dataset.panelSection = section;
-      card.hidden = section !== this._panelSection;
+      let region = wrap.querySelector(`#panel-${section}`);
+      if (!region) {
+        region = document.createElement("div");
+        region.id = `panel-${section}`;
+        region.setAttribute("role", "tabpanel");
+        region.setAttribute("aria-labelledby", `tab-${section}`);
+        wrap.appendChild(region);
+      }
+      region.hidden = section !== this._panelSection;
+      card.hidden = false;
+      region.appendChild(card);
     }
     this._classifyMessages();
   }
@@ -540,14 +563,32 @@ class SpeakerRecognitionSettingsPanel extends BasePanel {
   _bindPanelTabs() {
     if (!this.shadowRoot) return;
     for (const button of this.shadowRoot.querySelectorAll("[data-panel-tab]")) {
+      const key = button.dataset.panelTab;
+      button.id = `tab-${key}`;
+      button.setAttribute("aria-controls", `panel-${key}`);
+      button.tabIndex = key === this._panelSection ? 0 : -1;
       button.onclick = () => {
         this._panelSection = button.dataset.panelTab;
         this._render();
+        this.shadowRoot.getElementById(`tab-${this._panelSection}`)?.focus();
+      };
+      button.onkeydown = event => {
+        const tabs = Array.from(this.shadowRoot.querySelectorAll("[data-panel-tab]"));
+        const index = tabs.indexOf(button);
+        let next;
+        if (event.key === "ArrowRight") next = (index + 1) % tabs.length;
+        if (event.key === "ArrowLeft") next = (index + tabs.length - 1) % tabs.length;
+        if (event.key === "Home") next = 0;
+        if (event.key === "End") next = tabs.length - 1;
+        if (next === undefined) return;
+        event.preventDefault();
+        tabs[next].click();
       };
     }
   }
 
   _render() {
+    const viewState = this._captureViewState();
     super._render();
     if (!this.shadowRoot || !this._status || !this._status.configured) return;
     const wrap = this.shadowRoot.querySelector(".wrap");
@@ -556,9 +597,24 @@ class SpeakerRecognitionSettingsPanel extends BasePanel {
     holder.innerHTML = this._renderSettingsCard();
     const card = holder.firstElementChild;
     if (card) wrap.appendChild(card);
+    for (const field of wrap.querySelectorAll("#settingsCard input, #settingsCard select")) {
+      const entry = field.closest("[data-settings-entry]")?.dataset.settingsEntry;
+      const key = this._settingsFieldKey(field, entry);
+      if (this._settingsDrafts.has(key)) {
+        if (field.type === "checkbox") field.checked = this._settingsDrafts.get(key);
+        else field.value = this._settingsDrafts.get(key);
+      }
+      if (entry === this._settingsBusy) field.disabled = true;
+    }
     this._organizePanel();
     this._bindSettingsEvents();
     this._bindPanelTabs();
+    this._restoreViewState(viewState);
+  }
+
+  _settingsFieldKey(field, entryId) {
+    const attribute = ["data-dsp", "data-confidence", "data-stt-entity", "data-conversation-entity"].find(name => field.hasAttribute(name));
+    return `${entryId}:${attribute || field.id}`;
   }
 
   _bindSettingsEvents() {
@@ -594,7 +650,10 @@ class SpeakerRecognitionSettingsPanel extends BasePanel {
     for (const entry of this._settings.conversation_entries || []) {
       const slider = this.shadowRoot.querySelector(`[data-confidence="${CSS.escape(entry.entry_id)}"]`);
       const label = this.shadowRoot.querySelector(`[data-confidence-label="${CSS.escape(entry.entry_id)}"]`);
-      if (slider && label) slider.oninput = () => { label.textContent = Number(slider.value).toFixed(2); };
+      if (slider && label) {
+        label.textContent = Number(slider.value).toFixed(2);
+        slider.oninput = () => { label.textContent = Number(slider.value).toFixed(2); };
+      }
       const save = this.shadowRoot.querySelector(`[data-save-conversation="${CSS.escape(entry.entry_id)}"]`);
       if (!save) continue;
       save.onclick = () => {
