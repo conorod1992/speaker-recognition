@@ -478,7 +478,7 @@ async def test_discard_waits_for_inflight_capture(
 
     monkeypatch.setattr(hass, "async_add_executor_job", delayed_executor)
     capture = asyncio.create_task(enrollment.async_stage_pcm_sample(
-        hass, "capture-test", 0, b"\\x01\\x00" * 8000, 16000
+        hass, "capture-test", 0, bytes([1, 0]) * 8000, 16000
     ))
     await asyncio.wait_for(entered.wait(), 5)
     discard = asyncio.create_task(
