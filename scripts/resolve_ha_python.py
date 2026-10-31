@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
 import re
 import sys
 from urllib.request import urlopen
@@ -51,6 +52,10 @@ def resolve_python(lane: str, *, harness_version: str | None = None) -> tuple[st
             if harness_version else PYPI_HARNESS
         )
         ref = harness_core_version(harness["info"]["requires_dist"])
+    elif lane == "latest-stable":
+        ref = _get_json("https://pypi.org/pypi/homeassistant/json")["info"]["version"]
+        if not re.fullmatch(r"\d+\.\d+\.\d+", ref):
+            raise ValueError(f"Unexpected stable HA release: {ref!r}")
     else:
         raise ValueError(f"Unknown HA lane: {lane}")
 
@@ -62,13 +67,17 @@ def resolve_python(lane: str, *, harness_version: str | None = None) -> tuple[st
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("lane", choices=("stable", "upcoming", "harness-version"))
+    parser.add_argument("lane", choices=("stable", "upcoming", "latest-stable", "harness-version"))
     parser.add_argument("--harness-version")
+    parser.add_argument("--github-output", type=Path)
     args = parser.parse_args()
     if args.lane == "harness-version":
         print(latest_harness_version(), end="")
         return
     ref, python_version = resolve_python(args.lane, harness_version=args.harness_version)
+    if args.github_output:
+        with args.github_output.open("a", encoding="utf-8") as output:
+            output.write(f"{args.lane}-python={python_version}\n{args.lane}-core={ref}\n")
     print(f"Home Assistant {args.lane}: Core {ref}; Python {python_version}", file=sys.stderr)
     print(python_version, end="")
 

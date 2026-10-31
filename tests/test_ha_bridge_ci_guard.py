@@ -97,8 +97,15 @@ def test_stable_ha_workflow_does_not_override_harness_pin() -> None:
     workflow = (
         Path(__file__).parents[1] / ".github/workflows/real-ha.yml"
     ).read_text(encoding="utf-8")
-    assert "python -m pip install --upgrade homeassistant" not in workflow
-    assert "python -m pip check" in workflow
+    steps = workflow.split("      - name: ")
+    probe = next(step for step in steps if step.startswith("Install latest published stable HA"))
+    assert "if: matrix.home-assistant == 'latest-stable'" in probe
+    assert 'homeassistant==${{ needs.prepare.outputs.latest-stable-core }}' in probe
+    check = next(step for step in steps if "run: python -m pip check" in step)
+    assert "if: matrix.home-assistant == 'stable'" in check
+    # Install the probed release before resolving its integration requirements.
+    dependencies = next(step for step in steps if step.startswith("Install Home Assistant integration dependency requirements"))
+    assert steps.index(probe) < steps.index(dependencies)
 
 
 def test_rejects_newly_added_skipped_bridge_case(tmp_path: Path) -> None:
@@ -133,10 +140,9 @@ def test_latest_stable_probe_is_not_part_of_normal_pr_lane() -> None:
     workflow = (
         Path(__file__).parents[1] / ".github/workflows/real-ha.yml"
     ).read_text(encoding="utf-8")
-    assert "Install latest published stable HA (compatibility probe)" in workflow
-    assert "Probe latest-stable Home Assistant runtime" in workflow
-    expected = (
-        "matrix.home-assistant == 'stable' && "
-        "(github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')"
-    )
-    assert workflow.count("if: " + expected) == 2
+    latest = next(step for step in workflow.split("      - name: ") if "id: latest" in step)
+    condition = "github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'"
+    assert "if: " + condition in latest
+    matrix = next(line for line in workflow.splitlines() if "home-assistant: ${{ fromJSON" in line)
+    assert "'[\"stable\", \"upcoming\", \"latest-stable\"]' || '[\"stable\", \"upcoming\"]'" in matrix
+    assert condition in matrix

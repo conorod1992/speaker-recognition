@@ -146,12 +146,12 @@ jobs:
         run: |
           HARNESS_VERSION="$(python scripts/resolve_ha_python.py harness-version)"
           echo "harness-version=$HARNESS_VERSION" >> "$GITHUB_OUTPUT"
-          echo "version=$(python scripts/resolve_ha_python.py stable --harness-version "$HARNESS_VERSION")" >> "$GITHUB_OUTPUT"
+          python scripts/resolve_ha_python.py stable --harness-version "$HARNESS_VERSION" --github-output "$GITHUB_OUTPUT"
 
       - name: Set up Home Assistant Python
         uses: actions/setup-python@v6
         with:
-          python-version: ${{ steps.ha-python.outputs.version }}
+          python-version: ${{ steps.ha-python.outputs.stable-python }}
           allow-prereleases: true
           cache: pip
           cache-dependency-path: tests_real_ha/requirements.txt

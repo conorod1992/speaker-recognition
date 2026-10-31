@@ -42,6 +42,38 @@ def test_upcoming_uses_dev_python_without_pypi_lookup() -> None:
     assert "/dev/.python-version" in read.call_args.args[0]
 
 
+def test_latest_stable_uses_published_core_python() -> None:
+    with patch("scripts.resolve_ha_python._get_json", return_value={
+        "info": {"version": "2026.11.1"}
+    }) as pypi, patch(
+        "scripts.resolve_ha_python._get_text", return_value="3.15.0"
+    ) as read:
+        assert resolve_python("latest-stable") == ("2026.11.1", "3.15.0")
+    assert pypi.call_args.args[0] == "https://pypi.org/pypi/homeassistant/json"
+    assert "/2026.11.1/.python-version" in read.call_args.args[0]
+
+
+def test_cli_writes_resolved_core_and_python(tmp_path, monkeypatch) -> None:
+    from scripts.resolve_ha_python import main
+
+    output = tmp_path / "outputs"
+    monkeypatch.setattr("sys.argv", ["resolve", "latest-stable", "--github-output", str(output)])
+    with patch("scripts.resolve_ha_python.resolve_python", return_value=("2026.11.1", "3.15.0")):
+        main()
+    assert output.read_text() == "latest-stable-python=3.15.0\nlatest-stable-core=2026.11.1\n"
+
+
+def test_failed_resolution_does_not_write_outputs(tmp_path, monkeypatch) -> None:
+    from scripts.resolve_ha_python import main
+
+    output = tmp_path / "outputs"
+    monkeypatch.setattr("sys.argv", ["resolve", "stable", "--github-output", str(output)])
+    with patch("scripts.resolve_ha_python.resolve_python", side_effect=OSError("unavailable")):
+        with pytest.raises(OSError, match="unavailable"):
+            main()
+    assert not output.exists()
+
+
 def test_bad_python_version_fails_closed() -> None:
     with patch("scripts.resolve_ha_python._get_text", return_value="malformed"):
         with pytest.raises(ValueError, match="Invalid Python version"):
