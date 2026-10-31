@@ -25,14 +25,14 @@ def verify_results(path: Path) -> None:
     missing = REQUIRED_TESTS - by_name.keys()
     if missing:
         raise RuntimeError(f"Real add-on bridge tests not collected: {sorted(missing)}")
-    for name in sorted(REQUIRED_TESTS):
-        case = by_name[name]
+    # Every collected bridge test must run, including tests added in the future.
+    for name, case in sorted(by_name.items()):
         outcomes = [
             child.tag for child in case if child.tag in {"skipped", "failure", "error"}
         ]
         if outcomes:
             raise RuntimeError(f"Real add-on bridge test {name} did not pass: {outcomes}")
-    print(f"Verified {len(REQUIRED_TESTS)} real add-on bridge tests executed and passed")
+    print(f"Verified all {len(cases)} real add-on bridge tests executed and passed")
 
 
 if __name__ == "__main__":
