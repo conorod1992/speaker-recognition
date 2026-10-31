@@ -41,7 +41,8 @@ jobs:
 
   package:
     needs: version
-    runs-on: ubuntu-latest
+    # Match the normal release's supported Python 3.9 packaging runner.
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout release tag
         uses: actions/checkout@v6

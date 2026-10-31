@@ -119,3 +119,13 @@ def test_packaged_client_can_authenticate_remote_backend() -> None:
         assert http_client.headers["Authorization"] == "Bearer secret-token"
     finally:
         client.close()
+
+
+def test_python39_release_packaging_uses_a_supported_runner() -> None:
+    from pathlib import Path
+
+    for name in ("release.yml", "publish.yml"):
+        source = (Path(__file__).parents[1] / ".github/workflows" / name).read_text(encoding="utf-8")
+        package = source.split("\n  package:\n", 1)[1].split("\n  docker:\n", 1)[0]
+        assert "runs-on: ubuntu-24.04" in package
+        assert 'python-version: "3.9"' in package
