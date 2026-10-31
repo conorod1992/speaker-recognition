@@ -492,3 +492,24 @@ async def test_discard_waits_for_inflight_capture(
     await capture
     assert await discard == 1
     assert not enrollment.staged_samples(hass, "capture-test")
+
+
+def test_orphan_cleanup_keeps_referenced_recent_and_external_files(tmp_path) -> None:
+    from custom_components.speaker_recognition.enrollment import _old_unreferenced_recordings
+    import os
+
+    root = tmp_path / "managed"
+    speaker = root / "alice"
+    speaker.mkdir(parents=True)
+    orphan = speaker / "orphan.wav"
+    retained = speaker / "retained.wav"
+    recent = speaker / "recent.wav"
+    external = tmp_path / "external"
+    external.mkdir()
+    outside = external / "outside.wav"
+    for path in (orphan, retained, recent, outside):
+        path.write_bytes(b"audio")
+    for path in (orphan, retained, outside):
+        os.utime(path, (1, 1))
+    (root / "linked-speaker").symlink_to(external, target_is_directory=True)
+    assert _old_unreferenced_recordings([root], {retained.resolve()}, 2) == [orphan]

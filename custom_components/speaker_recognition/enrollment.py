@@ -137,10 +137,15 @@ def _old_unreferenced_recordings(
             continue
         for path in root.glob("*/*.wav"):
             try:
+                # A speaker directory itself may be a symlink. Checking only
+                # the WAV would allow cleanup to delete files outside this root.
+                resolved = path.resolve()
+                if not resolved.is_relative_to(root.resolve()):
+                    continue
                 if (
                     path.is_file()
                     and not path.is_symlink()
-                    and path.resolve() not in referenced
+                    and resolved not in referenced
                     and path.stat().st_mtime < cutoff
                 ):
                     found.append(path)

@@ -145,5 +145,5 @@ def test_orphaned_media_cleanup_excludes_referenced_recordings() -> None:
     integration = (ROOT / "__init__.py").read_text(encoding="utf-8")
     assert "_ORPHAN_GRACE_SECONDS = 24 * 60 * 60" in enrollment
     assert "pending_promotions(hass)" in enrollment
-    assert "path.resolve() not in referenced" in enrollment
+    assert "resolved not in referenced" in enrollment
     assert "async_cleanup_orphaned_samples(hass, voice_samples)" in integration

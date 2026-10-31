@@ -436,6 +436,9 @@ class SpeakerRecognizer:
         removed: list[str] = []
         for user_id in sorted(set(self._reference_embeddings) - desired_users):
             path = self._profile_path(user_id)
+            # Remove recovery state first so a restart cannot resurrect a
+            # deliberately deleted profile after an interrupted replacement.
+            path.with_suffix(".bak").unlink(missing_ok=True)
             if path.exists():
                 path.unlink()
             if self.engine_id == DEFAULT_ENGINE_ID:
