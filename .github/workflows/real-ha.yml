@@ -160,7 +160,7 @@ jobs:
           harness = version("pytest-homeassistant-custom-component")
           print(f"Latest-stable compatibility probe: HA {ha}, harness {harness}")
           with Path(__import__("os").environ["GITHUB_STEP_SUMMARY"]).open("a") as summary:
-              summary.write(f"Latest stable compatibility probe: HA \`{ha}\` (pytest harness \`{harness}\`)\\n")
+              summary.write(f"Latest stable compatibility probe: HA {ha} (pytest harness {harness})\\n")
           PY
 
       - name: Probe latest-stable Home Assistant runtime
