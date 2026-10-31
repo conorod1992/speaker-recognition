@@ -428,3 +428,88 @@ async def test_source_conversation_failure_propagates_after_identity_consumption
 
     assert clean_source.received is not None
     assert clean_source.received.context.user_id is None
+
+
+@pytest.mark.asyncio
+async def test_captured_enrollment_turn_never_reaches_source_agent(
+    hass: HomeAssistant,
+) -> None:
+    """A spoken enrollment phrase must be consumed even when it sounds like a command."""
+    from custom_components.speaker_recognition.enrollment import (
+        consume_completed_enrollment_turn,
+    )
+
+    main = _main_entry(hass)
+    entity = _proxy_entity(hass, main)
+    agent = FakeSourceAgent()
+    sequence = 987654
+    hass.data.setdefault(DOMAIN, {})["completed_enrollment_turns"] = {
+        sequence: __import__("time").monotonic()
+    }
+    set_correlated_recognition(_recognition("enrolled-user", sequence=sequence))
+
+    with patch(
+        "custom_components.speaker_recognition.conversation.conversation.async_get_agent",
+        return_value=agent,
+    ):
+        response = await entity.async_process(_input())
+
+    assert agent.received is None
+    assert response.conversation_id == "conversation-1"
+    assert not consume_completed_enrollment_turn(hass, sequence)
+
+
+@pytest.mark.asyncio
+async def test_discard_waits_for_inflight_capture(
+    hass: HomeAssistant, tmp_path, monkeypatch
+) -> None:
+    """Discard must not succeed before a concurrent sample has been staged."""
+    import asyncio
+    from custom_components.speaker_recognition import enrollment
+
+    hass.config.media_dirs["local"] = str(tmp_path)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    original = hass.async_add_executor_job
+
+    async def delayed_executor(target, *args):
+        if target is enrollment._write_wav:
+            entered.set()
+            await release.wait()
+        return await original(target, *args)
+
+    monkeypatch.setattr(hass, "async_add_executor_job", delayed_executor)
+    capture = asyncio.create_task(enrollment.async_stage_pcm_sample(
+        hass, "capture-test", 0, bytes([1, 0]) * 8000, 16000
+    ))
+    await asyncio.wait_for(entered.wait(), 5)
+    discard = asyncio.create_task(
+        enrollment.async_discard_staged_samples(hass, "capture-test")
+    )
+    await asyncio.sleep(0)
+    assert not discard.done()
+    release.set()
+    await capture
+    assert await discard == 1
+    assert not enrollment.staged_samples(hass, "capture-test")
+
+
+def test_orphan_cleanup_keeps_referenced_recent_and_external_files(tmp_path) -> None:
+    from custom_components.speaker_recognition.enrollment import _old_unreferenced_recordings
+    import os
+
+    root = tmp_path / "managed"
+    speaker = root / "alice"
+    speaker.mkdir(parents=True)
+    orphan = speaker / "orphan.wav"
+    retained = speaker / "retained.wav"
+    recent = speaker / "recent.wav"
+    external = tmp_path / "external"
+    external.mkdir()
+    outside = external / "outside.wav"
+    for path in (orphan, retained, recent, outside):
+        path.write_bytes(b"audio")
+    for path in (orphan, retained, outside):
+        os.utime(path, (1, 1))
+    (root / "linked-speaker").symlink_to(external, target_is_directory=True)
+    assert _old_unreferenced_recordings([root], {retained.resolve()}, 2) == [orphan]

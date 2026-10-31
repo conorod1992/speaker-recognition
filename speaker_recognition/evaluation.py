@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 from statistics import median
 from typing import Iterable, Mapping, Optional
 
@@ -52,6 +53,26 @@ class EvaluationMetrics:
     def false_identification_rate(self) -> float:
         """Return dangerous false identifications as a share of all trials."""
         return self.false_identifications / self.trials if self.trials else 0.0
+
+    @property
+    def unknown_false_accept_rate(self) -> float:
+        """Fraction of unknown-speaker trials assigned an enrolled identity."""
+        return self.false_accepts / self.unknown_trials if self.unknown_trials else 0.0
+
+    @property
+    def known_wrong_speaker_rate(self) -> float:
+        """Fraction of enrolled-speaker trials attributed to the wrong person."""
+        return self.wrong_speaker / self.known_trials if self.known_trials else 0.0
+
+    @property
+    def known_identification_rate(self) -> float:
+        """Fraction of enrolled-speaker trials identified correctly."""
+        return self.correct_known / self.known_trials if self.known_trials else 0.0
+
+    @property
+    def unknown_rejection_rate(self) -> float:
+        """Fraction of unknown-speaker trials correctly rejected."""
+        return self.correct_unknown / self.unknown_trials if self.unknown_trials else 0.0
 
     @property
     def false_unknown_rate(self) -> float:
@@ -143,6 +164,31 @@ def evaluate_records(
         false_accepts=false_accepts,
         median_latency_seconds=median(latencies) if latencies else None,
     )
+
+
+
+def split_evaluation_records(
+    records: Iterable[EvaluationRecord],
+    *,
+    holdout_fraction: float = 0.25,
+) -> tuple[list[EvaluationRecord], list[EvaluationRecord]]:
+    """Deterministically split labelled trials before tuning any thresholds.
+
+    Matching trial IDs from multiple engines must remain in the same partition
+    to avoid comparing models on different validation utterances. Unique trial
+    IDs are required: evaluation with missing IDs risks accidental leakage.
+    """
+    if not 0.0 < holdout_fraction < 1.0:
+        raise ValueError("holdout_fraction must be strictly between zero and one")
+    training: list[EvaluationRecord] = []
+    held_out: list[EvaluationRecord] = []
+    for record in records:
+        if not record.trial_id:
+            raise ValueError("A stable trial_id is required for held-out evaluation")
+        digest = hashlib.sha256(record.trial_id.encode("utf-8")).digest()
+        bucket = int.from_bytes(digest[:8], "big") / (1 << 64)
+        (held_out if bucket < holdout_fraction else training).append(record)
+    return training, held_out
 
 
 def compare_engines(

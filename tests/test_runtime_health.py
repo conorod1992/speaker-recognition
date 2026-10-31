@@ -90,3 +90,32 @@ async def test_runtime_rejects_health_without_readiness_contract(
 def test_main_entry_uses_readiness_validating_runtime() -> None:
     source = (INTEGRATION / "__init__.py").read_text(encoding="utf-8")
     assert "from .runtime import LiveEvaluationSpeakerRecognition" in source
+
+
+def test_health_endpoint_does_not_block_behind_training_lock() -> None:
+    """Readiness probes must be responsive while a training job owns the lock."""
+    source = (ROOT / "speaker_recognition" / "api.py").read_text(encoding="utf-8")
+    health = source.split("def health_check()", 1)[1].split(
+        '@app.get("/profiles/diagnostics"', 1
+    )[0]
+    assert "_RECOGNIZER_LOCK.acquire(blocking=False)" in health
+    assert "_LAST_HEALTH_PROFILES" in health
+    assert "with _RECOGNIZER_LOCK:" not in health
+
+
+def test_health_responds_while_authoritative_training_lock_is_held() -> None:
+    """Exercise the health endpoint under actual model-lock contention."""
+    import importlib
+    from time import perf_counter
+
+    api = importlib.import_module("speaker_recognition.api")
+    assert api._RECOGNIZER_LOCK.acquire(blocking=False)
+    try:
+        start = perf_counter()
+        response = api.health_check()
+        elapsed = perf_counter() - start
+    finally:
+        api._RECOGNIZER_LOCK.release()
+    assert elapsed < 0.5
+    assert response.status in ("healthy", "degraded")
+    assert isinstance(response.enrolled_users, list)

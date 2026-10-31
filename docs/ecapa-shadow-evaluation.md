@@ -27,3 +27,31 @@ The comparison reports correct decisions, wrong-speaker/false accepts, false unk
 The same data remains available through the admin WebSocket command `speaker_recognition/shadow_comparison`. Raw score values are deliberately never compared using a shared threshold because the two embedding spaces have different score distributions.
 
 This mode is intended for evaluation only. A later change can expose an engine selector if real Home Assistant hardware results justify making ECAPA authoritative.
+
+
+## Evaluation hygiene for future model changes
+
+For offline comparisons, use consented real speech from both enrolled and
+unenrolled speakers, recorded on the microphones and in the rooms where Assist
+is normally used. Generated speech verifies integration behaviour, but cannot
+establish real-person recognition accuracy. Keep evaluation audio outside the
+repository unless appropriate consent, retention and redistribution rights exist.
+
+The offline `speaker_recognition.evaluation` helpers expose separately:
+- known-speaker identification and wrong-speaker rates (denominator: known trials);
+- unknown-speaker correct rejection and false-accept rates (denominator: unknown trials);
+- overall accuracy, error counts and median processing latency.
+
+Never report a zero error rate when the relevant class has no trials: inspect
+`known_trials` and `unknown_trials` alongside the reported rate.
+
+Use `split_evaluation_records` with stable utterance-level `trial_id` values
+**before** selecting thresholds. Paired Resemblyzer and ECAPA results with the
+same trial ID are assigned to the same train/holdout partition, even if input
+record order changes. Tune each engine's operating point on its training set,
+then use only the untouched held-out examples for the comparison. Do not tune
+again against the held-out results. A small holdout is diagnostic, not proof
+of future accuracy; report its sample counts and data limitations.
+
+This tooling does not change runtime recognition or automatically apply any
+model or threshold change.

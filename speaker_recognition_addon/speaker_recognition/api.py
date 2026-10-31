@@ -39,6 +39,13 @@ _LOGGER = logging.getLogger(__name__)
 _RECOGNIZER_LOCK = Lock()
 _SHADOW_LOCK = Lock()
 _WARMUP_STATUS: WarmupStatus = warm_encoder(recognizer)
+# Updated under the authoritative lock; health reads it if training holds the lock.
+_LAST_HEALTH_PROFILES: tuple[bool, list[str], str, str] = (
+    recognizer.is_trained,
+    recognizer.enrolled_users,
+    recognizer.engine_id,
+    recognizer.engine_name,
+)
 
 
 def _configured_trusted_local_hosts() -> set[str]:
@@ -169,14 +176,22 @@ app.add_middleware(RequestBodyLimitMiddleware, max_body_size=MAX_REQUEST_BODY_BY
 @app.get("/health", response_model=HealthResponse, tags=["Health"])
 def health_check() -> HealthResponse:
     """Health check endpoint, retrying only the authoritative encoder warm-up."""
-    global _WARMUP_STATUS
-    with _RECOGNIZER_LOCK:
-        if not _WARMUP_STATUS.ready:
-            _WARMUP_STATUS = warm_encoder(recognizer)
-        trained = recognizer.is_trained
-        enrolled_users = recognizer.enrolled_users
-        engine_id = recognizer.engine_id
-        engine_name = recognizer.engine_name
+    global _WARMUP_STATUS, _LAST_HEALTH_PROFILES
+    if _RECOGNIZER_LOCK.acquire(blocking=False):
+        try:
+            if not _WARMUP_STATUS.ready:
+                _WARMUP_STATUS = warm_encoder(recognizer)
+            _LAST_HEALTH_PROFILES = (
+                recognizer.is_trained,
+                recognizer.enrolled_users,
+                recognizer.engine_id,
+                recognizer.engine_name,
+            )
+        finally:
+            _RECOGNIZER_LOCK.release()
+    # Keep the health endpoint responsive while training holds the model lock.
+    # The last snapshot is advisory; readiness still reflects encoder warm-up.
+    trained, enrolled_users, engine_id, engine_name = _LAST_HEALTH_PROFILES
     # Never wait for the experimental lock in /health. A first ECAPA model
     # download or shadow training run may take much longer than the container
     # health-check timeout, but it must not make the authoritative service unhealthy.

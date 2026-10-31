@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from array import array
+import asyncio
 from dataclasses import dataclass
 from pathlib import Path
 import secrets
@@ -42,6 +43,13 @@ class SatelliteEnrollmentSession:
 
 def _domain_data(hass: HomeAssistant) -> dict:
     return hass.data.setdefault(DOMAIN, {})
+
+
+def _sample_lock(hass: HomeAssistant, user_id: str) -> asyncio.Lock:
+    """Serialize writes and discards for one speaker."""
+    return _domain_data(hass).setdefault("enrollment_sample_locks", {}).setdefault(
+        user_id, asyncio.Lock()
+    )
 
 
 def staged_samples(hass: HomeAssistant, user_id: str) -> dict[int, dict[str, str]]:
@@ -96,6 +104,88 @@ def _managed_media_path(hass: HomeAssistant, media_id: str) -> Path | None:
     return None
 
 
+async def async_discard_staged_samples(hass: HomeAssistant, user_id: str) -> int:
+    """Discard uncommitted audio for one user without touching active profiles."""
+    async with _sample_lock(hass, user_id):
+        staging = _domain_data(hass).setdefault("enrollment_staged", {})
+        samples = staging.pop(user_id, {})
+        paths = []
+        for sample in samples.values():
+            if not isinstance(sample, dict):
+                continue
+            media_id = sample.get("media_content_id")
+            if isinstance(media_id, str):
+                path = _managed_media_path(hass, media_id)
+                if path is not None:
+                    paths.append(path)
+        if paths:
+            await hass.async_add_executor_job(_delete_paths, paths)
+        _domain_data(hass).setdefault("enrollment_quality", {}).pop(user_id, None)
+        return len(samples)
+
+
+_ORPHAN_GRACE_SECONDS = 24 * 60 * 60
+
+
+def _old_unreferenced_recordings(
+    roots: list[Path], referenced: set[Path], cutoff: float
+) -> list[Path]:
+    """Locate old orphaned WAVs only under integration-managed media roots."""
+    found = []
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for path in root.glob("*/*.wav"):
+            try:
+                # A speaker directory itself may be a symlink. Checking only
+                # the WAV would allow cleanup to delete files outside this root.
+                resolved = path.resolve()
+                if not resolved.is_relative_to(root.resolve()):
+                    continue
+                if (
+                    path.is_file()
+                    and not path.is_symlink()
+                    and resolved not in referenced
+                    and path.stat().st_mtime < cutoff
+                ):
+                    found.append(path)
+            except OSError:
+                continue
+    return found
+
+
+async def async_cleanup_orphaned_samples(
+    hass: HomeAssistant, configured_samples: list[dict]
+) -> None:
+    """Reclaim interrupted enrollment files after a safe grace period."""
+    from .promotions import pending_promotions
+
+    media_ids: set[str] = set()
+    for row in configured_samples:
+        values = row.get("samples", [])
+        for value in values if isinstance(values, list) else [values]:
+            if isinstance(value, dict) and isinstance(value.get("media_content_id"), str):
+                media_ids.add(value["media_content_id"])
+    for staged in _domain_data(hass).get("enrollment_staged", {}).values():
+        for value in staged.values():
+            if isinstance(value, dict) and isinstance(value.get("media_content_id"), str):
+                media_ids.add(value["media_content_id"])
+    for item in pending_promotions(hass):
+        media_ids.add(item["media_content_id"])
+    referenced = set()
+    for media_id in media_ids:
+        path = _managed_media_path(hass, media_id)
+        if path is not None:
+            referenced.add(path.resolve())
+    roots = [Path(folder).resolve() / _MEDIA_SUBDIR for folder in hass.config.media_dirs.values()]
+    stale = await hass.async_add_executor_job(
+        _old_unreferenced_recordings, roots, referenced,
+        time.time() - _ORPHAN_GRACE_SECONDS,
+    )
+    if stale:
+        await hass.async_add_executor_job(_delete_paths, stale)
+
+
 def _delete_paths(paths: list[Path]) -> None:
     """Delete integration-owned enrollment files without failing lifecycle updates."""
     for path in paths:
@@ -147,20 +237,21 @@ async def async_stage_pcm_sample(
     if len(pcm_data) > sample_rate * 2 * 30:
         raise ValueError("Enrollment sample is too long")
 
-    staged = staged_samples(hass, user_id)
-    previous = staged.get(sample_index)
-    previous_path: Path | None = None
-    if isinstance(previous, dict):
-        previous_media_id = previous.get("media_content_id")
-        if isinstance(previous_media_id, str):
-            previous_path = _managed_media_path(hass, previous_media_id)
+    async with _sample_lock(hass, user_id):
+        staged = staged_samples(hass, user_id)
+        previous = staged.get(sample_index)
+        previous_path: Path | None = None
+        if isinstance(previous, dict):
+            previous_media_id = previous.get("media_content_id")
+            if isinstance(previous_media_id, str):
+                previous_path = _managed_media_path(hass, previous_media_id)
 
-    absolute_path, media_id = _sample_location(hass, user_id, sample_index)
-    await hass.async_add_executor_job(_write_wav, absolute_path, pcm_data, sample_rate)
-    staged[sample_index] = {"media_content_id": media_id}
+        absolute_path, media_id = _sample_location(hass, user_id, sample_index)
+        await hass.async_add_executor_job(_write_wav, absolute_path, pcm_data, sample_rate)
+        staged[sample_index] = {"media_content_id": media_id}
 
-    if previous_path is not None and previous_path != absolute_path:
-        await hass.async_add_executor_job(_delete_paths, [previous_path])
+        if previous_path is not None and previous_path != absolute_path:
+            await hass.async_add_executor_job(_delete_paths, [previous_path])
 
     # Imported lazily so capture/media primitives remain independently reusable.
     from .enrollment_quality import schedule_quality_analysis
@@ -186,6 +277,21 @@ async def async_stage_pcm_sample(
 def _satellite_sessions(hass: HomeAssistant) -> dict[str, SatelliteEnrollmentSession]:
     """Return active enrollment sessions indexed by satellite entity ID."""
     return _domain_data(hass).setdefault("enrollment_satellite_sessions", {})
+
+
+_TURN_MARKER_TTL = 10 * 60.0
+
+
+def _completed_enrollment_turns(hass: HomeAssistant) -> dict[int, float]:
+    """Keep time-bounded completion markers until their conversation consumes them."""
+    return _domain_data(hass).setdefault("completed_enrollment_turns", {})
+
+
+def consume_completed_enrollment_turn(hass: HomeAssistant, sequence: int) -> bool:
+    """Consume only a recent capture marker from the same Assist turn."""
+    turns = _completed_enrollment_turns(hass)
+    timestamp = turns.pop(sequence, None)
+    return timestamp is not None and time.monotonic() - timestamp <= _TURN_MARKER_TTL
 
 
 def _completed_satellite_captures(hass: HomeAssistant) -> dict[str, float]:
@@ -293,6 +399,13 @@ async def async_capture_claimed_satellite_sample(
     )
     sessions.pop(session.satellite_id, None)
     _completed_satellite_captures(hass)[session.session_id] = time.monotonic()
+    completed_turns = _completed_enrollment_turns(hass)
+    now = time.monotonic()
+    # Expire stale entries rather than evicting a still-live earlier turn.
+    for sequence, timestamp in list(completed_turns.items()):
+        if now - timestamp > _TURN_MARKER_TTL:
+            completed_turns.pop(sequence, None)
+    completed_turns[utterance_sequence] = now
     _domain_data(hass).setdefault("calibration_excluded_utterances", set()).add(
         utterance_sequence
     )

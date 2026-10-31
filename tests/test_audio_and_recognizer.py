@@ -293,3 +293,53 @@ def test_failed_training_logs_error_and_leaves_model_untrained(
         )
     assert not recognizer.is_trained
     assert "Error processing voice sample 1 for user alice" in caplog.text
+
+
+def test_restart_recovers_profile_stranded_in_backup(recognizer_factory) -> None:
+    """A process crash between backup and replacement must preserve enrollment."""
+    recognizer = recognizer_factory()
+    sample = _audio_input([100, 200])
+    recognizer._encoder = _SequenceEncoder([[1.0, 0.0]] * 3)
+    recognizer.train(TrainingRequest(voice_samples=_samples("alice", sample)))
+    original = recognizer._reference_embeddings["alice"].copy()
+    target = recognizer._profile_path("alice")
+    backup = target.with_suffix(".bak")
+    target.replace(backup)
+    restarted = recognizer_factory()
+    assert restarted.enrolled_users == ["alice"]
+    assert target.exists()
+    assert not backup.exists()
+    np.testing.assert_allclose(restarted._reference_embeddings["alice"], original)
+
+
+def test_restart_does_not_replace_completed_profile_with_stale_backup(
+    recognizer_factory,
+) -> None:
+    recognizer = recognizer_factory()
+    sample = _audio_input([100, 200])
+    recognizer._encoder = _SequenceEncoder([[1.0, 0.0]] * 3)
+    recognizer.train(TrainingRequest(voice_samples=_samples("alice", sample)))
+    target = recognizer._profile_path("alice")
+    backup = target.with_suffix(".bak")
+    old_profile = target.read_bytes()
+    recognizer._encoder = _SequenceEncoder([[0.0, 1.0]] * 3)
+    recognizer.train(TrainingRequest(voice_samples=_samples("alice", sample)))
+    # Simulate a crash after replacement but before backup cleanup.
+    backup.write_bytes(old_profile)
+    restarted = recognizer_factory()
+    np.testing.assert_allclose(restarted._reference_embeddings["alice"], [0.0, 1.0])
+
+
+def test_removed_profile_is_not_recovered_from_stale_backup(recognizer_factory) -> None:
+    recognizer = recognizer_factory()
+    sample = _audio_input([100, 200])
+    recognizer._encoder = _SequenceEncoder([[1.0, 0.0]] * 3)
+    recognizer.train(TrainingRequest(voice_samples=_samples("alice", sample)))
+    target = recognizer._profile_path("alice")
+    backup = target.with_suffix(".bak")
+    backup.write_bytes(target.read_bytes())
+    # A completed replacement can leave a stale backup if the process crashes.
+    restarted = recognizer_factory()
+    assert restarted.sync_profiles(set()) == ["alice"]
+    assert not backup.exists()
+    assert recognizer_factory().enrolled_users == []

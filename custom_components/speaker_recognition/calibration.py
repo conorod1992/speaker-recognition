@@ -88,6 +88,12 @@ def _classify(record: dict[str, Any], threshold: float) -> tuple[str, int]:
         return "correct_rejection", 0
 
     if feedback == "wrong_speaker":
+        # A wrong-speaker label without an enrolled actual user represents
+        # an unknown voice. Rejecting it is a success, not a missed speaker.
+        if actual_user_id is None:
+            if applies:
+                return "false_accept", FALSE_ACCEPT_WEIGHT
+            return "correct_rejection", 0
         if applies and candidate_user_id != actual_user_id:
             return "false_accept", FALSE_ACCEPT_WEIGHT
         if applies and candidate_user_id == actual_user_id:
@@ -140,6 +146,10 @@ def analyze_thresholds(
         dict(record)
         for record in records
         if record.get("feedback") in ("correct", "wrong_speaker", "missed_speaker")
+        # A failed/unavailable recognition is not a valid unknown-speaker trial.
+        and isinstance(record.get("candidate_user_id"), str)
+        and bool(record["candidate_user_id"])
+        and record.get("recognition_status", "evaluated") == "evaluated"
     ]
     backend_rejected_misses = sum(
         1
@@ -317,6 +327,10 @@ def analyze_engine_comparison(records: Iterable[dict[str, Any]]) -> dict[str, An
         dict(record)
         for record in records
         if record.get("feedback") in ("correct", "wrong_speaker", "missed_speaker")
+        # A failed/unavailable recognition is not a valid unknown-speaker trial.
+        and isinstance(record.get("candidate_user_id"), str)
+        and bool(record["candidate_user_id"])
+        and record.get("recognition_status", "evaluated") == "evaluated"
     ]
     paired: list[tuple[_EngineTrial, _EngineTrial, dict[str, Any]]] = []
     for record in labelled:
@@ -384,6 +398,8 @@ def analyze_backend_thresholds(
     trials: list[_EngineTrial] = []
     for record in records:
         if record.get("feedback") not in ("correct", "wrong_speaker", "missed_speaker"):
+            continue
+        if record.get("recognition_status", "evaluated") != "evaluated":
             continue
         candidate = record.get("candidate_user_id")
         similarity = record.get("similarity")

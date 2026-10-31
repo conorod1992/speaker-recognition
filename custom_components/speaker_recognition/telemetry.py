@@ -48,6 +48,7 @@ class DecisionRecord:
     audio_seconds: float | None
     utterance_sequence: int | None
     stt_entity_id: str | None
+    recognition_status: str = "evaluated"
     engine_id: str = "resemblyzer"
     backend_processing_seconds: float = 0.0
     feedback: str | None = None
@@ -292,6 +293,10 @@ class DecisionHistory:
             utterance_sequence=sequence,
             stt_entity_id=stt_entity_id,
             engine_id=engine_id,
+            recognition_status=(
+                "evaluated" if data.get("recognition_status", "evaluated") == "evaluated"
+                else "unavailable"
+            ),
             backend_processing_seconds=float(
                 data.get("backend_processing_seconds", 0.0) or 0.0
             ),
@@ -343,6 +348,9 @@ class DecisionHistory:
                     "similarity": recognition.similarity,
                     "margin": recognition.margin,
                     "accepted": recognition.accepted,
+                    "recognition_status": (
+                        "evaluated" if recognition.candidate_user_id else "unavailable"
+                    ),
                     "identity_eligible": identity_eligible,
                     "threshold": threshold,
                     "all_scores": dict(recognition.all_scores),
@@ -388,6 +396,9 @@ class DecisionHistory:
             audio_seconds=recognition.audio_seconds,
             utterance_sequence=recognition.utterance_sequence,
             stt_entity_id=recognition.stt_entity_id,
+            recognition_status=(
+                "evaluated" if recognition.candidate_user_id else "unavailable"
+            ),
             engine_id=recognition.engine_id,
             backend_processing_seconds=recognition.backend_processing_seconds,
         )
