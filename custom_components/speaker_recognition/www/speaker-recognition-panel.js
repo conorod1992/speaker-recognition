@@ -41,6 +41,8 @@ class SpeakerRecognitionPanel extends HTMLElement {
     if (this._recordingStopTimer) clearTimeout(this._recordingStopTimer);
     this._recordingStopTimer = null;
     this._stopRecorderTracks();
+    this._recording = null;
+    this._lastWav = null;
   }
 
   async _call(message) {
