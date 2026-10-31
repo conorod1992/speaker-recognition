@@ -11,6 +11,8 @@ on:
       - "speaker_recognition_addon/**"
       - "tests_real_ha/**"
       - "scripts/set_release_version.py"
+      - "scripts/resolve_ha_python.py"
+      - "scripts/assert_ha_bridge_results.py"
   schedule:
     - cron: "50 3 * * *"
 
@@ -139,17 +141,17 @@ jobs:
           docker logs speaker-recognition-ha-acceptance
           exit 1
 
-      - name: Resolve Home Assistant Python version
+      - name: Resolve harness-compatible Home Assistant Python
         id: ha-python
         run: |
-          version="$(curl -fsSL https://raw.githubusercontent.com/home-assistant/core/dev/.python-version | tr -d '\n')"
-          test -n "$version"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+          HARNESS_VERSION="$(python scripts/resolve_ha_python.py harness-version)"
+          echo "harness-version=$HARNESS_VERSION" >> "$GITHUB_OUTPUT"
+          python scripts/resolve_ha_python.py stable --harness-version "$HARNESS_VERSION" --github-output "$GITHUB_OUTPUT"
 
       - name: Set up Home Assistant Python
         uses: actions/setup-python@v6
         with:
-          python-version: ${{ steps.ha-python.outputs.version }}
+          python-version: ${{ steps.ha-python.outputs.stable-python }}
           allow-prereleases: true
           cache: pip
           cache-dependency-path: tests_real_ha/requirements.txt
@@ -157,10 +159,12 @@ jobs:
       - name: Install stable Home Assistant test harness
         run: |
           python -m pip install --upgrade pip
-          # The test harness pins its compatible Home Assistant patch release.
-          # Do not independently upgrade HA beyond that pinned version.
-          python -m pip install -r tests_real_ha/requirements.txt
-          python -m pip check
+          python -m pip install -r tests_real_ha/requirements.txt \
+            "pytest-homeassistant-custom-component==${{ steps.ha-python.outputs.harness-version }}"
+          # pytest-homeassistant-custom-component selects a compatible HA Core.
+
+      - name: Verify compatible Home Assistant test environment
+        run: python -m pip check
 
       - name: Install Home Assistant integration dependency requirements
         run: |
@@ -193,6 +197,9 @@ jobs:
               subprocess.check_call([sys.executable, "-m", "pip", "install", *sorted(requirements)])
           PY
 
+      - name: Verify integration dependency environment
+        run: python -m pip check
+
       - name: Run Real HA to real add-on bridge tests
         env:
           SPEAKER_RECOGNITION_REAL_ADDON_URL: http://127.0.0.1:18100
@@ -200,7 +207,11 @@ jobs:
           SPEAKER_RECOGNITION_REAL_ADDON_AUDIO_DIR: ${{ runner.temp }}/speaker-recognition-ha/audio
         run: |
           python -m scripts.run_real_ha_tests tests_real_ha/test_real_addon_bridge.py \
-            -v --tb=short --asyncio-mode=auto
+            -v --tb=short --asyncio-mode=auto \
+            --junitxml="${RUNNER_TEMP}/ha-bridge-results.xml"
+
+      - name: Assert both real add-on acceptance cases executed
+        run: python scripts/assert_ha_bridge_results.py "${RUNNER_TEMP}/ha-bridge-results.xml"
 
       - name: Show add-on logs
         if: always()
