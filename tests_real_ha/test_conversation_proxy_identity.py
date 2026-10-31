@@ -443,7 +443,9 @@ async def test_captured_enrollment_turn_never_reaches_source_agent(
     entity = _proxy_entity(hass, main)
     agent = FakeSourceAgent()
     sequence = 987654
-    hass.data.setdefault(DOMAIN, {})["completed_enrollment_turns"] = {sequence}
+    hass.data.setdefault(DOMAIN, {})["completed_enrollment_turns"] = {
+        sequence: __import__("time").monotonic()
+    }
     set_correlated_recognition(_recognition("enrolled-user", sequence=sequence))
 
     with patch(
