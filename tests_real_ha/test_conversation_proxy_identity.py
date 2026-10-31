@@ -455,3 +455,38 @@ async def test_captured_enrollment_turn_never_reaches_source_agent(
     assert agent.received is None
     assert response.conversation_id == "conversation-1"
     assert not consume_completed_enrollment_turn(hass, sequence)
+
+
+@pytest.mark.asyncio
+async def test_discard_waits_for_inflight_capture(
+    hass: HomeAssistant, tmp_path, monkeypatch
+) -> None:
+    """Discard must not succeed before a concurrent sample has been staged."""
+    import asyncio
+    from custom_components.speaker_recognition import enrollment
+
+    hass.config.media_dirs["local"] = str(tmp_path)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    original = hass.async_add_executor_job
+
+    async def delayed_executor(target, *args):
+        if target is enrollment._write_wav:
+            entered.set()
+            await release.wait()
+        return await original(target, *args)
+
+    monkeypatch.setattr(hass, "async_add_executor_job", delayed_executor)
+    capture = asyncio.create_task(enrollment.async_stage_pcm_sample(
+        hass, "capture-test", 0, b"\\x01\\x00" * 8000, 16000
+    ))
+    await asyncio.wait_for(entered.wait(), 5)
+    discard = asyncio.create_task(
+        enrollment.async_discard_staged_samples(hass, "capture-test")
+    )
+    await asyncio.sleep(0)
+    assert not discard.done()
+    release.set()
+    await capture
+    assert await discard == 1
+    assert not enrollment.staged_samples(hass, "capture-test")
