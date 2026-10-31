@@ -274,18 +274,19 @@ def _satellite_sessions(hass: HomeAssistant) -> dict[str, SatelliteEnrollmentSes
     return _domain_data(hass).setdefault("enrollment_satellite_sessions", {})
 
 
-def _completed_enrollment_turns(hass: HomeAssistant) -> set[int]:
-    """Return recently captured STT turns that must not reach the conversation agent."""
-    return _domain_data(hass).setdefault("completed_enrollment_turns", set())
+_TURN_MARKER_TTL = 10 * 60.0
+
+
+def _completed_enrollment_turns(hass: HomeAssistant) -> dict[int, float]:
+    """Keep time-bounded completion markers until their conversation consumes them."""
+    return _domain_data(hass).setdefault("completed_enrollment_turns", {})
 
 
 def consume_completed_enrollment_turn(hass: HomeAssistant, sequence: int) -> bool:
-    """Consume an enrollment turn once, preventing ordinary agent execution."""
+    """Consume only a recent capture marker from the same Assist turn."""
     turns = _completed_enrollment_turns(hass)
-    if sequence not in turns:
-        return False
-    turns.discard(sequence)
-    return True
+    timestamp = turns.pop(sequence, None)
+    return timestamp is not None and time.monotonic() - timestamp <= _TURN_MARKER_TTL
 
 
 def _completed_satellite_captures(hass: HomeAssistant) -> dict[str, float]:
@@ -394,10 +395,12 @@ async def async_capture_claimed_satellite_sample(
     sessions.pop(session.satellite_id, None)
     _completed_satellite_captures(hass)[session.session_id] = time.monotonic()
     completed_turns = _completed_enrollment_turns(hass)
-    completed_turns.add(utterance_sequence)
-    # Bound the marker cache if an Assist pipeline has no conversation proxy.
-    if len(completed_turns) > 128:
-        completed_turns.intersection_update(sorted(completed_turns)[-64:])
+    now = time.monotonic()
+    # Expire stale entries rather than evicting a still-live earlier turn.
+    for sequence, timestamp in list(completed_turns.items()):
+        if now - timestamp > _TURN_MARKER_TTL:
+            completed_turns.pop(sequence, None)
+    completed_turns[utterance_sequence] = now
     _domain_data(hass).setdefault("calibration_excluded_utterances", set()).add(
         utterance_sequence
     )
