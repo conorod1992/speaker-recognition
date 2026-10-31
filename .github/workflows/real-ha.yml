@@ -145,3 +145,26 @@ jobs:
 
       - name: Run Real HA tests
         run: python -m scripts.run_real_ha_tests tests_real_ha -v --tb=short --asyncio-mode=auto
+
+      # Scheduled/explicit compatibility probe. The required stable lane above
+      # remains pinned to the pytest harness; this second pass deliberately
+      # upgrades HA beyond that pin to detect newly released Core regressions.
+      - name: Install latest published stable HA (compatibility probe)
+        if: matrix.home-assistant == 'stable' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+        run: |
+          python -m pip install --upgrade homeassistant
+          python - <<'PY'
+          from importlib.metadata import version
+          from pathlib import Path
+          ha = version("homeassistant")
+          harness = version("pytest-homeassistant-custom-component")
+          print(f"Latest-stable compatibility probe: HA {ha}, harness {harness}")
+          with Path(__import__("os").environ["GITHUB_STEP_SUMMARY"]).open("a") as summary:
+              summary.write(f"Latest stable compatibility probe: HA \`{ha}\` (pytest harness \`{harness}\`)\\n")
+          PY
+
+      - name: Probe latest-stable Home Assistant runtime
+        if: matrix.home-assistant == 'stable' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+        run: |
+          python -m scripts.run_real_ha_tests tests_real_ha \
+            -q --tb=short --asyncio-mode=auto
