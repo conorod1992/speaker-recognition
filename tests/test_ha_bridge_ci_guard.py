@@ -99,3 +99,31 @@ def test_stable_ha_workflow_does_not_override_harness_pin() -> None:
     ).read_text(encoding="utf-8")
     assert "python -m pip install --upgrade homeassistant" not in workflow
     assert "python -m pip check" in workflow
+
+
+def test_rejects_newly_added_skipped_bridge_case(tmp_path: Path) -> None:
+    path = _write_report(tmp_path)
+    tree = ET.parse(path)
+    suite = next(tree.iter("testsuite"))
+    extra = ET.SubElement(
+        suite, "testcase",
+        classname="tests_real_ha.test_real_addon_bridge",
+        name="test_future_addon_workflow",
+    )
+    ET.SubElement(extra, "skipped", message="unexpected skip")
+    tree.write(path)
+    with pytest.raises(RuntimeError, match="test_future_addon_workflow.*did not pass"):
+        verify_results(path)
+
+
+def test_accepts_additional_successful_bridge_case(tmp_path: Path) -> None:
+    path = _write_report(tmp_path)
+    tree = ET.parse(path)
+    suite = next(tree.iter("testsuite"))
+    ET.SubElement(
+        suite, "testcase",
+        classname="tests_real_ha.test_real_addon_bridge",
+        name="test_future_addon_workflow",
+    )
+    tree.write(path)
+    verify_results(path)
