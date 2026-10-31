@@ -311,9 +311,13 @@ async def _async_update_main_entry(
             current = next((row for row in latest if row.get("user") == user_id), None)
             if current != requested.get(user_id):
                 continue
-            latest = [row for row in latest if row.get("user") != user_id]
             if user_id in previous:
-                latest.append(previous[user_id])
+                latest = [
+                    previous[user_id] if row.get("user") == user_id else row
+                    for row in latest
+                ]
+            else:
+                latest = [row for row in latest if row.get("user") != user_id]
         updated_options[CONF_VOICE_SAMPLES] = latest
         hass.config_entries.async_update_entry(entry, options=updated_options)
         _resolve_enrollment_commits(hass, error.changed_users, False)

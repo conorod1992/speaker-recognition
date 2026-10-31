@@ -171,6 +171,7 @@ async def test_failed_enrollment_cannot_erase_queued_update(hass, newer_user):
     expected = {row["user"]: row for row in old}
     expected[newer_user] = {"user": newer_user, "samples": [f"new-{newer_user}"]}
     assert {row["user"]: row for row in entry.options["voice_samples"]} == expected
+    assert [row["user"] for row in entry.options["voice_samples"]] == ["alice", "bob"]
     assert {row["user"]: row for row in entry.runtime_data.voice_samples} == expected
     assert calls == [{"alice"}, {newer_user}]
     assert entry.options["acceptance_thresholds"]["min_similarity"] == .9
