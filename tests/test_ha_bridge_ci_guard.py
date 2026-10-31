@@ -127,3 +127,16 @@ def test_accepts_additional_successful_bridge_case(tmp_path: Path) -> None:
     )
     tree.write(path)
     verify_results(path)
+
+
+def test_latest_stable_probe_is_not_part_of_normal_pr_lane() -> None:
+    workflow = (
+        Path(__file__).parents[1] / ".github/workflows/real-ha.yml"
+    ).read_text(encoding="utf-8")
+    assert "Install latest published stable HA (compatibility probe)" in workflow
+    assert "Probe latest-stable Home Assistant runtime" in workflow
+    expected = (
+        "matrix.home-assistant == 'stable' && "
+        "(github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')"
+    )
+    assert workflow.count("if: " + expected) == 2
