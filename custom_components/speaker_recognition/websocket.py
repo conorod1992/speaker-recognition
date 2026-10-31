@@ -565,7 +565,10 @@ async def websocket_commit_enrollment(
     user_id = msg["user_id"]
     domain_data = hass.data.setdefault(DOMAIN, {})
     waiters = domain_data.setdefault("enrollment_commit_waiters", {})
-    if any(not waiter.done() for waiter in waiters.values()):
+    update_lock = domain_data.get("main_update_lock")
+    if any(not waiter.done() for waiter in waiters.values()) or (
+        update_lock is not None and update_lock.locked()
+    ):
         connection.send_error(
             msg["id"], "commit_in_progress", "Another enrollment is being committed; try again after it finishes"
         )

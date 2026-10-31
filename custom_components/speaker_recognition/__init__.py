@@ -337,8 +337,12 @@ async def _async_update_main_entry(
         for user_id in changed_users:
             staged.pop(user_id, None)
 
-    _resolve_enrollment_commits(hass, changed_users, True)
-    await hass.config_entries.async_reload(entry.entry_id)
+    try:
+        await hass.config_entries.async_reload(entry.entry_id)
+    finally:
+        # Training has committed, even if availability delays the new runtime.
+        # Keep sidebar transactions excluded until the reload has finished.
+        _resolve_enrollment_commits(hass, changed_users, True)
 
 
 async def async_update_stt_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:

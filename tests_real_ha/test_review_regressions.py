@@ -103,14 +103,20 @@ async def test_async_evaluation_status_websocket_returns_a_result(hass, hass_ws_
 
 
 @pytest.mark.asyncio
-async def test_second_users_sidebar_commit_is_rejected_while_training(hass, hass_ws_client):
+@pytest.mark.parametrize("busy_state", ["training", "reloading"])
+async def test_second_users_sidebar_commit_is_rejected_while_training(hass, hass_ws_client, busy_state):
     assert await async_setup_component(hass, DOMAIN, {})
     user = await hass.auth.async_create_user("Bob")
     entry = MockConfigEntry(domain=DOMAIN, data={"entry_type": "main"}, options={"voice_samples": []})
     entry.add_to_hass(hass)
     hass.data[DOMAIN]["enrollment_staged"] = {user.id: {index: {"media_content_id": f"sample-{index}"} for index in range(5)}}
     completion = hass.loop.create_future()
-    hass.data[DOMAIN]["enrollment_commit_waiters"] = {"alice": completion}
+    update_lock = asyncio.Lock()
+    if busy_state == "training":
+        hass.data[DOMAIN]["enrollment_commit_waiters"] = {"alice": completion}
+    else:
+        await update_lock.acquire()
+        hass.data[DOMAIN]["main_update_lock"] = update_lock
     client = await hass_ws_client(hass)
     try:
         await client.send_json_auto_id({"type": f"{DOMAIN}/commit_enrollment", "user_id": user.id})
@@ -120,6 +126,45 @@ async def test_second_users_sidebar_commit_is_rejected_while_training(hass, hass
         assert entry.options["voice_samples"] == []
     finally:
         completion.cancel()
+        if update_lock.locked():
+            update_lock.release()
+
+
+@pytest.mark.asyncio
+async def test_sidebar_transaction_completes_only_after_reload(hass):
+    old = [{"user": "alice", "samples": ["old"]}]
+    new = [{"user": "alice", "samples": ["new"]}]
+    runtime = AsyncMock()
+    runtime.voice_samples = old
+    runtime.async_train.return_value = True
+    runtime.async_sync_profiles.return_value = True
+    # This method is synchronous in the production runtime.
+    runtime.update_voice_samples = lambda samples: setattr(runtime, "voice_samples", samples)
+    entry = MockConfigEntry(domain=DOMAIN, data={"entry_type": "main"}, options={"voice_samples": new})
+    entry.add_to_hass(hass)
+    entry.runtime_data = runtime
+    completion = hass.loop.create_future()
+    hass.data[DOMAIN] = {"enrollment_commit_waiters": {"alice": completion}}
+    started, finish = asyncio.Event(), asyncio.Event()
+
+    async def reload(_entry_id):
+        started.set()
+        await finish.wait()
+        return True
+
+    with (
+        patch.object(hass.config_entries, "async_reload", side_effect=reload),
+        patch("custom_components.speaker_recognition.async_cleanup_managed_samples", new=AsyncMock()),
+        patch("custom_components.speaker_recognition.async_reconcile_promotions", new=AsyncMock()),
+    ):
+        task = asyncio.create_task(async_update_main_listener(hass, entry))
+        try:
+            await asyncio.wait_for(started.wait(), 1)
+            assert not completion.done()
+        finally:
+            finish.set()
+            await task
+    assert completion.result() is True
 
 
 @pytest.mark.asyncio
