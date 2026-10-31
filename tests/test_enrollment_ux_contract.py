@@ -125,7 +125,7 @@ def test_successful_stt_enrollment_is_consumed_before_original_conversation_agen
     """Captured enrollment audio must not execute normal agent commands."""
     enrollment_source = (ROOT / "enrollment.py").read_text(encoding="utf-8")
     conversation_source = (ROOT / "conversation.py").read_text(encoding="utf-8")
-    assert "completed_turns.add(utterance_sequence)" in enrollment_source
+    assert "completed_turns[utterance_sequence] = now" in enrollment_source
     assert "consume_completed_enrollment_turn(" in conversation_source
     assert conversation_source.index("consume_completed_enrollment_turn(") < conversation_source.index("return await source_agent.async_process(user_input)")
 
