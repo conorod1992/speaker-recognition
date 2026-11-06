@@ -323,6 +323,12 @@ silently overwritten.
 
 Your original conversation agent continues to handle the request.
 
+The proxy also streams whenever that agent does: if the wrapped agent supports
+streaming and the pipeline's text-to-speech engine accepts streaming input, speech
+starts while the agent is still answering. Otherwise the turn returns one complete
+answer as before. No setting is needed. Home Assistant only starts streaming once
+an answer exceeds about 60 characters, so short answers are never streamed.
+
 > [!NOTE]
 > For live satellite recognition, the Assist pipeline needs to use both the
 > Speaker Recognition STT proxy and Speaker Recognition Conversation proxy.
