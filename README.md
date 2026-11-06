@@ -329,6 +329,41 @@ starts while the agent is still answering. Otherwise the turn returns one comple
 answer as before. No setting is needed. Home Assistant only starts streaming once
 an answer exceeds about 60 characters, so short answers are never streamed.
 
+### Speaker note
+
+By default, a recognized speaker reaches the agent as the Home Assistant user of
+the turn, which prompts can read as `user_name`. Recognition can change between two
+sentences, for example on a very short one. Home Assistant then renders a new system
+prompt, and Anthropic rejects the thinking blocks of earlier turns, so a prompt that
+names the speaker ends in an API error.
+
+**Write a speaker note into every message** avoids this: the proxy puts who is
+speaking in front of each sentence, and the system prompt stays the same for everyone.
+
+```text
+[Speaker: Alex] What's my name?
+[Speaker: unknown] Turn it up a bit.
+```
+
+To use it:
+
+1. Turn the option on in the proxy's options. It is off by default.
+2. Remove `user_name` and personal details from the agent's prompt.
+3. Tell the agent in its prompt what the note means, and not to read it aloud.
+
+The note is a template with `user_name`, `user_id`, `device_id` and `satellite_id`, so
+it can carry preferences of the current speaker, and only theirs:
+
+```jinja
+[Speaker: {{ user_name or "unknown" }}.
+{%- if user_name %} Preferences: {{ states("input_text.preferences_" ~ (user_name | slugify)) }}.{% endif %}]
+```
+
+Only use it with AI agents: the built-in Home Assistant agent does not understand the
+extra text. If the template fails, the sentence is sent without a note. The note
+describes the speaker for the agent and grants no permissions, which still depend on
+the Home Assistant user of the turn.
+
 > [!NOTE]
 > For live satellite recognition, the Assist pipeline needs to use both the
 > Speaker Recognition STT proxy and Speaker Recognition Conversation proxy.

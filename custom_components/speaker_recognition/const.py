@@ -28,10 +28,14 @@ CONF_USE_BASIC_DSP = "use_basic_dsp"
 # Conversation configuration
 CONF_CONVERSATION_ENTITY = "conversation_entity"
 CONF_MIN_CONFIDENCE = "min_confidence"
+CONF_SPEAKER_NOTE_ENABLED = "speaker_note_enabled"
+CONF_SPEAKER_NOTE_TEMPLATE = "speaker_note_template"
 
 # Defaults
 DEFAULT_BACKEND_URL = "http://localhost:8099"
 DEFAULT_MIN_CONFIDENCE = 0.0
+DEFAULT_SPEAKER_NOTE_ENABLED = False
+DEFAULT_SPEAKER_NOTE_TEMPLATE = '[Speaker: {{ user_name or "unknown" }}]'
 DEFAULT_USE_BASIC_DSP = False
 
 

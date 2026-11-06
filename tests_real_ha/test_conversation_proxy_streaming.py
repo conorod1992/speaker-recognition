@@ -18,7 +18,9 @@ from homeassistant.components.assist_pipeline.pipeline import (
     PipelineRun,
 )
 from homeassistant.components.conversation.const import DATA_COMPONENT
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import Context, HomeAssistant
+from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.exceptions import Unauthorized
 from homeassistant.helpers import chat_session
 from homeassistant.helpers.intent import IntentResponse
@@ -29,6 +31,8 @@ from custom_components.speaker_recognition.const import (
     CONF_CONVERSATION_ENTITY,
     CONF_ENTRY_TYPE,
     CONF_MIN_CONFIDENCE,
+    CONF_SPEAKER_NOTE_ENABLED,
+    CONF_SPEAKER_NOTE_TEMPLATE,
     DOMAIN,
     ENTRY_TYPE_CONVERSATION,
     ENTRY_TYPE_MAIN,
@@ -184,7 +188,10 @@ class Turn:
 
 
 async def _setup_proxy(
-    hass: HomeAssistant, source: conversation.ConversationEntity
+    hass: HomeAssistant,
+    source: conversation.ConversationEntity,
+    *,
+    options: dict[str, Any] | None = None,
 ) -> SpeakerRecognitionConversationEntity:
     assert await async_setup_component(hass, "homeassistant", {})
     assert await async_setup_component(hass, "assist_pipeline", {})
@@ -202,6 +209,7 @@ async def _setup_proxy(
             CONF_CONVERSATION_ENTITY: SOURCE_ENTITY_ID,
             CONF_MIN_CONFIDENCE: 0.75,
         },
+        options=options or {},
         version=2,
     )
     proxy_entry.add_to_hass(hass)
@@ -415,3 +423,158 @@ async def test_recognition_cannot_take_over_a_conversation_owned_by_a_user(
             )
         assert session.user_id == bob.id
     assert source.user_id_at_first_delta is None
+
+
+class ChatLogRecordingSource(StreamingSource):
+    """Source agent that renders a prompt and records what it was given."""
+
+    def __init__(self, prompt: str = "Base prompt.") -> None:
+        super().__init__()
+        self.prompt = prompt
+        self.system_prompts: list[str] = []
+        self.user_messages: list[list[str]] = []
+
+    async def _async_handle_message(
+        self,
+        user_input: conversation.ConversationInput,
+        chat_log: conversation.ChatLog,
+    ) -> conversation.ConversationResult:
+        await chat_log.async_provide_llm_data(
+            user_input.as_llm_context("test"), None, self.prompt, None
+        )
+        # Without an API, Home Assistant appends the time to the prompt.
+        self.system_prompts.append(chat_log.content[0].content.splitlines()[0])
+        self.user_messages.append(
+            [
+                content.content
+                for content in chat_log.content
+                if content.role == "user"
+            ]
+        )
+        return await super()._async_handle_message(user_input, chat_log)
+
+
+NOTE_ON = {CONF_SPEAKER_NOTE_ENABLED: True}
+QUESTION = "tell me something long"
+
+
+@pytest.mark.asyncio
+async def test_speaker_note_names_the_speaker_of_each_turn(hass: HomeAssistant) -> None:
+    """The note follows recognition while the system prompt stays the same."""
+    alice = await hass.auth.async_create_user("Alice")
+    bob = await hass.auth.async_create_user("Bob")
+    source = ChatLogRecordingSource()
+    await _setup_proxy(hass, source, options=NOTE_ON)
+
+    set_correlated_recognition(_recognition(alice.id))
+    first = await _run_turn(hass, source)
+    assert first.errors == []
+
+    source.tts_started.clear()
+    second = await _run_turn(hass, source, first.conversation_id)
+    assert second.errors == []
+
+    source.tts_started.clear()
+    set_correlated_recognition(_recognition(bob.id))
+    third = await _run_turn(hass, source, first.conversation_id)
+    assert third.errors == []
+    assert third.tts_start_streaming is True
+    assert source.user_id_at_first_delta == bob.id
+
+    # One message per turn, in order: earlier turns must never change.
+    assert source.user_messages[-1] == [
+        f"[Speaker: Alice] {QUESTION}",
+        f"[Speaker: unknown] {QUESTION}",
+        f"[Speaker: Bob] {QUESTION}",
+    ]
+    assert source.system_prompts == ["Base prompt."] * 3
+
+
+@pytest.mark.asyncio
+async def test_speaker_note_is_off_by_default(hass: HomeAssistant) -> None:
+    """Existing proxies keep sending the sentence as it was said."""
+    alice = await hass.auth.async_create_user("Alice")
+    source = ChatLogRecordingSource()
+    await _setup_proxy(hass, source)
+    set_correlated_recognition(_recognition(alice.id))
+
+    turn = await _run_turn(hass, source)
+
+    assert turn.errors == []
+    assert source.user_messages[-1] == [QUESTION]
+
+
+@pytest.mark.asyncio
+async def test_speaker_note_template_can_use_home_assistant_states(
+    hass: HomeAssistant,
+) -> None:
+    """The template can read preferences of the current speaker."""
+    alice = await hass.auth.async_create_user("Alice")
+    hass.states.async_set("input_text.likes_alice", "Be brief")
+    source = ChatLogRecordingSource()
+    await _setup_proxy(
+        hass,
+        source,
+        options={
+            **NOTE_ON,
+            CONF_SPEAKER_NOTE_TEMPLATE: (
+                "[{{ user_name }}: "
+                "{{ states('input_text.likes_' ~ (user_name | slugify)) }}]"
+            ),
+        },
+    )
+    set_correlated_recognition(_recognition(alice.id))
+
+    await _run_turn(hass, source)
+
+    assert source.user_messages[-1] == [f"[Alice: Be brief] {QUESTION}"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "template",
+    ["{{ 1 / 0 }}", "{{ '' }}"],
+    ids=["broken_template", "empty_note"],
+)
+async def test_speaker_note_never_costs_the_turn(
+    hass: HomeAssistant, template: str
+) -> None:
+    """A broken or empty note leaves the sentence as it was said."""
+    source = ChatLogRecordingSource()
+    await _setup_proxy(
+        hass,
+        source,
+        options={**NOTE_ON, CONF_SPEAKER_NOTE_TEMPLATE: template},
+    )
+
+    turn = await _run_turn(hass, source)
+
+    assert turn.errors == []
+    assert source.user_messages[-1] == [QUESTION]
+
+
+@pytest.mark.asyncio
+async def test_speaker_note_options_are_offered_and_saved(hass: HomeAssistant) -> None:
+    """The real options flow shows the fields and stores them."""
+    proxy = await _setup_proxy(hass, NonStreamingSource())
+    entry = proxy._config_entry
+    entry.mock_state(hass, ConfigEntryState.LOADED)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    assert result["step_id"] == "conversation_options"
+    fields = {str(key) for key in result["data_schema"].schema}
+    assert {CONF_SPEAKER_NOTE_ENABLED, CONF_SPEAKER_NOTE_TEMPLATE} <= fields
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            CONF_CONVERSATION_ENTITY: SOURCE_ENTITY_ID,
+            CONF_MIN_CONFIDENCE: 0.75,
+            CONF_SPEAKER_NOTE_ENABLED: True,
+            CONF_SPEAKER_NOTE_TEMPLATE: "[{{ user_name }}]",
+        },
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options[CONF_SPEAKER_NOTE_ENABLED] is True
+    assert entry.options[CONF_SPEAKER_NOTE_TEMPLATE] == "[{{ user_name }}]"

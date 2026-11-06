@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Generator
 from contextlib import contextmanager
+from dataclasses import replace
 import logging
+from typing import Any
 
 from homeassistant.components import conversation
 from homeassistant.components.conversation import (
@@ -12,6 +14,10 @@ from homeassistant.components.conversation import (
     ConversationEntity,
     ConversationInput,
     ConversationResult,
+)
+from homeassistant.components.conversation.chat_log import (
+    UserContent,
+    current_chat_log,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import STATE_UNAVAILABLE
@@ -22,6 +28,7 @@ from homeassistant.core import (
     HomeAssistant,
     callback,
 )
+from homeassistant.exceptions import TemplateError
 from homeassistant.helpers import (
     chat_session,
     device_registry as dr,
@@ -30,13 +37,18 @@ from homeassistant.helpers import (
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.intent import IntentResponse, IntentResponseErrorCode
+from homeassistant.helpers.template import Template
 from homeassistant.helpers.typing import UNDEFINED
 
 from .const import (
     CONF_CONVERSATION_ENTITY,
     CONF_ENTRY_TYPE,
     CONF_MIN_CONFIDENCE,
+    CONF_SPEAKER_NOTE_ENABLED,
+    CONF_SPEAKER_NOTE_TEMPLATE,
     DEFAULT_MIN_CONFIDENCE,
+    DEFAULT_SPEAKER_NOTE_ENABLED,
+    DEFAULT_SPEAKER_NOTE_TEMPLATE,
     DOMAIN,
     ENTRY_TYPE_MAIN,
 )
@@ -185,6 +197,12 @@ class SpeakerRecognitionConversationEntity(
                 CONF_MIN_CONFIDENCE,
                 self._config_entry.data.get(CONF_MIN_CONFIDENCE, DEFAULT_MIN_CONFIDENCE),
             )
+        )
+
+    def _proxy_setting(self, key: str, default: Any) -> Any:
+        """Return a proxy setting, preferring saved options over setup data."""
+        return self._config_entry.options.get(
+            key, self._config_entry.data.get(key, default)
         )
 
     @callback
@@ -388,5 +406,55 @@ class SpeakerRecognitionConversationEntity(
                     speaker_data.utterance_sequence,
                 )
 
+        if self._proxy_setting(CONF_SPEAKER_NOTE_ENABLED, DEFAULT_SPEAKER_NOTE_ENABLED):
+            user_input = await self._async_add_speaker_note(user_input)
+
         with _scoped_session_owner(user_input.conversation_id, enriched_user_id):
             return await source_agent.async_process(user_input)
+
+    async def _async_add_speaker_note(
+        self, user_input: ConversationInput
+    ) -> ConversationInput:
+        """Put a note about the speaker in front of this turn's message.
+
+        Unlike the system prompt, a message of the current turn can change freely:
+        Anthropic binds the thinking blocks of earlier turns to the system prompt,
+        so a prompt naming the speaker fails as soon as recognition changes.
+        """
+        user_id = user_input.context.user_id
+        user = await self.hass.auth.async_get_user(user_id) if user_id else None
+        try:
+            note = Template(
+                self._proxy_setting(
+                    CONF_SPEAKER_NOTE_TEMPLATE, DEFAULT_SPEAKER_NOTE_TEMPLATE
+                ),
+                self.hass,
+            ).async_render(
+                {
+                    "user_name": user.name if user else None,
+                    "user_id": user_id,
+                    "device_id": user_input.device_id,
+                    "satellite_id": user_input.satellite_id,
+                },
+                parse_result=False,
+            )
+        except TemplateError as err:
+            # The turn matters more than the note.
+            _LOGGER.warning("Could not render the speaker note: %s", err)
+            return user_input
+
+        if not (note := note.strip()):
+            return user_input
+
+        text = f"{note} {user_input.text}"
+        # The pipeline already added this turn's message to its chat log. Replace it,
+        # or the wrapped agent would see the sentence twice.
+        chat_log = current_chat_log.get()
+        if (
+            chat_log is not None
+            and chat_log.conversation_id == user_input.conversation_id
+            and isinstance(last_content := chat_log.content[-1], UserContent)
+            and last_content.content == user_input.text
+        ):
+            chat_log.content[-1] = replace(last_content, content=text)
+        return replace(user_input, text=text)
