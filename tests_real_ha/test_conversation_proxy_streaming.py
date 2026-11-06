@@ -336,3 +336,82 @@ async def test_proxy_does_not_claim_streaming_without_capable_source(
         return_value=agent,
     ):
         assert proxy.supports_streaming is False
+
+
+@pytest.mark.asyncio
+async def test_recognized_speaker_streams_with_identity_before_first_delta(
+    hass: HomeAssistant,
+) -> None:
+    """A recognized speaker gets a streamed answer and is known to the first delta."""
+    alice = await hass.auth.async_create_user("Alice")
+    source = StreamingSource()
+    await _setup_proxy(hass, source)
+    set_correlated_recognition(_recognition(alice.id))
+
+    turn = await _run_turn(hass, source)
+
+    assert turn.errors == []
+    assert turn.response["response_type"] == "action_done"
+    assert turn.tts_start_streaming is True
+    assert turn.streamed_text == FIRST_PART + SECOND_PART
+    assert source.user_id_at_first_delta == alice.id
+
+
+@pytest.mark.asyncio
+async def test_recognized_identity_does_not_outlive_its_turn(
+    hass: HomeAssistant,
+) -> None:
+    """Follow-up turns of a satellite conversation start anonymous again."""
+    alice = await hass.auth.async_create_user("Alice")
+    bob = await hass.auth.async_create_user("Bob")
+    source = StreamingSource()
+    await _setup_proxy(hass, source)
+
+    set_correlated_recognition(_recognition(alice.id))
+    first = await _run_turn(hass, source)
+    assert first.errors == []
+
+    source.tts_started.clear()
+    second = await _run_turn(hass, source, first.conversation_id)
+    assert second.errors == []
+    assert second.conversation_id == first.conversation_id
+    assert second.response["response_type"] == "action_done"
+    assert source.user_id_at_first_delta is None
+
+    source.tts_started.clear()
+    set_correlated_recognition(_recognition(bob.id))
+    third = await _run_turn(hass, source, first.conversation_id)
+    assert third.errors == []
+    assert third.response["response_type"] == "action_done"
+    assert source.user_id_at_first_delta == bob.id
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(not SESSIONS_HAVE_OWNER, reason="Sessions have no owner before HA 2026.11")
+async def test_recognition_cannot_take_over_a_conversation_owned_by_a_user(
+    hass: HomeAssistant,
+) -> None:
+    """Speaker recognition must not get past the owner check of a real user."""
+    alice = await hass.auth.async_create_user("Alice")
+    bob = await hass.auth.async_create_user("Bob")
+    source = StreamingSource()
+    proxy = await _setup_proxy(hass, source)
+    set_correlated_recognition(_recognition(alice.id))
+
+    with chat_session.async_get_chat_session(
+        hass, None, context=Context(user_id=bob.id)
+    ) as session:
+        with pytest.raises(Unauthorized):
+            await proxy.async_process(
+                conversation.ConversationInput(
+                    text="tell me something long",
+                    context=Context(),
+                    conversation_id=session.conversation_id,
+                    device_id=None,
+                    satellite_id=None,
+                    language="en",
+                    agent_id=PROXY_ENTITY_ID,
+                )
+            )
+        assert session.user_id == bob.id
+    assert source.user_id_at_first_delta is None

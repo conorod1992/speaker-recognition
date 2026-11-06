@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Generator
+from contextlib import contextmanager
 import logging
 
 from homeassistant.components import conversation
@@ -20,10 +22,15 @@ from homeassistant.core import (
     HomeAssistant,
     callback,
 )
-from homeassistant.helpers import device_registry as dr, entity_registry as er
+from homeassistant.helpers import (
+    chat_session,
+    device_registry as dr,
+    entity_registry as er,
+)
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.intent import IntentResponse, IntentResponseErrorCode
+from homeassistant.helpers.typing import UNDEFINED
 
 from .const import (
     CONF_CONVERSATION_ENTITY,
@@ -40,6 +47,39 @@ from .recognition import SpeakerRecognition
 from .telemetry import get_decision_history
 
 _LOGGER = logging.getLogger(__name__)
+
+
+@contextmanager
+def _scoped_session_owner(
+    conversation_id: str | None, recognized_user_id: str | None
+) -> Generator[None]:
+    """Let a recognized speaker own an anonymous chat session for one turn.
+
+    Since Home Assistant 2026.11, a chat session belongs to the user of its first
+    context and rejects the context of any other user. A satellite pipeline opens
+    an anonymous session, so without this the enriched context handed to the
+    wrapped agent fails with Unauthorized. The owner is restored after the turn,
+    so follow-up turns of the conversation can start anonymous again. A session
+    owned by another user is left alone and keeps rejecting the context.
+    """
+    session = chat_session.current_session.get()
+    if (
+        recognized_user_id is None
+        or session is None
+        or session.conversation_id != conversation_id
+        # Sessions have no owner before Home Assistant 2026.11.
+        or not hasattr(session, "user_id")
+        or (session.user_id is not None and session.user_id is not UNDEFINED)
+    ):
+        yield
+        return
+
+    previous_owner = session.user_id
+    session.user_id = recognized_user_id
+    try:
+        yield
+    finally:
+        session.user_id = previous_owner
 
 
 def _get_main_entry(hass: HomeAssistant) -> ConfigEntry | None:
@@ -221,6 +261,7 @@ class SpeakerRecognitionConversationEntity(
             )
             return ConversationResult(response=response, conversation_id=None)
 
+        enriched_user_id: str | None = None
         speaker_data = take_correlated_recognition()
         if speaker_data is not None and consume_completed_enrollment_turn(
             self.hass, speaker_data.utterance_sequence
@@ -314,6 +355,7 @@ class SpeakerRecognitionConversationEntity(
                         user_input.satellite_id,
                     )
 
+                    enriched_user_id = speaker_data.user_id
                     enriched_context = Context(
                         user_id=speaker_data.user_id,
                         parent_id=user_input.context.parent_id,
@@ -346,4 +388,5 @@ class SpeakerRecognitionConversationEntity(
                     speaker_data.utterance_sequence,
                 )
 
-        return await source_agent.async_process(user_input)
+        with _scoped_session_owner(user_input.conversation_id, enriched_user_id):
+            return await source_agent.async_process(user_input)
