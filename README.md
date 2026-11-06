@@ -323,6 +323,60 @@ silently overwritten.
 
 Your original conversation agent continues to handle the request.
 
+The proxy also streams whenever that agent does: if the wrapped agent supports
+streaming and the pipeline's text-to-speech engine accepts streaming input, speech
+starts while the agent is still answering. Otherwise the turn returns one complete
+answer as before. No setting is needed. Home Assistant generally starts streaming
+after about 60 characters; a tool call after some text can also trigger streaming.
+
+### Speaker note
+
+By default, a recognized speaker reaches the agent as the Home Assistant user of
+the turn, which prompts can read as `user_name`. Recognition can change between two
+sentences, for example on a very short one. Home Assistant then renders a new system
+prompt. Anthropic can reject thinking blocks from earlier turns when the system
+prompt changes, causing an API error.
+
+**Write a speaker note into every message** puts who is speaking in front of each
+message, so speaker details can be removed from the system prompt.
+
+```text
+[Speaker: Alex] What's my name?
+[Speaker: unknown] Turn it up a bit.
+```
+
+To use it:
+
+1. Turn the option on in the proxy's options. It is off by default.
+2. Remove `user_name` and personal details from the agent's prompt.
+3. Tell the agent in its prompt what the note means, and not to read it aloud.
+
+This option does not freeze the system prompt or remove stored thinking blocks.
+Home Assistant can still regenerate the prompt when the user changes, including
+API-provided instructions, exposed entities, or the current time. Agents without
+a clock tool may receive a changing time prompt even if their own instructions
+are static. Speaker notes therefore reduce speaker-related prompt changes but
+do not guarantee protection against every Anthropic thinking-signature error.
+
+The note is a template with `user_name`, `user_id`, `device_id` and `satellite_id`, so
+it can carry preferences of the current speaker, and only theirs:
+
+```jinja
+[Speaker: {{ user_name or "unknown" }}.
+{%- if user_name %} Preferences: {{ states("input_text.preferences_" ~ (user_name | slugify)) }}.{% endif %}]
+```
+
+Only use it with AI agents: the built-in Home Assistant agent does not understand the
+extra text. If the template fails, the sentence is sent without a note. The note
+describes the speaker for the agent and grants no permissions, which still depend on
+the Home Assistant user of the turn.
+
+On Home Assistant 2026.11 and later, the proxy temporarily assigns an anonymous
+active chat session to an eligible recognized user while the wrapped agent runs,
+then restores the prior owner, including on failure or cancellation. It does not
+replace an existing named owner. This compatibility behavior relies on Home
+Assistant's internal session ownership fields.
+
 > [!NOTE]
 > For live satellite recognition, the Assist pipeline needs to use both the
 > Speaker Recognition STT proxy and Speaker Recognition Conversation proxy.

@@ -388,18 +388,20 @@ async def test_two_simultaneous_conversation_turns_keep_identity_task_local(
 
     async def run(text: str, user_id: str, sequence: int) -> str | None:
         set_correlated_recognition(_correlated(user_id, sequence))
-        with patch(
-            "custom_components.speaker_recognition.conversation.conversation.async_get_agent",
-            return_value=source,
-        ):
-            await entity.async_process(_conversation_input(text))
+        await entity.async_process(_conversation_input(text))
         matching = next(item for item in source.received if item.text == text)
         return matching.context.user_id
 
-    first, second = await asyncio.gather(
-        run("alice", alice.id, 1),
-        run("bob", bob.id, 2),
-    )
+    # Patch around gather: overlapping patches in the tasks would restore each
+    # other's mock on exit and leak it into every later test of the run.
+    with patch(
+        "custom_components.speaker_recognition.conversation.conversation.async_get_agent",
+        return_value=source,
+    ):
+        first, second = await asyncio.gather(
+            run("alice", alice.id, 1),
+            run("bob", bob.id, 2),
+        )
 
     assert first == alice.id
     assert second == bob.id
@@ -418,24 +420,20 @@ async def test_concurrent_conversation_failure_does_not_contaminate_other_turn(
 
     async def failing_turn() -> None:
         set_correlated_recognition(_correlated(alice.id, 1))
-        with patch(
-            "custom_components.speaker_recognition.conversation.conversation.async_get_agent",
-            return_value=source,
-        ):
-            with pytest.raises(RuntimeError, match="conversation failed"):
-                await entity.async_process(_conversation_input("fail"))
+        with pytest.raises(RuntimeError, match="conversation failed"):
+            await entity.async_process(_conversation_input("fail"))
 
     async def healthy_turn() -> str | None:
         set_correlated_recognition(_correlated(bob.id, 2))
-        with patch(
-            "custom_components.speaker_recognition.conversation.conversation.async_get_agent",
-            return_value=source,
-        ):
-            await entity.async_process(_conversation_input("healthy"))
+        await entity.async_process(_conversation_input("healthy"))
         matching = next(item for item in source.received if item.text == "healthy")
         return matching.context.user_id
 
-    _, healthy_user = await asyncio.gather(failing_turn(), healthy_turn())
+    with patch(
+        "custom_components.speaker_recognition.conversation.conversation.async_get_agent",
+        return_value=source,
+    ):
+        _, healthy_user = await asyncio.gather(failing_turn(), healthy_turn())
     assert healthy_user == bob.id
 
 

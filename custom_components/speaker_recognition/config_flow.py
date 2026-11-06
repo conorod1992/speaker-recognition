@@ -25,6 +25,8 @@ from .const import (
     CONF_ENROLLMENT_ACTION,
     CONF_FINISH_ENROLLMENT,
     CONF_MIN_CONFIDENCE,
+    CONF_SPEAKER_NOTE_ENABLED,
+    CONF_SPEAKER_NOTE_TEMPLATE,
     CONF_PENDING_ENROLLMENT,
     CONF_SAMPLE,
     CONF_SAMPLES,
@@ -34,6 +36,8 @@ from .const import (
     CONF_VOICE_SAMPLES,
     DEFAULT_BACKEND_URL,
     DEFAULT_MIN_CONFIDENCE,
+    DEFAULT_SPEAKER_NOTE_ENABLED,
+    DEFAULT_SPEAKER_NOTE_TEMPLATE,
     DEFAULT_USE_BASIC_DSP,
     DOMAIN,
     ENTRY_TYPE_CONVERSATION,
@@ -414,6 +418,12 @@ class SpeakerRecognitionConfigFlow(EnrollmentFlowMixin, ConfigFlow, domain=DOMAI
                         CONF_ENTRY_TYPE: ENTRY_TYPE_CONVERSATION,
                         CONF_CONVERSATION_ENTITY: conversation_entity,
                         CONF_MIN_CONFIDENCE: user_input[CONF_MIN_CONFIDENCE],
+                        CONF_SPEAKER_NOTE_ENABLED: user_input.get(
+                            CONF_SPEAKER_NOTE_ENABLED, DEFAULT_SPEAKER_NOTE_ENABLED
+                        ),
+                        CONF_SPEAKER_NOTE_TEMPLATE: user_input.get(
+                            CONF_SPEAKER_NOTE_TEMPLATE, DEFAULT_SPEAKER_NOTE_TEMPLATE
+                        ),
                     },
                 )
 
@@ -436,6 +446,14 @@ class SpeakerRecognitionConfigFlow(EnrollmentFlowMixin, ConfigFlow, domain=DOMAI
                             mode=selector.NumberSelectorMode.SLIDER,
                         )
                     ),
+                    vol.Optional(
+                        CONF_SPEAKER_NOTE_ENABLED,
+                        default=DEFAULT_SPEAKER_NOTE_ENABLED,
+                    ): selector.BooleanSelector(),
+                    vol.Optional(
+                        CONF_SPEAKER_NOTE_TEMPLATE,
+                        default=DEFAULT_SPEAKER_NOTE_TEMPLATE,
+                    ): selector.TemplateSelector(),
                 }
             ),
             errors=errors,
@@ -601,6 +619,12 @@ class SpeakerRecognitionOptionsFlow(EnrollmentFlowMixin, OptionsFlow):
                     data={
                         CONF_CONVERSATION_ENTITY: conversation_entity,
                         CONF_MIN_CONFIDENCE: user_input[CONF_MIN_CONFIDENCE],
+                        CONF_SPEAKER_NOTE_ENABLED: user_input.get(
+                            CONF_SPEAKER_NOTE_ENABLED, DEFAULT_SPEAKER_NOTE_ENABLED
+                        ),
+                        CONF_SPEAKER_NOTE_TEMPLATE: user_input.get(
+                            CONF_SPEAKER_NOTE_TEMPLATE, DEFAULT_SPEAKER_NOTE_TEMPLATE
+                        ),
                     },
                 )
 
@@ -611,6 +635,18 @@ class SpeakerRecognitionOptionsFlow(EnrollmentFlowMixin, OptionsFlow):
         current_min_confidence = self.config_entry.options.get(
             CONF_MIN_CONFIDENCE,
             self.config_entry.data.get(CONF_MIN_CONFIDENCE, DEFAULT_MIN_CONFIDENCE),
+        )
+        current_note_enabled = self.config_entry.options.get(
+            CONF_SPEAKER_NOTE_ENABLED,
+            self.config_entry.data.get(
+                CONF_SPEAKER_NOTE_ENABLED, DEFAULT_SPEAKER_NOTE_ENABLED
+            ),
+        )
+        current_note_template = self.config_entry.options.get(
+            CONF_SPEAKER_NOTE_TEMPLATE,
+            self.config_entry.data.get(
+                CONF_SPEAKER_NOTE_TEMPLATE, DEFAULT_SPEAKER_NOTE_TEMPLATE
+            ),
         )
 
         return self.async_show_form(
@@ -634,6 +670,14 @@ class SpeakerRecognitionOptionsFlow(EnrollmentFlowMixin, OptionsFlow):
                             mode=selector.NumberSelectorMode.SLIDER,
                         )
                     ),
+                    vol.Optional(
+                        CONF_SPEAKER_NOTE_ENABLED,
+                        default=current_note_enabled,
+                    ): selector.BooleanSelector(),
+                    vol.Optional(
+                        CONF_SPEAKER_NOTE_TEMPLATE,
+                        default=current_note_template,
+                    ): selector.TemplateSelector(),
                 }
             ),
             errors=errors,
