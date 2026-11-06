@@ -194,6 +194,19 @@ class SpeakerRecognitionConversationEntity(
         """Return a list of supported languages."""
         return self._cached_languages or []
 
+    @property
+    def supports_streaming(self) -> bool:
+        """Mirror the wrapped agent, so the pipeline treats the proxy like it.
+
+        Deltas need no forwarding: the wrapped agent runs in the same task and
+        finds the pipeline's chat log, including its listener, by context
+        variable. Legacy agents without this property do not stream.
+        """
+        source_agent = conversation.async_get_agent(
+            self.hass, self._conversation_entity_id
+        )
+        return getattr(source_agent, "supports_streaming", False) is True
+
     async def async_process(self, user_input: ConversationInput) -> ConversationResult:
         """Process a conversation turn."""
         source_agent = conversation.async_get_agent(
