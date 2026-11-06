@@ -22,8 +22,9 @@ from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.exceptions import Unauthorized
-from homeassistant.helpers import chat_session
+from homeassistant.helpers import chat_session, llm
 from homeassistant.helpers.intent import IntentResponse
+from homeassistant.helpers.typing import UNDEFINED
 from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -39,6 +40,7 @@ from custom_components.speaker_recognition.const import (
 )
 from custom_components.speaker_recognition.conversation import (
     SpeakerRecognitionConversationEntity,
+    _scoped_session_owner,
 )
 from custom_components.speaker_recognition.correlation import (
     CorrelatedRecognition,
@@ -53,8 +55,8 @@ TTS_ENTITY_ID = "tts.streaming"
 FIRST_PART = "This first part of the answer is longer than the streaming threshold. "
 SECOND_PART = "This second part only exists after TTS streaming has started."
 
-# Home Assistant 2026.11 made chat sessions owned by a user and made the context
-# argument mandatory. Earlier versions do not accept that argument.
+# Home Assistant 2026.11 added session ownership and a context argument.
+# Earlier versions do not accept that argument.
 SESSIONS_HAVE_OWNER = (
     "context" in inspect.signature(chat_session.async_get_chat_session).parameters
 )
@@ -395,7 +397,9 @@ async def test_recognized_identity_does_not_outlive_its_turn(
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(not SESSIONS_HAVE_OWNER, reason="Sessions have no owner before HA 2026.11")
+@pytest.mark.skipif(
+    not SESSIONS_HAVE_OWNER, reason="Sessions have no owner before HA 2026.11"
+)
 async def test_recognition_cannot_take_over_a_conversation_owned_by_a_user(
     hass: HomeAssistant,
 ) -> None:
@@ -425,14 +429,126 @@ async def test_recognition_cannot_take_over_a_conversation_owned_by_a_user(
     assert source.user_id_at_first_delta is None
 
 
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    not SESSIONS_HAVE_OWNER, reason="Sessions have no owner before HA 2026.11"
+)
+@pytest.mark.parametrize(
+    "anonymous_context", [None, Context()], ids=["unclaimed", "anonymous"]
+)
+@pytest.mark.parametrize("error_type", [RuntimeError, asyncio.CancelledError])
+async def test_session_owner_is_restored_after_failure(
+    hass: HomeAssistant, anonymous_context, error_type
+) -> None:
+    """Failures and cancellation restore both kinds of anonymous session owner."""
+    with chat_session.async_get_chat_session(
+        hass, None, context=anonymous_context
+    ) as session:
+        original_owner = session.user_id
+        assert original_owner is None or original_owner is UNDEFINED
+        with pytest.raises(error_type):
+            with _scoped_session_owner(session.conversation_id, "alice"):
+                assert session.user_id == "alice"
+                with chat_session.async_get_chat_session(
+                    hass, session.conversation_id, context=Context(user_id="alice")
+                ):
+                    raise error_type()
+        assert session.user_id is original_owner
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    not SESSIONS_HAVE_OWNER, reason="Sessions have no owner before HA 2026.11"
+)
+async def test_overlapping_turn_cannot_replace_active_session_owner(
+    hass: HomeAssistant,
+) -> None:
+    """A competing turn cannot borrow a session while another speaker is using it."""
+    ready = asyncio.Event()
+    hold = asyncio.Event()
+    with chat_session.async_get_chat_session(hass, None, context=Context()) as session:
+
+        async def active_turn():
+            with _scoped_session_owner(session.conversation_id, "alice"):
+                ready.set()
+                await hold.wait()
+
+        task = asyncio.create_task(active_turn())
+        try:
+            await asyncio.wait_for(ready.wait(), 5)
+            with _scoped_session_owner(session.conversation_id, "bob"):
+                assert session.user_id == "alice"
+                with pytest.raises(Unauthorized):
+                    with chat_session.async_get_chat_session(
+                        hass, session.conversation_id, context=Context(user_id="bob")
+                    ):
+                        pytest.fail("A competing user must not enter the session")
+            assert session.user_id == "alice"
+        finally:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        assert session.user_id is None
+
+    # Cancellation must not pin the stored session to Alice on a later turn.
+    with chat_session.async_get_chat_session(
+        hass, session.conversation_id, context=Context()
+    ) as resumed:
+        with _scoped_session_owner(resumed.conversation_id, "bob"):
+            with chat_session.async_get_chat_session(
+                hass, resumed.conversation_id, context=Context(user_id="bob")
+            ):
+                assert resumed.user_id == "bob"
+        assert resumed.user_id is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    not SESSIONS_HAVE_OWNER, reason="Sessions have no owner before HA 2026.11"
+)
+async def test_session_owner_scope_ignores_other_conversations(
+    hass: HomeAssistant,
+) -> None:
+    """Enrichment must not alter an unrelated active session."""
+    with chat_session.async_get_chat_session(hass, None, context=Context()) as session:
+        with _scoped_session_owner("other-conversation", "alice"):
+            assert session.user_id is None
+
+
+class GetDateTimeTool(llm.Tool):
+    """Advertise a clock tool so HA does not add a changing clock to the prompt."""
+
+    name = "GetDateTime"
+    integration = "conversation"
+
+    async def async_call(self, hass, tool_input, llm_context):
+        return {}
+
+
+class StaticPromptAPI(llm.API):
+    """Provide a static API prompt while still passing each turn's context."""
+
+    async def async_get_api_instance(self, llm_context):
+        return llm.APIInstance(
+            api=self,
+            api_prompt="Use tools for current information.",
+            llm_context=llm_context,
+            tools=[GetDateTimeTool()],
+        )
+
+
 class ChatLogRecordingSource(StreamingSource):
     """Source agent that renders a prompt and records what it was given."""
 
-    def __init__(self, prompt: str = "Base prompt.") -> None:
+    def __init__(
+        self, prompt: str = "Base prompt.", api: llm.API | None = None
+    ) -> None:
         super().__init__()
         self.prompt = prompt
+        self.api = api
         self.system_prompts: list[str] = []
         self.user_messages: list[list[str]] = []
+        self.api_user_ids: list[str | None] = []
 
     async def _async_handle_message(
         self,
@@ -440,16 +556,13 @@ class ChatLogRecordingSource(StreamingSource):
         chat_log: conversation.ChatLog,
     ) -> conversation.ConversationResult:
         await chat_log.async_provide_llm_data(
-            user_input.as_llm_context("test"), None, self.prompt, None
+            user_input.as_llm_context("test"), self.api, self.prompt, None
         )
-        # Without an API, Home Assistant appends the time to the prompt.
-        self.system_prompts.append(chat_log.content[0].content.splitlines()[0])
+        self.system_prompts.append(chat_log.content[0].content)
+        if self.api is not None:
+            self.api_user_ids.append(chat_log.llm_api.llm_context.context.user_id)
         self.user_messages.append(
-            [
-                content.content
-                for content in chat_log.content
-                if content.role == "user"
-            ]
+            [content.content for content in chat_log.content if content.role == "user"]
         )
         return await super()._async_handle_message(user_input, chat_log)
 
@@ -459,11 +572,16 @@ QUESTION = "tell me something long"
 
 
 @pytest.mark.asyncio
-async def test_speaker_note_names_the_speaker_of_each_turn(hass: HomeAssistant) -> None:
-    """The note follows recognition while the system prompt stays the same."""
+async def test_speaker_note_names_the_speaker_of_each_turn(
+    hass: HomeAssistant, freezer
+) -> None:
+    """A static API and clock tool keep the complete prompt stable across speakers."""
+    freezer.move_to("2026-11-06 12:00:00+00:00")
     alice = await hass.auth.async_create_user("Alice")
     bob = await hass.auth.async_create_user("Bob")
-    source = ChatLogRecordingSource()
+    source = ChatLogRecordingSource(
+        api=StaticPromptAPI(hass=hass, id="test", name="Test")
+    )
     await _setup_proxy(hass, source, options=NOTE_ON)
 
     set_correlated_recognition(_recognition(alice.id))
@@ -471,10 +589,12 @@ async def test_speaker_note_names_the_speaker_of_each_turn(hass: HomeAssistant) 
     assert first.errors == []
 
     source.tts_started.clear()
+    freezer.tick(2)
     second = await _run_turn(hass, source, first.conversation_id)
     assert second.errors == []
 
     source.tts_started.clear()
+    freezer.tick(2)
     set_correlated_recognition(_recognition(bob.id))
     third = await _run_turn(hass, source, first.conversation_id)
     assert third.errors == []
@@ -487,7 +607,37 @@ async def test_speaker_note_names_the_speaker_of_each_turn(hass: HomeAssistant) 
         f"[Speaker: unknown] {QUESTION}",
         f"[Speaker: Bob] {QUESTION}",
     ]
-    assert source.system_prompts == ["Base prompt."] * 3
+    assert len(set(source.system_prompts)) == 1
+    assert "Base prompt." in source.system_prompts[0]
+    assert "Use tools for current information." in source.system_prompts[0]
+    assert "Alice" not in source.system_prompts[0]
+    assert "Bob" not in source.system_prompts[0]
+    assert source.api_user_ids == [alice.id, None, bob.id]
+
+
+@pytest.mark.asyncio
+async def test_speaker_note_does_not_freeze_other_prompt_content(
+    hass: HomeAssistant, freezer
+) -> None:
+    """Without a clock tool, HA's time prompt still changes even with speaker notes."""
+    freezer.move_to("2026-11-06 12:00:00+00:00")
+    alice = await hass.auth.async_create_user("Alice")
+    source = ChatLogRecordingSource()
+    await _setup_proxy(hass, source, options=NOTE_ON)
+    set_correlated_recognition(_recognition(alice.id))
+    first = await _run_turn(hass, source)
+    assert first.errors == []
+
+    freezer.tick(2)
+    source.tts_started.clear()
+    second = await _run_turn(hass, source, first.conversation_id)
+    assert second.errors == []
+    assert source.system_prompts[0] != source.system_prompts[1]
+    assert all("Base prompt." in prompt for prompt in source.system_prompts)
+    assert source.user_messages[-1] == [
+        f"[Speaker: Alice] {QUESTION}",
+        f"[Speaker: unknown] {QUESTION}",
+    ]
 
 
 @pytest.mark.asyncio

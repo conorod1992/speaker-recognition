@@ -417,9 +417,8 @@ class SpeakerRecognitionConversationEntity(
     ) -> ConversationInput:
         """Put a note about the speaker in front of this turn's message.
 
-        Unlike the system prompt, a message of the current turn can change freely:
-        Anthropic binds the thinking blocks of earlier turns to the system prompt,
-        so a prompt naming the speaker fails as soon as recognition changes.
+        This lets users move speaker details out of the system prompt. It does not
+        freeze other prompt content or remove stale provider thinking blocks.
         """
         user_id = user_input.context.user_id
         user = await self.hass.auth.async_get_user(user_id) if user_id else None
